@@ -7,6 +7,10 @@
   },
   "homepage": "https://github.com/FunDrivenDev/claude-plugins/tree/main/plugins/statusline",
   "repository": "https://github.com/FunDrivenDev/claude-plugins",
-  "license": "MIT",
-  "keywords": ["statusline", "context", "quota", "prompt-cache"]
+  "keywords": [
+    "statusline",
+    "context",
+    "quota",
+    "prompt-cache"
+  ]
 }
