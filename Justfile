@@ -12,6 +12,10 @@ lint:
     git ls-files -z --cached --others --exclude-standard '*.sh' '.githooks/*' | xargs -0 mise exec -- shellcheck
     mise exec -- actionlint
 
+# Run the plugins' smoke tests.
+test:
+    mise exec -- tests/run.sh
+
 # Check the marketplace and every plugin with Claude Code's own validator (needs the claude CLI, so not in CI).
 validate:
     scripts/validate.sh

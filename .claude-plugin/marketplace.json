@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "fundrivendev",
+  "description": "Public Claude Code plugins by FunDrivenDev",
+  "owner": {
+    "name": "FunDrivenDev"
+  },
+  "plugins": [
+    {
+      "name": "statusline",
+      "description": "Context-budget status line: tokens against the auto-compact trigger, prompt-cache countdown, quota pace, git branch and PR, plus plugin segments.",
+      "source": "./plugins/statusline",
+      "category": "productivity"
+    }
+  ]
+}
