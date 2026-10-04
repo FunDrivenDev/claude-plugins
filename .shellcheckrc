@@ -1,0 +1,4 @@
+# jq filters live in single quotes throughout; the sourced scripts are checked with their callers.
+disable=SC2016
+external-sources=true
+source-path=SCRIPTDIR

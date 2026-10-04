@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# No commit with a failing check: lint, as CI runs it.
+set -euo pipefail
+just lint

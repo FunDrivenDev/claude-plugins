@@ -1,0 +1,35 @@
+# Continuous integration: the same `just` recipes as the pre-commit hook, with
+# the toolchain from mise.toml.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # A job installs only the tools it needs; `mise exec` must not fetch the rest.
+  MISE_EXEC_AUTO_INSTALL: "false"
+
+jobs:
+  lint:
+    name: Lint (just lint)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        with:
+          install_args: just shellcheck actionlint
+      - run: just lint
+
