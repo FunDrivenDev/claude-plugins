@@ -2,7 +2,8 @@
 # Claude Code status line — context budget first.
 #
 # Reads the status-line JSON payload on stdin (schema: Claude Code >= 2.1.x) and
-# prints an ANSI-coloured line, then one line per plugin segment (section 7).
+# prints two ANSI-coloured lines: the session, context, git and plugin segments
+# (section 7) first, then the quota windows (section 5).
 # The token counter is scored against the
 # auto-compact trigger rather than the model's real context window: compaction,
 # not the technical ceiling, is what actually ends the session's memory. The
@@ -347,8 +348,11 @@ quota() {
   Q="${TEXT}${lbl}${R} ${bar}${body}${verdict:+ $verdict}${rs:+ $rs}"
 }
 
+# The quotas get the second line: set aside, printed last.
+main=$line; line=""
 quota 5h "$H5" "$R5" 18000;  add "$Q"
 quota 7d "$D7" "$R7" 604800; add "$Q"
+quotas=$line; line=$main
 
 # --- 6. git / worktree / PR ------------------------------------------------
 
@@ -387,13 +391,11 @@ if [ -n "$CWD" ]; then
 fi
 add "$git_seg"
 
-printf '%s' "$line"
-
-# --- 7. plugin segments (one line each) --------------------------------------
+# --- 7. plugin segments (end of the first line) ------------------------------
 #
 # An installed plugin that ships an executable `statusline-segment` at its root
-# gets a line of its own: it reads the same payload on stdin and prints one line,
-# or nothing. A segment prints nothing where its plugin is disabled, for the
+# gets a segment at the end of the first line: it reads the same payload on
+# stdin and prints one line, or nothing. A segment prints nothing where its plugin is disabled, for the
 # status line cannot tell. Each runs on every refresh, so it must be quick.
 
 if (( SEGMENTS == 1 )) && [ -r "$CLAUDE_HOME/plugins/installed_plugins.json" ]; then
@@ -401,8 +403,11 @@ if (( SEGMENTS == 1 )) && [ -r "$CLAUDE_HOME/plugins/installed_plugins.json" ]; 
     [ -n "$dir" ] && [ -f "$dir/statusline-segment" ] && [ -x "$dir/statusline-segment" ] || continue
     seg=$("$dir/statusline-segment" <<<"$payload" 2>/dev/null) || continue
     seg=${seg%%$'\n'*}
-    [ -n "$seg" ] && printf '\n%s' "$seg"
+    add "$seg"
   done < <("$JQ" -r '.plugins // {} | to_entries[] | .value[0].installPath // empty' \
              "$CLAUDE_HOME/plugins/installed_plugins.json" 2>/dev/null)
 fi
+
+printf '%s' "$line"
+[ -n "$quotas" ] && printf '\n%s' "$quotas"
 exit 0
