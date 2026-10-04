@@ -23,6 +23,7 @@
 # A value that is not a plain integer, or thresholds out of order, fall back to
 # the default and are named in a leading "⚠ ignored:" segment.
 #   CC_STATUS_SEGMENTS   set to 0 to skip the plugin segments (section 7)
+#   CC_STATUS_SPACING    set to 0 to drop the dotted spacer under each line
 
 set -uo pipefail
 
@@ -53,6 +54,7 @@ int DANGER_PCT  CC_TOKEN_DANGER     75
 int ALERT_PCT   CC_TOKEN_ALERT      90
 int ENV_LIMIT   CC_TOKEN_LIMIT      ""
 int SEGMENTS    CC_STATUS_SEGMENTS  1
+int SPACING     CC_STATUS_SPACING   1
 
 if (( WARN_PCT > DANGER_PCT || DANGER_PCT > ALERT_PCT )); then
   ignored="$ignored CC_TOKEN_WARN CC_TOKEN_DANGER CC_TOKEN_ALERT"
@@ -408,6 +410,10 @@ if (( SEGMENTS == 1 )) && [ -r "$CLAUDE_HOME/plugins/installed_plugins.json" ]; 
              "$CLAUDE_HOME/plugins/installed_plugins.json" 2>/dev/null)
 fi
 
-printf '%s' "$line"
-[ -n "$second" ] && printf '\n%s' "$second"
+# A spacer line under each line: the host drops a blank or whitespace-only
+# line, so it holds a dim dot.
+GAP=""
+(( SPACING == 1 )) && GAP=$'\n'"${DIM}·${R}"
+printf '%s%s' "$line" "$GAP"
+[ -n "$second" ] && printf '\n%s%s' "$second" "$GAP"
 exit 0
