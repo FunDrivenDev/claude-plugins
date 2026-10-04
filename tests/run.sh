@@ -57,11 +57,12 @@ for sh in "${shells[@]}"; do
   expect "duration and cache countdown" "$first" "⌛1h06m TTL 42m"
   expect "model and effort" "$first" "Opus 3/5"
   expect "context against the auto-compact trigger" "$first" "90.0k/167k 53%"
-  expect "git branch" "$first" "⎇ feat/smoke"
-  expect "plugin segment ends the first line" "$first" "⎇ feat/smoke │ segment line"
+  expect "plugin segment follows the context" "$first" "90.0k/167k 53% │ segment line"
   reject "no quota on the first line" "$first" "5h"
+  reject "no git on the first line" "$first" "⎇"
   expect "5-hour quota on the second line" "$second" "30% ok →60%"
   expect "7-day quota on the second line" "$second" "40% ok →80%"
+  expect "git branch ends the second line" "$second" "│ ⎇ feat/smoke"
 
   out=$(run env CC_STATUS_SEGMENTS=0 <<<"$payload")
   reject "CC_STATUS_SEGMENTS=0 drops the segments" "$out" "segment line"

@@ -2,8 +2,8 @@
 # Claude Code status line — context budget first.
 #
 # Reads the status-line JSON payload on stdin (schema: Claude Code >= 2.1.x) and
-# prints two ANSI-coloured lines: the session, context, git and plugin segments
-# (section 7) first, then the quota windows (section 5).
+# prints two ANSI-coloured lines: the session, context and plugin segments
+# (section 7) first, then the quota windows (section 5) and git (section 6).
 # The token counter is scored against the
 # auto-compact trigger rather than the model's real context window: compaction,
 # not the technical ceiling, is what actually ends the session's memory. The
@@ -348,11 +348,10 @@ quota() {
   Q="${TEXT}${lbl}${R} ${bar}${body}${verdict:+ $verdict}${rs:+ $rs}"
 }
 
-# The quotas get the second line: set aside, printed last.
+# The quotas and git make the second line: the first is set aside meanwhile.
 main=$line; line=""
 quota 5h "$H5" "$R5" 18000;  add "$Q"
 quota 7d "$D7" "$R7" 604800; add "$Q"
-quotas=$line; line=$main
 
 # --- 6. git / worktree / PR ------------------------------------------------
 
@@ -390,6 +389,7 @@ if [ -n "$CWD" ]; then
   fi
 fi
 add "$git_seg"
+second=$line; line=$main
 
 # --- 7. plugin segments (end of the first line) ------------------------------
 #
@@ -409,5 +409,5 @@ if (( SEGMENTS == 1 )) && [ -r "$CLAUDE_HOME/plugins/installed_plugins.json" ]; 
 fi
 
 printf '%s' "$line"
-[ -n "$quotas" ] && printf '\n%s' "$quotas"
+[ -n "$second" ] && printf '\n%s' "$second"
 exit 0
