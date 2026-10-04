@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# No commit with a failing check: lint and smoke tests, as CI runs them.
+set -euo pipefail
+just lint
+just test
