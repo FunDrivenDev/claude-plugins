@@ -53,13 +53,21 @@ for sh in "${shells[@]}"; do
 
   out=$(run env <<<"$payload")
   first=${out%%$'\n'*}
+  second=${out#*$'\n'}
   expect "duration and cache countdown" "$first" "⌛1h06m TTL 42m"
   expect "model and effort" "$first" "Opus 3/5"
   expect "context against the auto-compact trigger" "$first" "90.0k/167k 53%"
-  expect "5-hour quota" "$first" "30% ok →60%"
-  expect "7-day quota" "$first" "40% ok →80%"
-  expect "git branch" "$first" "⎇ feat/smoke"
-  expect "plugin segment on its own line" "$out" $'\nsegment line'
+  expect "plugin segment follows the context" "$first" "90.0k/167k 53% │ segment line"
+  reject "no quota on the first line" "$first" "5h"
+  reject "no git on the first line" "$first" "⎇"
+  expect "5-hour quota on the second line" "$second" "30% ok →60%"
+  expect "7-day quota on the second line" "$second" "40% ok →80%"
+  expect "git branch ends the second line" "$second" "│ ⎇ feat/smoke"
+  expect "a dotted spacer under each line" "$out" $'segment line\n·\n5h'
+  expect "and under the last one" "${out: -2}" $'\n·'
+
+  out=$(run env CC_STATUS_SPACING=0 <<<"$payload")
+  reject "CC_STATUS_SPACING=0 drops the spacers" "$out" "·"
 
   out=$(run env CC_STATUS_SEGMENTS=0 <<<"$payload")
   reject "CC_STATUS_SEGMENTS=0 drops the segments" "$out" "segment line"

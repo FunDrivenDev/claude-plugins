@@ -8,7 +8,7 @@ Public Claude Code plugins by FunDrivenDev.
 
 | Plugin | What it does |
 |---|---|
-| [`statusline`](plugins/statusline/README.md) | A status line built around the context budget: tokens against the auto-compact trigger, prompt-cache countdown, 5-hour and 7-day quota pace, git branch and PR, and a line for each plugin that ships a segment. |
+| [`statusline`](plugins/statusline/README.md) | A status line built around the context budget: tokens against the auto-compact trigger, prompt-cache countdown, 5-hour and 7-day quota pace, git branch and PR, and a segment for each plugin that ships one. |
 
 ## Working on this repo
 
