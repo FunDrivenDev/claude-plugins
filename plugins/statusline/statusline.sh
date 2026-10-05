@@ -23,7 +23,7 @@
 # A value that is not a plain integer, or thresholds out of order, fall back to
 # the default and are named in a leading "⚠ ignored:" segment.
 #   CC_STATUS_SEGMENTS   set to 0 to skip the plugin segments (section 7)
-#   CC_STATUS_SPACING    set to 0 to drop the dotted spacer under each line
+#   CC_STATUS_SPACING    set to 0 to drop the dotted spacer between the lines
 #   CC_STATUS_LAZY       set to 0 to compute git and the plugin segments
 #                        before printing, instead of showing their last value
 #
@@ -470,10 +470,10 @@ if (( SEGMENTS == 1 )) && [ -n "$PLUGINS" ]; then
   done
 fi
 
-# A spacer line under each line: the host drops a blank or whitespace-only
-# line, so it holds a dim dot.
+# A spacer line between the two lines: the host drops a blank or
+# whitespace-only line, so it holds a dim dot.
 GAP=""
 (( SPACING == 1 )) && GAP=$'\n'"${DIM}·${R}"
-printf '%s%s' "$line" "$GAP"
-[ -n "$second" ] && printf '\n%s%s' "$second" "$GAP"
+printf '%s' "$line"
+[ -n "$second" ] && printf '%s\n%s' "$GAP" "$second"
 exit 0

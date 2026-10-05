@@ -64,8 +64,8 @@ for sh in "${shells[@]}"; do
   expect "5-hour quota on the second line" "$second" "30% ok →60%"
   expect "7-day quota on the second line" "$second" "40% ok →80%"
   expect "git branch ends the second line" "$second" "│ ⎇ feat/smoke"
-  expect "a dotted spacer under each line" "$out" $'segment line\n·\n5h'
-  expect "and under the last one" "${out: -2}" $'\n·'
+  expect "a dotted spacer between the lines" "$out" $'segment line\n·\n5h'
+  reject "none under the last one" "${out: -2}" $'\n·'
 
   out=$(run env CC_STATUS_SPACING=0 <<<"$payload")
   reject "CC_STATUS_SPACING=0 drops the spacers" "$out" "·"

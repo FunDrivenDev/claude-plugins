@@ -7,7 +7,7 @@ A Claude Code status line built around what ends a session's memory (auto-compac
 5h ███│░░░░░░░  30% ok →60% 🔄2h30m │ 7d █████│░░░░  50% ok →75% 🔄2d07h │ ⎇ feat/my-branch* #412✓
 ```
 
-A dim `·` line sits under each line, as spacing (`CC_STATUS_SPACING=0` drops it).
+A dim `·` line sits between the two lines, as spacing (`CC_STATUS_SPACING=0` drops it).
 
 The first line, left to right:
 
@@ -46,7 +46,7 @@ Needs `bash` (macOS's 3.2 is fine), `jq` 1.6 or later, and `git`.
 | `CC_QUOTA_BAR` | 10 | cells per quota bar, `0` hides the bars |
 | `CC_PACE_MIN` | 10 | % of a window that must elapse before a projection shows |
 | `CC_STATUS_SEGMENTS` | 1 | `0` skips the plugin segments |
-| `CC_STATUS_SPACING` | 1 | `0` drops the dim `·` spacer line under each line |
+| `CC_STATUS_SPACING` | 1 | `0` drops the dim `·` spacer line between the two lines |
 | `CC_STATUS_LAZY` | 1 | `0` computes git and the plugin segments before printing (see [Lazy segments](#lazy-segments)) |
 
 An unusable setting never blanks the line; it is reported instead:
