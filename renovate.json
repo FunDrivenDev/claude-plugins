@@ -4,12 +4,13 @@
   "enabledManagers": ["mise", "github-actions"],
   "packageRules": [
     {
-      "description": "Everything here only checks the code and never ships: minor and patch updates grouped, automerged once CI is green and the release is three days old. Majors wait for review.",
+      "description": "Everything here only checks the code and never ships: minor and patch updates grouped, automerged once ci-ok is green and the release is three days old, squashed as the organisation ruleset on main requires. Majors wait for review.",
       "matchManagers": ["mise", "github-actions"],
       "matchUpdateTypes": ["minor", "patch", "digest", "pinDigest"],
       "groupName": "dev tooling",
       "minimumReleaseAge": "3 days",
-      "automerge": true
+      "automerge": true,
+      "automergeStrategy": "squash"
     }
   ]
 }
