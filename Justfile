@@ -26,6 +26,10 @@ versions:
 bump plugin level:
     mise exec -- scripts/bump.sh {{plugin}} {{level}}
 
+# CI's verdict from the results of the jobs ci-ok needs: green when each one succeeded or was skipped.
+ci-verdict *results:
+    scripts/ci-verdict.sh {{ results }}
+
 # Check the marketplace and every plugin with Claude Code's own validator, and run the mods' tests (needs the claude CLI, so not in CI).
 validate:
     scripts/validate.sh

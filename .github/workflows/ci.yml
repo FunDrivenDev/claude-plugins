@@ -1,6 +1,7 @@
 # Continuous integration: `just lint` and `just test`, as the git hooks run them, with
 # the toolchain from mise.toml. The smoke tests also run on macOS, whose
-# /bin/bash 3.2 is what most colleagues' status lines run under.
+# /bin/bash 3.2 is what most colleagues' status lines run under. `ci-ok` is
+# the one check to require: FunDrivenDev's organisation ruleset gates `main` on it.
 name: CI
 
 on:
@@ -50,3 +51,26 @@ jobs:
         with:
           install_args: just jq
       - run: just test
+
+  ci-ok:
+    name: ci-ok
+    needs: [lint, test]
+    # always(), not !cancelled(): a cancelled run must fail ci-ok, not skip it
+    # (GitHub counts a skipped required check as passing).
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        with:
+          install_args: just
+      # Skipped jobs are fine (the change did not need them); a failed or
+      # cancelled one is not. The matrix's legs count as one result.
+      - run: |
+          # shellcheck disable=SC2086 # one argument per job result
+          just ci-verdict $RESULTS
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}

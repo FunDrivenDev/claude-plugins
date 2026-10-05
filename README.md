@@ -24,7 +24,8 @@ Tools are pinned in `mise.toml` and run through `just`:
 | `just versions` | Fails when a plugin changed since `origin/main` (outside its `tests/`) without a version bump |
 | `just bump <plugin> patch\|minor\|major` | Raises the plugin's version in its `plugin.json` |
 | `just check` | All of the above: `lint`, `test`, `versions`, `validate` |
+| `just ci-verdict <results>` | CI's verdict: green when each job result is `success` or `skipped` |
 
-The pre-commit hook runs `just lint`, the pre-push hook `just check`; CI runs `just lint` and `just test`, the tests on Linux and macOS. Renovate keeps the tools and the actions current.
+The pre-commit hook runs `just lint`, the pre-push hook `just check`; CI runs `just lint` and `just test`, the tests on Linux and macOS, then a `ci-ok` job that passes only when every other job succeeded or was skipped: the one check FunDrivenDev's organisation ruleset requires on `main`. Renovate keeps the tools and the actions current, automerging once `ci-ok` is green.
 
 Merging a PR is the release: the marketplace serves `main`, and Claude Code updates an installed plugin only when its version changes. So a PR that changes a plugin bumps it (`just bump`: patch for a fix, minor for a feature, major for a breaking change), and the pre-push `just versions` refuses one that doesn't.
