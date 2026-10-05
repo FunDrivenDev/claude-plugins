@@ -49,7 +49,8 @@ shells=("$(command -v bash)")
 
 for sh in "${shells[@]}"; do
   echo "status line under $sh ($("$sh" -c 'echo $BASH_VERSION'))"
-  run() { HOME=$home "$@" "$sh" "$PLUGIN/statusline.sh" | plain; }
+  # Synchronous unless a test says otherwise: these check what is computed.
+  run() { HOME=$home TMPDIR="$WORK/tmp-$RANDOM/" CC_STATUS_LAZY=0 "$@" "$sh" "$PLUGIN/statusline.sh" | plain; }
 
   out=$(run env <<<"$payload")
   first=${out%%$'\n'*}
@@ -88,6 +89,35 @@ for sh in "${shells[@]}"; do
   mkdir -p "$WORK/nojq"; ln -sf "$(command -v cat)" "$WORK/nojq/cat"
   out=$(run env PATH="$WORK/nojq" <<<"$payload")
   expect "missing jq is reported" "$out" "⚠ jq not found"
+
+  # Lazy: git and the segments show a placeholder, then the value computed in
+  # the background, and a slow segment never holds the line up.
+  tmp="$WORK/tmp-lazy-$RANDOM"; mkdir -p "$tmp"
+  lazy() { HOME=$home TMPDIR=$tmp "$@" "$sh" "$PLUGIN/statusline.sh" <<<"$payload" | plain; }
+  out=$(lazy env)
+  expect "lazy: a placeholder before the first segment value" "$out" "53% │ …"
+  expect "lazy: a placeholder before the first git value" "$out" "⎇ …"
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    # A value lands by an atomic rename once computed: its file is complete.
+    done=0
+    for f in "$tmp"/claude-statusline-*/seg-* "$tmp"/claude-statusline-*/git-*; do
+      case $f in *.pid) ;; *) [ -f "$f" ] && done=$((done + 1)) ;; esac
+    done
+    [ "$done" -ge 2 ] && break
+    sleep 0.2
+  done
+  out=$(lazy env)
+  expect "lazy: the segment computed in the background" "$out" "53% │ segment line"
+  expect "lazy: the branch computed in the background" "$out" "⎇ feat/smoke"
+  expect "lazy: the same line as a synchronous run" "$out" "$(run env <<<"$payload")"
+
+  printf '#!/bin/sh\nsleep 3; echo late\n' >"$WORK/seg-plugin/statusline-segment"
+  rm -f "$tmp"/claude-statusline-*/seg-*
+  start=$SECONDS
+  out=$(lazy env)
+  if (( SECONDS - start < 2 )); then pass "lazy: a slow segment does not delay the line"; else fail "lazy: a slow segment does not delay the line"; fi
+  expect "lazy: and shows its placeholder meanwhile" "$out" "53% │ …"
+  printf '#!/bin/sh\ncat >/dev/null; echo "segment line"\n' >"$WORK/seg-plugin/statusline-segment"
 done
 
 echo "install, uninstall and sync"

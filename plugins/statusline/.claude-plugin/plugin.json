@@ -1,6 +1,6 @@
 {
   "name": "statusline",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Context-budget status line: tokens against the auto-compact trigger, prompt-cache countdown, 5-hour and 7-day quota pace, git branch and PR, plus one segment per plugin that ships a statusline-segment.",
   "author": {
     "name": "Raphaël Louvradoux"

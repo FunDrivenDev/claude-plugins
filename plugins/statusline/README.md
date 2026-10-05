@@ -47,6 +47,7 @@ Needs `bash` (macOS's 3.2 is fine), `jq` 1.6 or later, and `git`.
 | `CC_PACE_MIN` | 10 | % of a window that must elapse before a projection shows |
 | `CC_STATUS_SEGMENTS` | 1 | `0` skips the plugin segments |
 | `CC_STATUS_SPACING` | 1 | `0` drops the dim `·` spacer line under each line |
+| `CC_STATUS_LAZY` | 1 | `0` computes git and the plugin segments before printing (see [Lazy segments](#lazy-segments)) |
 
 An unusable setting never blanks the line; it is reported instead:
 
@@ -56,4 +57,10 @@ An unusable setting never blanks the line; it is reported instead:
 
 ## Plugin segments
 
-Any installed plugin can add a segment at the end of the first line by shipping an executable `statusline-segment` at its root. It gets the same JSON payload on stdin and prints one line, or nothing. It runs on every refresh, so it must be quick, and it must print nothing where its plugin is disabled: the status line cannot tell.
+Any installed plugin can add a segment at the end of the first line by shipping an executable `statusline-segment` at its root. It gets the same JSON payload on stdin (compacted) and prints one line, or nothing; a non-zero exit shows nothing. It must print nothing where its plugin is disabled: the status line cannot tell.
+
+## Lazy segments
+
+Git and the plugin segments are the slow part of a refresh (a `git status`, a plugin's own interpreter starting). They never delay the line: each refresh prints the value the previous refresh computed, a dim `…` before the first one, and recomputes it in the background. They therefore lag one refresh behind; set `statusLine.refreshInterval` (seconds) in `settings.json` to bound that lag while idle. A run still going when the next refresh comes is not started again, so a slow or hung segment never piles up.
+
+The values are kept in `$TMPDIR/claude-statusline-$UID/`, per directory for git and per session and plugin for the segments. `CC_STATUS_LAZY=0` goes back to computing them before printing.
