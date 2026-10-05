@@ -24,6 +24,13 @@
 # the default and are named in a leading "⚠ ignored:" segment.
 #   CC_STATUS_SEGMENTS   set to 0 to skip the plugin segments (section 7)
 #   CC_STATUS_SPACING    set to 0 to drop the dotted spacer under each line
+#   CC_STATUS_LAZY       set to 0 to compute git and the plugin segments
+#                        before printing, instead of showing their last value
+#
+# Git and the plugin segments are lazy: each refresh prints the value the
+# previous one computed (a dim … before the first) and recomputes it in the
+# background, so the slowest of them never delays the line. They lag one
+# refresh behind; statusLine.refreshInterval bounds that lag when idle.
 
 set -uo pipefail
 
@@ -55,6 +62,7 @@ int ALERT_PCT   CC_TOKEN_ALERT      90
 int ENV_LIMIT   CC_TOKEN_LIMIT      ""
 int SEGMENTS    CC_STATUS_SEGMENTS  1
 int SPACING     CC_STATUS_SPACING   1
+int LAZY        CC_STATUS_LAZY      1
 
 if (( WARN_PCT > DANGER_PCT || DANGER_PCT > ALERT_PCT )); then
   ignored="$ignored CC_TOKEN_WARN CC_TOKEN_DANGER CC_TOKEN_ALERT"
@@ -88,29 +96,38 @@ for d in $PATH; do
 done
 IFS=$' \t\n'; set +f
 
-# The payload is kept for the plugin segments, which read it too.
-payload=$(cat)
+# Separates the plugin directories inside their one field.
+RS=$'\036'
 
-# One jq call reads the payload, autoCompactWindow from the settings
-# and the clock, integers pre-rounded. Both documents are parsed leniently: a
-# malformed file or a field of an unexpected type falls back to that field's
-# default instead of failing the whole call. Control characters are stripped
-# from strings so none can carry the separator or a newline into `read`. The
-# trailing "." sentinel stops `read` from dropping empty trailing fields.
-settings=()
+# One jq call reads the payload on stdin, autoCompactWindow from the settings,
+# the plugin directories and the clock, integers pre-rounded. Every document is
+# parsed leniently: a malformed file or a field of an unexpected type falls
+# back to that field's default instead of failing the whole call. Control
+# characters are stripped from strings so none can carry a separator or a
+# newline into `read`. The payload comes back compacted for the plugin
+# segments (tojson escapes every control character), which spares a `cat` to
+# keep it. The trailing "." sentinel stops `read` from dropping empty trailing
+# fields.
+files=()
 [ -z "$ENV_LIMIT" ] && [ -r "$CLAUDE_HOME/settings.json" ] &&
-  settings=(--rawfile s "$CLAUDE_HOME/settings.json")
+  files=(--rawfile s "$CLAUDE_HOME/settings.json")
+(( SEGMENTS == 1 )) && [ -r "$CLAUDE_HOME/plugins/installed_plugins.json" ] &&
+  files+=(--rawfile p "$CLAUDE_HOME/plugins/installed_plugins.json")
 # ${a[@]+...}: bash < 4.4 (macOS /bin/bash) treats an empty array as unbound under set -u.
-IFS=$US read -r NOW ACW TOK HAS MINS MODEL EFFORT FAST THINK H5 R5 D7 R7 CWD WTREE PRNUM PRSTATE PC_ON PC_WARM PC_EXP PC_TTL PC_RECACHE _SENTINEL < <(
-  "$JQ" -Rsr --arg us "$US" ${settings[@]+"${settings[@]}"} '
+IFS=$US read -r NOW ACW TOK HAS MINS MODEL EFFORT FAST THINK H5 R5 D7 R7 CWD WTREE PRNUM PRSTATE PC_ON PC_WARM PC_EXP PC_TTL PC_RECACHE SID PLUGINS payload _SENTINEL < <(
+  "$JQ" -Rsr --arg us "$US" --arg rs "$RS" ${files[@]+"${files[@]}"} '
   def doc: (fromjson? | objects) // {};
   def v(p): try getpath(p) catch null;
   def int: numbers | select(. > -1e15 and . < 1e15) | floor;
   def n(p; d): v(p) | int // d;
-  def s(p): v(p) // "" | tostring | explode | map(select(. >= 32)) | implode;
+  def clean: tostring | explode | map(select(. >= 32)) | implode;
+  def s(p): v(p) // "" | clean;
   ($ARGS.named.s // "" | doc | .autoCompactWindow
     | if . == null then ""
       else (if type == "string" then tonumber? else . end | int) // "!" end) as $acw
+  | ($ARGS.named.p // "" | doc | .plugins | objects // {}
+    | [ to_entries[] | .value | arrays | .[0] | objects | .installPath | strings | clean ]
+    | join($rs)) as $plugins
   | doc
   | [ (now | floor)
     , $acw
@@ -134,7 +151,10 @@ IFS=$US read -r NOW ACW TOK HAS MINS MODEL EFFORT FAST THINK H5 R5 D7 R7 CWD WTR
     , n(["prompt_cache","expires_at"]; 0)
     , s(["prompt_cache","ttl"])
     , n(["prompt_cache","recache_tokens_if_cold"]; 0)
-    , "." ] | map(tostring) | join($us)' <<<"$payload" 2>/dev/null)
+    , s(["session_id"])
+    , $plugins
+    , tojson
+    , "." ] | map(tostring) | join($us)' 2>/dev/null)
 
 jq_err=""
 if [ "${_SENTINEL:-}" != "." ]; then
@@ -157,6 +177,7 @@ ALERT_AT=$(( LIMIT * ALERT_PCT / 100 ))
 : "${FAST:=0}" "${THINK:=1}" "${H5:=-1}" "${R5:=0}" "${D7:=-1}" "${R7:=0}" "${CWD:=}"
 : "${WTREE:=}" "${PRNUM:=}" "${PRSTATE:=}"
 : "${PC_ON:=0}" "${PC_WARM:=0}" "${PC_EXP:=0}" "${PC_TTL:=}" "${PC_RECACHE:=0}"
+: "${SID:=}" "${PLUGINS:=}" "${payload:="{}"}"
 
 # --- helpers ---------------------------------------------------------------
 
@@ -181,6 +202,31 @@ dur() {
   elif (( m >= 60 ));   then printf -v D '%dh%02dm' $(( m / 60 )) $(( m % 60 ))
   else                       D="${m}m"
   fi
+}
+
+# lazy KEY FUNC [ARG...]: V = the first line FUNC printed for KEY on an earlier
+# refresh, LAZY_HIT=0 when there is none yet. FUNC reruns in the background
+# unless its previous run is still going, so a slow or hung one never piles up.
+# The child closes every stream the host reads, or the host would wait for it.
+# With CC_STATUS_LAZY=0, FUNC runs in the foreground and V is its fresh value.
+CACHE=${TMPDIR:-/tmp}
+CACHE=${CACHE%/}/claude-statusline-${UID:-0}
+lazy() {
+  local key=$1 f pid; shift
+  V="" LAZY_HIT=1
+  if (( LAZY == 0 )); then
+    V=$("$@" 2>/dev/null); V=${V%%$'\n'*}
+    return 0
+  fi
+  [ -d "$CACHE" ] || mkdir -m 700 "$CACHE" 2>/dev/null || { LAZY_HIT=0; return 0; }
+  f=$CACHE/${key//\//%}
+  if [ -f "$f" ]; then IFS= read -r V <"$f" || true; else LAZY_HIT=0; fi
+  if [ -f "$f.pid" ] && read -r pid <"$f.pid" && kill -0 "$pid" 2>/dev/null; then return 0; fi
+  {
+    out=$("$@" 2>/dev/null)
+    printf '%s\n' "${out%%$'\n'*}" >"$f.$$" && mv -f "$f.$$" "$f"
+  } </dev/null >/dev/null 2>&1 &
+  echo $! >"$f.pid"
 }
 
 line=""
@@ -360,10 +406,11 @@ quota 7d "$D7" "$R7" 604800; add "$Q"
 # One `git status` gives both the branch and the dirty flag. -uno leaves
 # untracked files out, and a branch with no commit yet counts as dirty.
 # --no-ahead-behind skips the commit walk to the upstream, whose count is not
-# shown. Detached HEAD shows no segment.
-git_seg=""
-if [ -n "$CWD" ]; then
-  br="" dirty=""
+# shown. Detached HEAD shows no segment. Lazy, keyed by directory: prints
+# "branch<US>dirty", or nothing outside a branch.
+# shellcheck disable=SC2329 # run through lazy
+git_state() {
+  local br="" dirty="" l
   if (( GIT_DIRTY == 1 )); then
     while IFS= read -r l; do
       case "$l" in
@@ -373,11 +420,21 @@ if [ -n "$CWD" ]; then
         "#"*)                       ;;
         *)                          dirty="*"; break ;;
       esac
-    done < <(git -C "$CWD" --no-optional-locks status --porcelain=v2 --branch --no-ahead-behind -uno 2>/dev/null)
+    done < <(git -C "$1" --no-optional-locks status --porcelain=v2 --branch --no-ahead-behind -uno 2>/dev/null)
   else
-    br=$(git -C "$CWD" --no-optional-locks branch --show-current 2>/dev/null)
+    br=$(git -C "$1" --no-optional-locks branch --show-current 2>/dev/null)
   fi
-  if [ -n "$br" ]; then
+  [ -n "$br" ] && printf '%s%s%s\n' "$br" "$US" "$dirty"
+}
+
+git_seg=""
+if [ -n "$CWD" ]; then
+  lazy "git-$GIT_DIRTY$CWD" git_state "$CWD"
+  br=${V%%"$US"*} dirty=""
+  [ "$br" != "$V" ] && dirty=${V#*"$US"}
+  if (( LAZY_HIT == 0 )); then
+    git_seg="${DIM}⎇ …${R}"
+  elif [ -n "$br" ]; then
     git_seg="${TEXT}⎇ ${br}${R}${ORANGE}${dirty}${R}"
     [ -n "$WTREE" ] && git_seg="$git_seg ${TEXT}[${WTREE}]${R}"
     if [ -n "$PRNUM" ]; then
@@ -397,17 +454,20 @@ second=$line; line=$main
 #
 # An installed plugin that ships an executable `statusline-segment` at its root
 # gets a segment at the end of the first line: it reads the same payload on
-# stdin and prints one line, or nothing. A segment prints nothing where its plugin is disabled, for the
-# status line cannot tell. Each runs on every refresh, so it must be quick.
+# stdin and prints one line, or nothing. A segment prints nothing where its
+# plugin is disabled, for the status line cannot tell. Lazy, keyed by session
+# and plugin: a failing segment shows nothing.
 
-if (( SEGMENTS == 1 )) && [ -r "$CLAUDE_HOME/plugins/installed_plugins.json" ]; then
-  while IFS= read -r dir; do
+# shellcheck disable=SC2329 # run through lazy
+segment() { local o; o=$("$1/statusline-segment" <<<"$payload") && printf '%s\n' "$o"; }
+
+if (( SEGMENTS == 1 )) && [ -n "$PLUGINS" ]; then
+  IFS=$RS read -r -a dirs <<<"$PLUGINS"
+  for dir in "${dirs[@]}"; do
     [ -n "$dir" ] && [ -f "$dir/statusline-segment" ] && [ -x "$dir/statusline-segment" ] || continue
-    seg=$("$dir/statusline-segment" <<<"$payload" 2>/dev/null) || continue
-    seg=${seg%%$'\n'*}
-    add "$seg"
-  done < <("$JQ" -r '.plugins // {} | to_entries[] | .value[0].installPath // empty' \
-             "$CLAUDE_HOME/plugins/installed_plugins.json" 2>/dev/null)
+    lazy "seg-$SID$dir" segment "$dir"
+    if (( LAZY_HIT == 0 )); then add "${DIM}…${R}"; else add "$V"; fi
+  done
 fi
 
 # A spacer line under each line: the host drops a blank or whitespace-only
