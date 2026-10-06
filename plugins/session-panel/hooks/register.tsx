@@ -75,6 +75,13 @@ const effortLabel = (level: string | null): string => {
   return rank < 0 ? (level ?? 'default') : `${level} ${rank + 1}/${EFFORTS.length}`
 }
 
+/** An alias `/model` takes (`opus`, `sonnet[1m]`) → the id the selector offers; an id as given. */
+export const modelId = (model: string): string => {
+  if (model.includes('claude-')) return model
+  const family = /^[a-z]+/.exec(model.toLowerCase())?.[0]
+  return MODELS.find(m => family && m.id.startsWith(`claude-${family}-`))?.id ?? model
+}
+
 /** `claude-opus-5-5[1m]` → `Opus 5.5`; anything else as given. */
 export const prettyModel = (id: string): string => {
   const m = /claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?/.exec(id)
@@ -92,6 +99,13 @@ export const duration = (ms: number): string => {
   if (m > 0) return `${m}m ${String(sec).padStart(2, '0')}s`
   return `${sec}s`
 }
+
+/** Prompt-cache time left, as the status line counts it: whole minutes, `<1m` in the last one. */
+export const minutesLeft = (ms: number): string => (ms < 60_000 ? '<1m' : `${Math.floor(ms / 60_000)}m`)
+
+/** The status line's grading: green while half the TTL is left, yellow down to a fifth, then orange. */
+export const cacheColor = (left: number, ttl: number): string =>
+  left * 2 >= ttl ? '#5fff00' : left * 5 >= ttl ? '#ffff00' : '#ffaf00'
 
 /** How long ago, coarsely: minutes within the hour, then hours, then days. */
 export const ago = (ms: number): string => {
@@ -226,6 +240,7 @@ async function trackRepo($: EngineInterface, dir: string) {
 /** Reads each tracked repository's changes against HEAD, untracked files included. */
 async function refreshFiles($: EngineInterface) {
   const next: RepoChanges[] = []
+  const since = Math.floor((await $.session.usage()).startedAt / 1000)
   for (const root of await read($, roots)) {
     const status = await $.process.run(['git', '-C', root, 'status', '--porcelain=v1', '-z', '--untracked-files=all'])
     if (status.exitCode !== 0) continue
@@ -241,7 +256,7 @@ async function refreshFiles($: EngineInterface) {
       }
       files.push({ path, status: kind, added: count?.added ?? 0, removed: count?.removed ?? 0 })
     }
-    const log = await $.process.run(['git', '-C', root, 'log', `-n${COMMITS_SHOWN}`, `--format=${LOG_FORMAT}`])
+    const log = await $.process.run(['git', '-C', root, 'log', `-n${COMMITS_SHOWN}`, `--since=@${since}`, `--format=${LOG_FORMAT}`])
     const ahead = await $.process.run(['git', '-C', root, 'rev-list', '@{u}..HEAD'])
     const unpushed = ahead.exitCode === 0 ? new Set(ahead.stdout.split('\n').filter(Boolean)) : ('all' as const)
     const commits = log.exitCode === 0 ? parseLog(log.stdout, unpushed) : []
@@ -249,6 +264,17 @@ async function refreshFiles($: EngineInterface) {
     if (files.length || commits.length) next.push({ root, branch, files, commits })
   }
   await update($, changes, () => next)
+}
+
+/**
+ * Selects the session's model and effort before its first turn reports them:
+ * the model `/model` shows, the effort from the variable or the settings it saves to.
+ */
+async function seedModel($: EngineInterface) {
+  const model = modelId(await $.session.model())
+  const saved = (await $.env.get('CLAUDE_CODE_EFFORT_LEVEL')) ?? (await $.settings.read()).effortLevel
+  const effort = typeof saved === 'string' && EFFORTS.some(e => e.level === saved) ? saved : null
+  await update($, info, i => ({ ...i, model: i.model ?? model, effort: i.effort ?? effort }))
 }
 
 /** Marks a main-loop call as returned, so the step that made it can end. */
@@ -407,6 +433,7 @@ export const register: Register = (on, options) => {
     await readHandover($)
     await trackRepo($, e.cwd)
     await refreshFiles($)
+    await seedModel($)
 
     if ((await read($, prompts)).length === 0) {
       const typed = (await $.session.messages())
@@ -590,8 +617,8 @@ export const register: Register = (on, options) => {
         ? { text: 'no request yet', color: undefined }
         : (() => {
             const left = i.lastRequestAt + ttlMs(ttl) - now
-            if (left <= 0) return { text: `expired ${duration(-left)} ago`, color: 'warning' as const }
-            return { text: `${duration(left)} left`, color: left < 60_000 ? ('warning' as const) : ('success' as const) }
+            if (left <= 0) return { text: 'expired', color: '#ff0000' }
+            return { text: minutesLeft(left), color: cacheColor(left, ttlMs(ttl)) }
           })()
 
     const running = all.filter(a => a.endedAt === null)
@@ -797,7 +824,6 @@ export const register: Register = (on, options) => {
               {duration(now - usage.startedAt)}
               <Text dimColor>   cache </Text>
               <Text color={cache.color}>{cache.text}</Text>
-              <Text dimColor> ({ttl})</Text>
             </Text>
           </Box>
           {corner}

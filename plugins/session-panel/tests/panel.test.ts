@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { ago, describeCall, duration, effortColor, handoverStatus, handoverTitle, headline, lastSentence, modelColor, prettyModel, promptText } from '../hooks/register'
+import { ago, cacheColor, describeCall, duration, effortColor, handoverStatus, handoverTitle, headline, lastSentence, minutesLeft, modelColor, modelId, prettyModel, promptText } from '../hooks/register'
 
 const PANE = {
   component: 'Pane',
@@ -29,6 +29,11 @@ describe('helpers', () => {
     expect(describeCall('Bash', { command: 'ls -la' })).toBe('Bash: ls -la')
     expect(modelColor('claude-opus-5-5[1m]')).toBe('#ef9f76')
     expect(effortColor('high')).toBe('#b1b9f9')
+    expect(modelId('opus[1m]')).toBe('claude-opus-5-5')
+    expect(modelId('claude-sonnet-5-5')).toBe('claude-sonnet-5-5')
+    expect(minutesLeft(2_399_000)).toBe('39m')
+    expect(minutesLeft(59_000)).toBe('<1m')
+    expect([cacheColor(1_800_000, 3_600_000), cacheColor(720_000, 3_600_000), cacheColor(700_000, 3_600_000)]).toEqual(['#5fff00', '#ffff00', '#ffaf00'])
     expect(lastSentence('Read the types. Then search engine types for link supp')).toBe('Read the types.')
     expect(handoverTitle('---\nstatus: done\nsummary: "panel corner"\n---\n# Handover: x')).toBe('panel corner')
     expect(handoverTitle('# Handover: session-panel tracker\n')).toBe('session-panel tracker')
@@ -157,5 +162,36 @@ test('the corner shows the prompted pull request in its GitHub colour, linked', 
   const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
   expect(await ui.find({ text: /claude-plugins #7/ })).toBeDefined()
   expect(await ui.find({ text: /draft/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a new session selects its model and saved effort, and lists only the commits made since it began', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.usage', () => ({ value: { startedAt: 1_700_000_000_000, context: {} as never, rateLimits: [] } }))
+  on('session.model', () => ({ value: 'opus' }))
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('command.register', () => ({ value: undefined }))
+  on('session.messages', () => ({ value: [] }))
+  on('session.id', () => ({ value: 's1' }))
+  on('ui.open', () => ({ value: undefined }))
+  on('env.get', () => ({ value: undefined }))
+  on('settings.read', () => ({ value: { effortLevel: 'medium' } }))
+  const logs: string[][] = []
+  on('process.run', ($, e) => {
+    const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    if (e.argv.includes('--show-toplevel')) return ok('/repo\n')
+    if (e.argv.includes('log')) {
+      logs.push([...e.argv])
+      return ok('')
+    }
+    return ok('')
+  })
+
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  expect(logs[0]).toContain('--since=@1700000000')
+
+  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  expect((await ui.find({ key: 'pick:model' }))?.props.label).toBe('Opus 5.5')
+  expect((await ui.find({ key: 'pick:effort' }))?.props.label).toBe('medium 2/5')
   await ui.unmount()
 })
