@@ -24,6 +24,17 @@ export type Agent = {
   history: Entry[]
 }
 
+export type FileChange = {
+  path: string
+  status: 'added' | 'modified' | 'deleted'
+  added: number
+  removed: number
+}
+
+export type RepoChanges = { root: string; files: FileChange[] }
+
+export type Picker = 'model' | 'effort' | null
+
 export type Step = { id: string; label: string; isDone: boolean }
 
 declare module 'claude-code' {
@@ -34,6 +45,9 @@ declare module 'claude-code' {
       steps: Step[]
       expanded: string | null
       stepsOpen: boolean
+      picking: Picker
+      roots: string[]
+      changes: RepoChanges[]
     }
   }
 }

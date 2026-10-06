@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { describeCall, duration, headline, prettyModel } from '../hooks/register'
+import { describeCall, duration, effortColor, headline, modelColor, prettyModel } from '../hooks/register'
 
 const PANE = {
   component: 'Pane',
@@ -25,6 +25,8 @@ describe('helpers', () => {
     expect(duration(65_000)).toBe('1m 05s')
     expect(headline('Read the pane example first. Then write it.')).toBe('Read the pane example first.')
     expect(describeCall('Bash', { command: 'ls -la' })).toBe('Bash: ls -la')
+    expect(modelColor('claude-opus-5-5[1m]')).toBe('#ef9f76')
+    expect(effortColor('high')).toBe('#b1b9f9')
   })
 })
 
@@ -96,5 +98,28 @@ test('a step shows the command it ran, and only the two latest stay unfolded', a
   expect(await ui.find({ text: /Opus 5\.5/ })).toBeDefined()
   await ui.press({ key: 'steps' })
   expect(await ui.find({ text: /Bash: echo 0/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the model and effort pills open a coloured picker that switches them', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
+  const ran: string[] = []
+  on('command.run', ($, e) => {
+    ran.push(`/${e.command} ${e.args}`)
+    return { text: '' }
+  })
+
+  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  expect(await ui.find({ key: 'model:claude-sonnet-5-5' })).toBeUndefined()
+  await ui.press({ key: 'pick:model' })
+  await ui.press({ key: 'model:claude-sonnet-5-5' })
+  expect((await ui.find({ key: 'pick:model' }))?.props.label).toBe('Sonnet 5.5')
+  expect(await ui.find({ key: 'model:claude-opus-5-5' })).toBeUndefined()
+
+  await ui.press({ key: 'pick:effort' })
+  await ui.press({ key: 'effort:xhigh' })
+  expect((await ui.find({ key: 'pick:effort' }))?.props.label).toBe('xhigh 4/5')
+  expect(ran).toEqual(['/model claude-sonnet-5-5', '/effort xhigh'])
   await ui.unmount()
 })

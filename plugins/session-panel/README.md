@@ -3,7 +3,9 @@
 A calm side pane for a Claude Code session: what runs, since when, how warm the prompt cache still is, and what every sub-agent was asked and did.
 
 ```
-Opus 5.5 · effort high
+╭────────────╮ ╭────────────╮
+│ ○ Opus 5.5 │ │ ○ high 3/5 │
+╰────────────╯ ╰────────────╯
 running 1h 12m   cache 54m 03s left (1h)
 sub-agent session no, they run inside this session
 
@@ -20,11 +22,21 @@ Running · 1                     Done · 2
 Explore · Sonnet 5.5 · 42s      general-purpose · 3m 10s
 Find the hooks that…            Review the changes…
 › Grep: turn.step               “ No issue found.
+
+Files
+claude-plugins +412 −3
+├ plugins/session-panel/
+│ ├ + README.md +58
+│ └ hooks/
+│   └ ~ register.tsx +40 −6
+└ ~ README.md +1 −1
 ```
 
-- **Header**: the main loop's model and effort, the session's age, the time left before the prompt cache expires (yellow under a minute, then how long ago it expired), and whether sub-agents run in sessions of their own (teammates) or inside this one.
+- **Selectors**: the main loop's model and effort as two rounded pills, the model in its colour (Catppuccin Frappé: Opus peach, Fable mauve, Sonnet blue, Haiku green), the effort in the colour `/effort` gives its level. Press one to open its choices, press a choice to switch (it runs `/model` or `/effort`).
+- **Header**: the session's age, the time left before the prompt cache expires (yellow under a minute, then how long ago it expired), and whether sub-agents run in sessions of their own (teammates) or inside this one.
 - **Prompt**: the session's first prompt.
 - **Steps**: one line per model request of the main loop, named by what it ran (`Bash: just validate`, `Read: src/main.rs`), or else the first sentence of its thinking or text; ✓ once answered. Only the two latest show, the earlier ones folded into one line you press to unfold, so the list never pushes the sub-agents down.
+- **Files**, at the bottom: the changes against `HEAD` of the session's repository and of every repository a tool edited in (worktrees included), as a tree following the hierarchy; `+` added, `~` modified, `−` deleted, with the lines added in green and removed in red. Refreshed after each edit or Bash command.
 - **Running / Done**: each sub-agent with its type, model, age, the task it was given and its last entries (thinking `∴`, text `“`, tool calls `›`, results `⎿`, errors `✗`). Press its name to expand the full task and history. A finished one moves to the greyed Done column.
 
 It is a mod: a plugin of function hooks, drawn by the engine (no shell script, no status line).
