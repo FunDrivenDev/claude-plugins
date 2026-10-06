@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { ago, describeCall, duration, effortColor, handoverStatus, handoverTitle, headline, lastSentence, modelColor, prettyModel, promptText } from '../hooks/register'
+import { ago, barRuns, cacheColor, describeCall, duration, effortColor, handoverStatus, handoverTitle, headline, lastSentence, minutesLeft, modelColor, modelId, prettyModel, promptText, quotaOf, span } from '../hooks/register'
 
 const PANE = {
   component: 'Pane',
@@ -29,6 +29,11 @@ describe('helpers', () => {
     expect(describeCall('Bash', { command: 'ls -la' })).toBe('Bash: ls -la')
     expect(modelColor('claude-opus-5-5[1m]')).toBe('#ef9f76')
     expect(effortColor('high')).toBe('#b1b9f9')
+    expect(modelId('opus[1m]')).toBe('claude-opus-5-5')
+    expect(modelId('claude-sonnet-5-5')).toBe('claude-sonnet-5-5')
+    expect(minutesLeft(2_399_000)).toBe('39m')
+    expect(minutesLeft(59_000)).toBe('<1m')
+    expect([cacheColor(1_800_000, 3_600_000), cacheColor(720_000, 3_600_000), cacheColor(700_000, 3_600_000)]).toEqual(['#5fff00', '#ffff00', '#ffaf00'])
     expect(lastSentence('Read the types. Then search engine types for link supp')).toBe('Read the types.')
     expect(handoverTitle('---\nstatus: done\nsummary: "panel corner"\n---\n# Handover: x')).toBe('panel corner')
     expect(handoverTitle('# Handover: session-panel tracker\n')).toBe('session-panel tracker')
@@ -157,5 +162,85 @@ test('the corner shows the prompted pull request in its GitHub colour, linked', 
   const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
   expect(await ui.find({ text: /claude-plugins #7/ })).toBeDefined()
   expect(await ui.find({ text: /draft/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a new session selects its model and saved effort, and lists only the commits made since it began', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.usage', () => ({ value: { startedAt: 1_700_000_000_000, context: {} as never, rateLimits: [] } }))
+  on('session.model', () => ({ value: 'opus' }))
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('command.register', () => ({ value: undefined }))
+  on('session.messages', () => ({ value: [] }))
+  on('session.id', () => ({ value: 's1' }))
+  on('ui.open', () => ({ value: undefined }))
+  on('env.get', () => ({ value: undefined }))
+  on('settings.read', () => ({ value: { effortLevel: 'medium' } }))
+  const logs: string[][] = []
+  on('process.run', ($, e) => {
+    const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    if (e.argv.includes('--show-toplevel')) return ok('/repo\n')
+    if (e.argv.includes('--git-common-dir')) return ok('/main/.git/worktrees/repo\n/main/.git\n')
+    if (e.argv.includes('log')) {
+      logs.push([...e.argv])
+      return ok('')
+    }
+    return ok('')
+  })
+
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  expect(logs[0]).toContain('--since=@1700000000')
+
+  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  expect((await ui.find({ key: 'pick:model' }))?.props.label).toBe('Opus 5.5')
+  expect((await ui.find({ key: 'pick:effort' }))?.props.label).toBe('medium 2/5')
+  expect(await ui.find({ text: /▣ repo/ })).toBeDefined()
+  expect(await ui.find({ text: /▣ repo/ })).toBeDefined()
+  await ui.unmount()
+})
+
+describe('quotas', () => {
+  const now = Date.parse('2026-10-06T12:00:00Z')
+  const at = (ms: number) => new Date(now + ms).toISOString()
+
+  test('judge the pace as the status line does', () => {
+    // 5h window, 2h30 elapsed: 30% lands at 60%
+    expect(quotaOf('five_hour', 30, at(9_000_000), now)?.verdict).toEqual({ text: '→60%', tone: 'ok' })
+    // 46% at half-time lands at 92%
+    expect(quotaOf('five_hour', 46, at(9_000_000), now)?.verdict?.tone).toBe('tight')
+    // 60% at half-time runs out with 1h40m of the window left to go
+    expect(quotaOf('five_hour', 60, at(9_000_000), now)?.verdict).toEqual({ text: 'out in 1h 40m', tone: 'out' })
+    // too early in the window to judge
+    expect(quotaOf('seven_day', 5, at(600_000_000), now)?.verdict).toBeNull()
+    expect(quotaOf('spend_limit', 5, undefined, now)).toBeNull()
+    expect(span(2 * 86_400_000 + 7 * 3_600_000)).toBe('2d 07h')
+  })
+
+  test('draw a bar green to the pace tick, the overshoot in the verdict colour', () => {
+    const q = quotaOf('five_hour', 60, at(9_000_000), now)!
+    const runs = barRuns(q, 10)
+    expect(runs.map(r => r.text).join('')).toBe('━━━━━┃────')
+    expect(runs.find(r => r.isPace)?.text).toBe('┃')
+    expect(runs[0]!.color).toBe('#a6d189')
+    const ahead = barRuns(quotaOf('five_hour', 85, at(9_000_000), now)!, 10).find(r => r.isAhead)
+    expect(ahead).toEqual({ text: '━━╸', color: '#e78284', isAhead: true })
+  })
+})
+
+test('the quota bars sit side by side or one per line', async ($, on) => {
+  const now = Date.parse('2026-10-06T12:00:00Z')
+  mock.clock(on, { now })
+  const rateLimits = [
+    { kind: 'five_hour', percentUsed: 30, resetsAt: new Date(now + 9_000_000).toISOString() },
+    { kind: 'seven_day', percentUsed: 71, resetsAt: new Date(now + 200_000_000).toISOString() },
+  ]
+  on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits } }))
+
+  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  expect(await ui.find({ text: /→60%/ })).toBeDefined()
+  expect(await ui.find({ text: /out in/ })).toBeDefined()
+  expect((await ui.find({ key: 'quotas:layout' }))?.props.label).toBe('⇄ one per line')
+  await ui.press({ key: 'quotas:layout' })
+  expect((await ui.find({ key: 'quotas:layout' }))?.props.label).toBe('⇄ side by side')
   await ui.unmount()
 })
