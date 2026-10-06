@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, ToolCallInput, ToolCallResult } from 'claude-code'
+import type { EngineInterface, Register, ToolCallInput, ToolCallResult, UiCopyArgs } from 'claude-code'
 
 import type { Agent, Entry, FileChange, Handover, Info, Note, NotesRoot, Picker, Quota, QuotaLayout, RepoChanges, Step, TrackedIssue, TrackedPr, Ttl } from '../types'
 
@@ -102,8 +102,8 @@ export const duration = (ms: number): string => {
   const h = Math.floor(s / 3600)
   const m = Math.floor((s % 3600) / 60)
   const sec = s % 60
-  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`
-  if (m > 0) return `${m}m ${String(sec).padStart(2, '0')}s`
+  if (h > 0) return `${h}h${String(m).padStart(2, '0')}m`
+  if (m > 0) return `${m}m${String(sec).padStart(2, '0')}s`
   return `${sec}s`
 }
 
@@ -114,6 +114,47 @@ export const minutesLeft = (ms: number): string => (ms < 60_000 ? '<1m' : `${Mat
 export const cacheColor = (left: number, ttl: number): string =>
   left * 2 >= ttl ? '#5fff00' : left * 5 >= ttl ? '#ffff00' : '#ffaf00'
 
+/** The status line's defaults: the auto-compact window, and how far below it compaction fires. */
+const WINDOW = 200_000
+const RESERVE = 33_000
+/** Where the context counter turns yellow, orange and red, as shares of the limit (CC_TOKEN_WARN, _DANGER, _ALERT). */
+const STAGES = [0.5, 0.75, 0.9] as const
+
+/** `78234` → `78.2k`, `934` → `934`, as the status line counts tokens. */
+export const kfmt = (n: number): string => (n < 1000 ? String(n) : `${Math.floor(n / 1000)}.${Math.floor((n % 1000) / 100)}k`)
+
+/**
+ * The context counter as the status line draws it: tokens against the
+ * auto-compact trigger, green to half of it, yellow to three quarters, orange
+ * to nine tenths, then red, and compacting once reached.
+ */
+export const contextOf = (tokens: number | undefined, limit: number): { text: string; color: string; isCompacting: boolean } => {
+  const cap = limit % 1000 === 0 ? `${limit / 1000}k` : kfmt(limit)
+  if (tokens === undefined) return { text: `0/${cap}`, color: '#8a8a8a', isCompacting: false }
+  const text = `${kfmt(tokens)}/${cap} ${Math.floor((tokens * 100) / limit)}%`
+  if (tokens >= limit) return { text: `${text} ⚠ compacting`, color: '#ff0000', isCompacting: true }
+  const stage = STAGES.findIndex(share => tokens <= limit * share)
+  return { text, color: ['#5fff00', '#ffff00', '#ffaf00'][stage] ?? '#ff0000', isCompacting: false }
+}
+
+/** The auto-compact trigger, as the status line reckons it: CC_TOKEN_LIMIT, else `autoCompactWindow`, else 200k; less CC_TOKEN_RESERVE. */
+async function readLimit($: EngineInterface): Promise<number> {
+  const whole = (value: unknown) => {
+    const n = typeof value === 'string' && /^\d{1,12}$/.test(value) ? Number(value) : value
+    return typeof n === 'number' && Number.isInteger(n) && n > 0 ? n : null
+  }
+  const window = whole(await $.env.get('CC_TOKEN_LIMIT')) ?? whole((await $.settings.read()).autoCompactWindow) ?? WINDOW
+  const limit = window - (whole(await $.env.get('CC_TOKEN_RESERVE')) ?? RESERVE)
+  return limit > 0 ? limit : window
+}
+
+/** The message the closing reply hands the next session: its code block after `/clear`, on one line, as the handover plugin reads it. */
+export const resumeMessage = (reply: string): string | null => {
+  const at = reply.search(/\/clear\b/)
+  const block = at < 0 ? null : /```[^\n]*\n([\s\S]*?)```/.exec(reply.slice(at))
+  return block ? block[1]!.split(/\s+/).filter(Boolean).join(' ') || null : null
+}
+
 /** The rate-limit windows the status line shows, by their length. */
 const WINDOWS: Record<string, { label: string; ms: number }> = {
   five_hour: { label: '5h', ms: 18_000_000 },
@@ -123,13 +164,13 @@ const WINDOWS: Record<string, { label: string; ms: number }> = {
 const PACE_MIN = 0.1
 const TONE = { ok: '#a6d189', tight: '#e5c890', out: '#e78284' } as const
 
-/** Coarse time left, as the status line writes it: `2d 07h`, `3h 14m`, `42m`. */
+/** Coarse time left, as the status line writes it: `2d07h`, `3h14m`, `42m`. */
 export const span = (ms: number): string => {
   const m = Math.max(0, Math.floor(ms / 60_000))
   const d = Math.floor(m / 1440)
   const h = Math.floor((m % 1440) / 60)
-  if (d > 0) return `${d}d ${String(h).padStart(2, '0')}h`
-  if (h > 0) return `${h}h ${String(m % 60).padStart(2, '0')}m`
+  if (d > 0) return `${d}d${String(h).padStart(2, '0')}h`
+  if (h > 0) return `${h}h${String(m % 60).padStart(2, '0')}m`
   return `${m}m`
 }
 
@@ -278,6 +319,12 @@ export const handoverStatus = (h: Handover, tokens: number): { text: string; col
     color: tokens >= h.trigger - h.warn ? '#e5c890' : '#a5adce',
   }
 }
+
+/** The two ways to start the next session from a written handover, each in its Catppuccin Frappé colour. */
+const NEXT_ACTIONS = [
+  { key: 'handover:run', emoji: '🚀', label: 'Run right away', color: '#a6d189', isSent: true },
+  { key: 'handover:paste', emoji: '📋', label: 'Clear and paste', color: '#8caaee', isSent: false },
+] as const
 
 const ttlMs = (ttl: Ttl): number => (ttl === '1h' ? 3_600_000 : 300_000)
 
@@ -502,6 +549,7 @@ async function readHandover($: EngineInterface) {
     return { path, title: head.exitCode === 0 ? handoverTitle(head.stdout) : null }
   }
   const written = st.written as { ok?: boolean } | undefined
+  const said = written?.ok ? (await $.session.messages()).filter(m => m.role === 'assistant').pop()?.text : undefined
   const writer = st.writer as { since?: number } | undefined
   const now = (await $.clock.now()) / 1000
   const next: Handover = {
@@ -513,9 +561,50 @@ async function readHandover($: EngineInterface) {
     warn: num('warn_tokens', 20_000),
     isWriting: typeof writer?.since === 'number' && now - writer.since < 660,
     error: typeof st.error === 'string' ? st.error : null,
+    resume: said ? resumeMessage(said) : null,
   }
   await update($, handover, () => next)
   if (next.written) await keepNotes($, [next.written.path])
+}
+
+/** How long the handover plugin's SessionStart hook may take to load the handover (its timeout, plus a margin). */
+const LOAD_WAIT_MS = 190_000
+
+/**
+ * Waits for the session that followed `cleared` to have loaded its handover:
+ * the handover plugin records `loaded_from` in the new session's state once
+ * its SessionStart hook has put the handover in the context.
+ */
+async function waitForLoad($: EngineInterface, cleared: string): Promise<boolean> {
+  const sleep = (ms: number) => new Promise<void>(resolve => $.clock.after(ms, () => resolve()))
+  const start = await $.clock.now()
+  while ((await $.clock.now()) - start < LOAD_WAIT_MS) {
+    if ((await $.session.id()) !== cleared) {
+      await readHandover($)
+      if ((await read($, handover))?.loaded) return true
+    }
+    await sleep(1000)
+  }
+  return false
+}
+
+/**
+ * Starts the next session from the handover: copies the resume message, runs
+ * `/clear` (the handover plugin loads the handover into the new session), then
+ * leaves the message in the prompt box, or sends it once the handover is
+ * loaded; left in the box when it is not.
+ */
+async function startNext($: EngineInterface, resume: string | null, surface: UiCopyArgs['surface'], isSent: boolean) {
+  if (resume) await $.ui.copy({ text: resume, surface })
+  const cleared = await $.session.id()
+  await $.command.run({ command: 'clear' })
+  if (!resume) return
+  if (isSent && (await waitForLoad($, cleared))) {
+    await $.prompt.submit({ text: resume })
+    return
+  }
+  await $.prompt.fill({ text: resume })
+  if (isSent) $.ui.toast('The handover did not load: the resume message waits in the prompt box.')
 }
 
 async function finish($: EngineInterface, agentId: string, answer?: string) {
@@ -532,6 +621,7 @@ async function finish($: EngineInterface, agentId: string, answer?: string) {
 export const register: Register = (on, options) => {
   const defaultTtl: Ttl = options.cacheTtl === '5m' ? '5m' : '1h'
   let ticker: { cancel: () => void } | null = null
+  let limit = WINDOW - RESERVE
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'session-panel', description: 'Open the session overview pane' })
@@ -541,6 +631,7 @@ export const register: Register = (on, options) => {
     ticker = $.clock.every(1000, () => {
       ticks++
       if (ticks % 5 === 0) void readHandover($)
+      if (ticks % 30 === 0) void readLimit($).then(n => (limit = n))
       if (ticks % 60 === 0) void refreshPr($)
       $.ui.invalidate('ui.render')
     })
@@ -548,6 +639,7 @@ export const register: Register = (on, options) => {
     await update($, home, () => (remote.exitCode === 0 ? repoOfRemote(remote.stdout) : null))
     hasLinearApp = (await $.process.run(['test', '-d', '/Applications/Linear.app'])).exitCode === 0
     await readHandover($)
+    limit = await readLimit($)
     await trackRepo($, e.cwd)
     await refreshFiles($)
     await seedModel($)
@@ -745,6 +837,8 @@ export const register: Register = (on, options) => {
             return { text: minutesLeft(left), color: cacheColor(left, ttlMs(ttl)) }
           })()
 
+    const context = contextOf(usage.context.tokens, limit)
+
     const running = all.filter(a => a.endedAt === null)
     const finished = all.filter(a => a.endedAt !== null)
     /** What a sub-agent is doing now: its last call, else its last thought or words. */
@@ -773,7 +867,7 @@ export const register: Register = (on, options) => {
             </Text>
             {q.verdict && <Text color={TONE[q.verdict.tone]}> {q.verdict.text}</Text>}
           </Text>
-          {q.resetsIn !== null && <Text dimColor>↻ {span(q.resetsIn)}</Text>}
+          {q.resetsIn !== null && <Text dimColor>🔄 {span(q.resetsIn)}</Text>}
         </Box>
         <Text>
           {barRuns(q, width).map((run, k) => (
@@ -893,7 +987,7 @@ export const register: Register = (on, options) => {
                 ⎇ {t.pr.repo.split('/').pop()} #{t.pr.number}
               </Text>
             </Link>
-            {t.pr.state && <Text dimColor> {t.pr.state}</Text>}
+            {t.pr.state && <Text color={prColor}> {t.pr.state}</Text>}
           </Text>
         )}
         {tree ? (
@@ -916,10 +1010,37 @@ export const register: Register = (on, options) => {
           {f ? <Link href={`file://${f.path}`} label={f.title ?? f.path.split('/').pop() ?? f.path} /> : <Text dimColor>none</Text>}
         </Text>
       )
+      const isStopped = ho.written !== null && current === null
       return [
         <Text color={status.color}>✋ {status.text}</Text>,
         file('loaded', ho.loaded),
         ...(ho.written ? [file('written', ho.written)] : []),
+        ...(isStopped
+          ? [
+              <Box key="handover:next" flexDirection="column" marginTop={1}>
+                <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
+                  {(ho.resume ? NEXT_ACTIONS : NEXT_ACTIONS.filter(a => !a.isSent)).map(a => (
+                    <Box key={`${a.key}:box`} borderStyle="round" borderColor={a.color} paddingX={1}>
+                      <Text>{a.emoji} </Text>
+                      <Button
+                        key={a.key}
+                        label={ho.resume ? a.label : 'Clear and start the next session'}
+                        plain
+                        autoFocus={a.isSent ? true : undefined}
+                        hover={{ color: a.color }}
+                        onPress={press => startNext($, ho.resume, press.surface, a.isSent)}
+                      />
+                    </Box>
+                  ))}
+                </Box>
+                {ho.resume && (
+                  <Text dimColor italic wrap="wrap">
+                    {ho.resume}
+                  </Text>
+                )}
+              </Box>,
+            ]
+          : []),
       ]
     })()
 
@@ -976,10 +1097,16 @@ export const register: Register = (on, options) => {
               </Box>
             )}
             <Text>
-              <Text dimColor>running </Text>
+              ⌛ <Text dimColor>running </Text>
               {duration(now - usage.startedAt)}
-              <Text dimColor>   cache </Text>
+              {'   '}⏳ <Text dimColor>cache </Text>
               <Text color={cache.color}>{cache.text}</Text>
+            </Text>
+            <Text>
+              <Text dimColor>context </Text>
+              <Text bold color={context.color} inverse={context.isCompacting}>
+                {context.text}
+              </Text>
             </Text>
           </Box>
           {corner}

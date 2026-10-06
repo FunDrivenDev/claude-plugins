@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { ago, barRuns, cacheColor, describeCall, duration, effortColor, handoverStatus, handoverTitle, headline, lastSentence, minutesLeft, modelColor, modelId, prettyModel, promptText, quotaOf, span } from '../hooks/register'
+import { ago, barRuns, cacheColor, contextOf, describeCall, duration, effortColor, handoverStatus, handoverTitle, headline, kfmt, lastSentence, minutesLeft, modelColor, modelId, prettyModel, promptText, quotaOf, resumeMessage, span } from '../hooks/register'
 
 const PANE = {
   component: 'Pane',
@@ -21,8 +21,8 @@ describe('helpers', () => {
   test('names models and durations calmly', async () => {
     expect(prettyModel('claude-opus-5-5')).toBe('Opus 5.5')
     expect(prettyModel('claude-haiku-4-5-20251001')).toBe('Haiku 4.5')
-    expect(duration(3_725_000)).toBe('1h 02m')
-    expect(duration(65_000)).toBe('1m 05s')
+    expect(duration(3_725_000)).toBe('1h02m')
+    expect(duration(65_000)).toBe('1m05s')
     expect(ago(125_000)).toBe('2 min ago')
     expect(ago(2 * 3_600_000 + 600_000)).toBe('2 hours ago')
     expect(headline('Read the pane example first. Then write it.')).toBe('Read the pane example first.')
@@ -37,7 +37,7 @@ describe('helpers', () => {
     expect(lastSentence('Read the types. Then search engine types for link supp')).toBe('Read the types.')
     expect(handoverTitle('---\nstatus: done\nsummary: "panel corner"\n---\n# Handover: x')).toBe('panel corner')
     expect(handoverTitle('# Handover: session-panel tracker\n')).toBe('session-panel tracker')
-    const ho = { isOn: true, loaded: null, written: null, suggest: 150_000, trigger: 185_000, warn: 20_000, isWriting: false, error: null }
+    const ho = { isOn: true, loaded: null, written: null, suggest: 150_000, trigger: 185_000, warn: 20_000, isWriting: false, error: null, resume: null }
     expect(handoverStatus(ho, 92_000).text).toBe('triggers at 185k · now 92k')
     expect(handoverStatus(ho, 170_000).color).toBe('#e5c890')
     expect(promptText('<command-name>/login</command-name>')).toBeNull()
@@ -203,17 +203,36 @@ describe('quotas', () => {
   const now = Date.parse('2026-10-06T12:00:00Z')
   const at = (ms: number) => new Date(now + ms).toISOString()
 
+  test('count the context against the auto-compact trigger, graded as the status line', () => {
+    expect(kfmt(78_234)).toBe('78.2k')
+    expect(kfmt(934)).toBe('934')
+    expect(contextOf(undefined, 167_000)).toEqual({ text: '0/167k', color: '#8a8a8a', isCompacting: false })
+    expect(contextOf(78_234, 167_000)).toEqual({ text: '78.2k/167k 46%', color: '#5fff00', isCompacting: false })
+    expect(contextOf(100_000, 167_000).color).toBe('#ffff00')
+    expect(contextOf(140_000, 167_000).color).toBe('#ffaf00')
+    expect(contextOf(160_000, 167_000).color).toBe('#ff0000')
+    expect(contextOf(170_000, 167_000)).toEqual({ text: '170.0k/167k 101% ⚠ compacting', color: '#ff0000', isCompacting: true })
+  })
+
+  test('read the resume message the closing reply ends on', () => {
+    const reply = 'Done.\n\nRun `/clear`, then send:\n\n```\nResume the session-panel work:\n  open the PR.\n```\n'
+    expect(resumeMessage(reply)).toBe('Resume the session-panel work: open the PR.')
+    expect(resumeMessage('```\nno clear before\n```')).toBeNull()
+    expect(resumeMessage('Run /clear.')).toBeNull()
+  })
+
   test('judge the pace as the status line does', () => {
     // 5h window, 2h30 elapsed: 30% lands at 60%
     expect(quotaOf('five_hour', 30, at(9_000_000), now)?.verdict).toEqual({ text: '→60%', tone: 'ok' })
     // 46% at half-time lands at 92%
     expect(quotaOf('five_hour', 46, at(9_000_000), now)?.verdict?.tone).toBe('tight')
     // 60% at half-time runs out with 1h40m of the window left to go
-    expect(quotaOf('five_hour', 60, at(9_000_000), now)?.verdict).toEqual({ text: 'out in 1h 40m', tone: 'out' })
+    expect(quotaOf('five_hour', 60, at(9_000_000), now)?.verdict).toEqual({ text: 'out in 1h40m', tone: 'out' })
     // too early in the window to judge
     expect(quotaOf('seven_day', 5, at(600_000_000), now)?.verdict).toBeNull()
     expect(quotaOf('spend_limit', 5, undefined, now)).toBeNull()
-    expect(span(2 * 86_400_000 + 7 * 3_600_000)).toBe('2d 07h')
+    expect(span(2 * 86_400_000 + 7 * 3_600_000)).toBe('2d07h')
+    expect(span(2 * 3_600_000 + 35 * 60_000)).toBe('2h35m')
   })
 
   test('draw a bar green to the pace tick, the overshoot in the verdict colour', () => {
