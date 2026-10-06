@@ -88,7 +88,7 @@ export const titleOfSlug = (slug: string | null): string | null =>
   slug ? slug.charAt(0).toUpperCase() + slug.slice(1).replace(/-/g, ' ') : null
 
 /** GitHub's own colours for a pull request's state. */
-export const PR_COLOR = { draft: '#8b949e', open: '#3fb950', closed: '#f85149', merged: '#a371f7' } as const
+export const PR_COLOR = { draft: '#babbf1', open: '#3fb950', closed: '#f85149', merged: '#a371f7' } as const
 
 /** A pull request's state from the issues API: draft, open, closed or merged. */
 export const prState = (data: { state?: string; draft?: boolean; merged?: boolean }): keyof typeof PR_COLOR =>

@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, ToolCallInput, ToolCallResult } from 'claude-code'
+import type { EngineInterface, Register, ToolCallInput, ToolCallResult, UiCopyArgs } from 'claude-code'
 
 import type { Agent, Entry, FileChange, Handover, Info, Note, NotesRoot, Picker, Quota, QuotaLayout, RepoChanges, Step, TrackedIssue, TrackedPr, Ttl } from '../types'
 
@@ -320,6 +320,12 @@ export const handoverStatus = (h: Handover, tokens: number): { text: string; col
   }
 }
 
+/** The two ways to start the next session from a written handover, each in its Catppuccin Frappé colour. */
+const NEXT_ACTIONS = [
+  { key: 'handover:run', emoji: '🚀', label: 'Run right away', color: '#a6d189', isSent: true },
+  { key: 'handover:paste', emoji: '📋', label: 'Clear and paste', color: '#8caaee', isSent: false },
+] as const
+
 const ttlMs = (ttl: Ttl): number => (ttl === '1h' ? 3_600_000 : 300_000)
 
 async function addEntry($: EngineInterface, agentId: string, entry: Entry) {
@@ -559,6 +565,46 @@ async function readHandover($: EngineInterface) {
   }
   await update($, handover, () => next)
   if (next.written) await keepNotes($, [next.written.path])
+}
+
+/** How long the handover plugin's SessionStart hook may take to load the handover (its timeout, plus a margin). */
+const LOAD_WAIT_MS = 190_000
+
+/**
+ * Waits for the session that followed `cleared` to have loaded its handover:
+ * the handover plugin records `loaded_from` in the new session's state once
+ * its SessionStart hook has put the handover in the context.
+ */
+async function waitForLoad($: EngineInterface, cleared: string): Promise<boolean> {
+  const sleep = (ms: number) => new Promise<void>(resolve => $.clock.after(ms, () => resolve()))
+  const start = await $.clock.now()
+  while ((await $.clock.now()) - start < LOAD_WAIT_MS) {
+    if ((await $.session.id()) !== cleared) {
+      await readHandover($)
+      if ((await read($, handover))?.loaded) return true
+    }
+    await sleep(1000)
+  }
+  return false
+}
+
+/**
+ * Starts the next session from the handover: copies the resume message, runs
+ * `/clear` (the handover plugin loads the handover into the new session), then
+ * leaves the message in the prompt box, or sends it once the handover is
+ * loaded; left in the box when it is not.
+ */
+async function startNext($: EngineInterface, resume: string | null, surface: UiCopyArgs['surface'], isSent: boolean) {
+  if (resume) await $.ui.copy({ text: resume, surface })
+  const cleared = await $.session.id()
+  await $.command.run({ command: 'clear' })
+  if (!resume) return
+  if (isSent && (await waitForLoad($, cleared))) {
+    await $.prompt.submit({ text: resume })
+    return
+  }
+  await $.prompt.fill({ text: resume })
+  if (isSent) $.ui.toast('The handover did not load: the resume message waits in the prompt box.')
 }
 
 async function finish($: EngineInterface, agentId: string, answer?: string) {
@@ -877,13 +923,6 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
-    /** Copies the resume message, clears the session (the handover plugin loads the handover into the next one), and leaves the message in the prompt box to send. */
-    const startNext = async (resume: string | null, surface: typeof e.surface) => {
-      if (resume) await $.ui.copy({ text: resume, surface })
-      await $.command.run({ command: 'clear' })
-      if (resume) await $.prompt.fill({ text: resume })
-    }
-
     const toggle = (which: Exclude<Picker, null>) => update($, picking, cur => (cur === which ? null : which))
 
     const pickModel = async (id: string) => {
@@ -948,7 +987,7 @@ export const register: Register = (on, options) => {
                 ⎇ {t.pr.repo.split('/').pop()} #{t.pr.number}
               </Text>
             </Link>
-            {t.pr.state && <Text dimColor> {t.pr.state}</Text>}
+            {t.pr.state && <Text color={prColor}> {t.pr.state}</Text>}
           </Text>
         )}
         {tree ? (
@@ -979,13 +1018,21 @@ export const register: Register = (on, options) => {
         ...(isStopped
           ? [
               <Box key="handover:next" flexDirection="column" marginTop={1}>
-                <Button
-                  key="handover:clear"
-                  label={ho.resume ? '⏭  /clear and paste the resume message' : '⏭  /clear and start the next session'}
-                  variant="primary"
-                  autoFocus
-                  onPress={press => startNext(ho.resume, press.surface)}
-                />
+                <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
+                  {(ho.resume ? NEXT_ACTIONS : NEXT_ACTIONS.filter(a => !a.isSent)).map(a => (
+                    <Box key={`${a.key}:box`} borderStyle="round" borderColor={a.color} paddingX={1}>
+                      <Text>{a.emoji} </Text>
+                      <Button
+                        key={a.key}
+                        label={ho.resume ? a.label : 'Clear and start the next session'}
+                        plain
+                        autoFocus={a.isSent ? true : undefined}
+                        hover={{ color: a.color }}
+                        onPress={press => startNext($, ho.resume, press.surface, a.isSent)}
+                      />
+                    </Box>
+                  ))}
+                </Box>
                 {ho.resume && (
                   <Text dimColor italic wrap="wrap">
                     {ho.resume}
