@@ -93,6 +93,17 @@ export const duration = (ms: number): string => {
   return `${sec}s`
 }
 
+/** How long ago, coarsely: minutes within the hour, then hours, then days. */
+export const ago = (ms: number): string => {
+  const minutes = Math.floor(Math.max(0, ms) / 60_000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`
+  const days = Math.floor(hours / 24)
+  return `${days} day${days > 1 ? 's' : ''} ago`
+}
+
 const oneLine = (text: string, max = 160): string => {
   const flat = text.replace(/\s+/g, ' ').trim()
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
@@ -811,19 +822,21 @@ export const register: Register = (on, options) => {
           {handoverRows}
         </Box>
 
-        {section('Steps')}
-        <Box flexDirection="column" marginBottom={1}>
+        <Box flexDirection="row">
+          {section('Steps ')}
           {folded > 0 || isStepsOpen ? (
             <Button
               key="steps"
-              label={isStepsOpen ? '▾ fold earlier steps' : `▸ ${folded} earlier steps${foldedIssues}`}
+              label={isStepsOpen ? '▾ fold earlier steps' : `▸ ${folded} earlier${foldedIssues}`}
               plain
               dimColor
               onPress={() => update($, stepsOpen, cur => !cur)}
             />
           ) : (
-            done.length === 0 && <Text dimColor>None yet.</Text>
+            done.length === 0 && <Text dimColor>none yet</Text>
           )}
+        </Box>
+        <Box flexDirection="column">
           {shownSteps.map(s => {
             const isCurrent = s === current
             const mark =
@@ -917,7 +930,7 @@ export const register: Register = (on, options) => {
                     </Box>
                     <Text dimColor wrap="truncate-end">
                       {'  '}
-                      {c.hash.slice(0, 7)} · {duration(now - c.at)} ago · {c.isPushed ? 'pushed' : 'local'}
+                      {c.hash.slice(0, 7)} · {ago(now - c.at)} · {c.isPushed ? 'pushed' : 'local'}
                     </Text>
                     {isOpen && c.body && (
                       <Box paddingLeft={2}>

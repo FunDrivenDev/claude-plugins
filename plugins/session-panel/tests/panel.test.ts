@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { describeCall, duration, effortColor, handoverStatus, handoverTitle, headline, lastSentence, modelColor, prettyModel, promptText } from '../hooks/register'
+import { ago, describeCall, duration, effortColor, handoverStatus, handoverTitle, headline, lastSentence, modelColor, prettyModel, promptText } from '../hooks/register'
 
 const PANE = {
   component: 'Pane',
@@ -23,6 +23,8 @@ describe('helpers', () => {
     expect(prettyModel('claude-haiku-4-5-20251001')).toBe('Haiku 4.5')
     expect(duration(3_725_000)).toBe('1h 02m')
     expect(duration(65_000)).toBe('1m 05s')
+    expect(ago(125_000)).toBe('2 min ago')
+    expect(ago(2 * 3_600_000 + 600_000)).toBe('2 hours ago')
     expect(headline('Read the pane example first. Then write it.')).toBe('Read the pane example first.')
     expect(describeCall('Bash', { command: 'ls -la' })).toBe('Bash: ls -la')
     expect(modelColor('claude-opus-5-5[1m]')).toBe('#ef9f76')
@@ -109,7 +111,7 @@ test('a step shows the command it ran, and only the four latest stay unfolded', 
   expect(await ui.find({ text: /^\s*echo 5$/ })).toBeUndefined()
   expect(await ui.find({ text: /Say echo 3/ })).toBeDefined()
   expect(await ui.find({ text: /Say echo 2/ })).toBeUndefined()
-  expect((await ui.find({ key: 'steps' }))?.props.label).toContain('3 earlier steps')
+  expect((await ui.find({ key: 'steps' }))?.props.label).toContain('3 earlier')
   expect(await ui.find({ text: /Opus 5\.5/ })).toBeDefined()
   await ui.press({ key: 'steps' })
   expect(await ui.find({ text: /Say echo 0/ })).toBeDefined()
