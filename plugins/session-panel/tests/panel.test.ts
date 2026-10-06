@@ -244,3 +244,43 @@ test('the quota bars sit side by side or one per line', async ($, on) => {
   expect((await ui.find({ key: 'quotas:layout' }))?.props.label).toBe('⇄ side by side')
   await ui.unmount()
 })
+
+test('the notes the session writes list under their kind, linked, by name', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
+  on('tool.call', () => ({ result: {} as never }))
+  const opened: string[] = []
+  on('process.run', ($, e) => {
+    const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    if (e.argv[0] === 'open') opened.push(e.argv[1]!)
+    if (e.argv[2]?.includes('pwd -P')) return ok('/Users/me\n/Users/me/Code/notes/personal\n')
+    if (e.argv[2]?.includes('date -r')) return ok(`${e.argv.slice(5).join('\n')}\n`)
+    return ok('')
+  })
+
+  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  expect(await ui.find({ text: /None written yet\./ })).toBeDefined()
+  await ui.unmount()
+
+  await $.tool.call({ tool: 'Write', file_path: '/Users/me/Notes/claude/reports/26-10-06-ci-ok-wrap-up.md', content: 'x' })
+  await $.tool.call({ tool: 'Bash', command: 'cat > ~/Notes/claude/plans/26-10-06-ci-ok-open-questions.md <<EOF\nx\nEOF' })
+  await $.tool.call({ tool: 'Write', file_path: '/Users/me/Code/repo/README.md', content: 'x' })
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'session-panel', surface, ...PANE })
+    expect(await ui.find({ text: /None written yet/ })).toBeUndefined()
+    expect(await ui.find({ text: /^Reports$/ })).toBeDefined()
+    expect(await ui.find({ text: /^Plans$/ })).toBeDefined()
+    if (surface === 'terminal') {
+      const link = await ui.find({ type: 'Link', text: /26-10-06-ci-ok-wrap-up/ })
+      expect(link?.props.href).toBe('file:///Users/me/Notes/claude/reports/26-10-06-ci-ok-wrap-up.md')
+    } else {
+      await ui.press({ key: 'note:claude/reports/26-10-06-ci-ok-wrap-up.md' })
+      expect(opened).toEqual(['/Users/me/Notes/claude/reports/26-10-06-ci-ok-wrap-up.md'])
+    }
+    expect(await ui.find({ text: /26-10-06-ci-ok-open-questions/ })).toBeDefined()
+    expect(await ui.find({ text: /README/ })).toBeUndefined()
+    expect(await ui.find({ text: /\.md/ })).toBeUndefined()
+    await ui.unmount()
+  }
+})
