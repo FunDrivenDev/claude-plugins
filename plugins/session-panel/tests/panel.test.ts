@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { describeCall, duration, promptText, effortColor, headline, modelColor, prettyModel } from '../hooks/register'
+import { describeCall, duration, effortColor, handoverStatus, handoverTitle, headline, lastSentence, modelColor, prettyModel, promptText } from '../hooks/register'
 
 const PANE = {
   component: 'Pane',
@@ -27,6 +27,12 @@ describe('helpers', () => {
     expect(describeCall('Bash', { command: 'ls -la' })).toBe('Bash: ls -la')
     expect(modelColor('claude-opus-5-5[1m]')).toBe('#ef9f76')
     expect(effortColor('high')).toBe('#b1b9f9')
+    expect(lastSentence('Read the types. Then search engine types for link supp')).toBe('Read the types.')
+    expect(handoverTitle('---\nstatus: done\nsummary: "panel corner"\n---\n# Handover: x')).toBe('panel corner')
+    expect(handoverTitle('# Handover: session-panel tracker\n')).toBe('session-panel tracker')
+    const ho = { isOn: true, loaded: null, written: null, suggest: 150_000, trigger: 185_000, warn: 20_000, isWriting: false, error: null }
+    expect(handoverStatus(ho, 92_000).text).toBe('triggers at 185k · now 92k')
+    expect(handoverStatus(ho, 170_000).color).toBe('#e5c890')
     expect(promptText('<command-name>/login</command-name>')).toBeNull()
     expect(promptText('<system-reminder>x</system-reminder>\n<pasted_content id="1">Build a mod</pasted_content id="1">')).toBe('Build a mod')
   })
@@ -57,7 +63,7 @@ test('the pane shows the first prompt and moves a finished sub-agent to the done
     expect(await ui.find({ text: /and another prompt/ })).toBeDefined()
     expect(await ui.find({ text: /Build a calm side panel/ })).toBeUndefined()
     expect((await ui.find({ key: 'prompts' }))?.props.label).toBe('(2)')
-    expect(await ui.find({ text: /Running · 1/ })).toBeDefined()
+    expect(await ui.find({ text: /1 running · 0 done/ })).toBeDefined()
     expect((await ui.find({ key: 'agent:a1' }))?.props.label).toContain('Find hooks')
     await ui.unmount()
   }
@@ -65,8 +71,7 @@ test('the pane shows the first prompt and moves a finished sub-agent to the done
   await $.turn.complete({ answer: 'Found them', durationMs: 5, isAborted: false, turnId: 't', agentId: 'a1', reason: 'answer' })
 
   const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
-  expect(await ui.find({ text: /Done · 1/ })).toBeDefined()
-  expect(await ui.find({ text: /Running · 0/ })).toBeDefined()
+  expect(await ui.find({ text: /0 running · 1 done/ })).toBeDefined()
   await ui.press({ key: 'agent:a1' })
   expect(await ui.find({ text: /Found them/ })).toBeDefined()
   await ui.press({ key: 'prompts' })
@@ -77,11 +82,11 @@ test('the pane shows the first prompt and moves a finished sub-agent to the done
   await ui.unmount()
 })
 
-test('a step shows the command it ran, and only the two latest stay unfolded', async ($, on) => {
+test('a step shows the command it ran, and only the four latest stay unfolded', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
   on('turn.step', async function* ($, e) {
-    const command = e.index === 3 ? 'echo 2' : `echo ${e.index}`
+    const command = e.index === 6 ? 'echo 5' : `echo ${e.index}`
     return {
       turnId: e.turnId,
       index: e.index,
@@ -92,17 +97,18 @@ test('a step shows the command it ran, and only the two latest stay unfolded', a
     }
   })
 
-  for (const index of [0, 1, 2, 3]) {
+  for (const index of [0, 1, 2, 3, 4, 5, 6]) {
     for await (const _ of $.turn.step({ turnId: 't1', index, model: 'claude-opus-5-5', effort: 'high', messageCount: 1 })) {
       // drained
     }
   }
 
   const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
-  expect(await ui.find({ text: /Say echo 2 ×2/ })).toBeDefined()
-  expect(await ui.find({ text: /^\s*echo 2$/ })).toBeDefined()
-  expect(await ui.find({ text: /Say echo 1/ })).toBeUndefined()
-  expect((await ui.find({ key: 'steps' }))?.props.label).toContain('2 earlier steps')
+  expect(await ui.find({ text: /Say echo 5 ×2/ })).toBeDefined()
+  expect(await ui.find({ text: /^\s*echo 5$/ })).toBeDefined()
+  expect(await ui.find({ text: /Say echo 3/ })).toBeDefined()
+  expect(await ui.find({ text: /Say echo 2/ })).toBeUndefined()
+  expect((await ui.find({ key: 'steps' }))?.props.label).toContain('3 earlier steps')
   expect(await ui.find({ text: /Opus 5\.5/ })).toBeDefined()
   await ui.press({ key: 'steps' })
   expect(await ui.find({ text: /Say echo 0/ })).toBeDefined()
@@ -129,5 +135,24 @@ test('the model and effort pills open a coloured picker that switches them', asy
   await ui.press({ key: 'effort:xhigh' })
   expect((await ui.find({ key: 'pick:effort' }))?.props.label).toBe('xhigh 4/5')
   expect(ran).toEqual(['/model claude-sonnet-5-5', '/effort xhigh'])
+  await ui.unmount()
+})
+
+test('the corner shows the prompted pull request in its GitHub colour, linked', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 1000, window: 200_000 }, rateLimits: [] } }))
+  on('prompt.submit', ($, e) => ({ text: e.text }))
+  on('process.run', ($, e) => {
+    if (e.argv[0] === 'gh' && e.argv[2] === 'repos/FunDrivenDev/claude-plugins/issues/7') {
+      const pr = { title: 'Publish', state: 'open', url: 'https://github.com/FunDrivenDev/claude-plugins/pull/7', isPr: true, merged: false, draft: true }
+      return { value: { exitCode: 0, stdout: JSON.stringify(pr), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
+    return { value: { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+
+  await $.prompt.submit(typed('push it to FunDrivenDev/claude-plugins#7'))
+  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  expect(await ui.find({ text: /claude-plugins #7/ })).toBeDefined()
+  expect(await ui.find({ text: /draft/ })).toBeDefined()
   await ui.unmount()
 })

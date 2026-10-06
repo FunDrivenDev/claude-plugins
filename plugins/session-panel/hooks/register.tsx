@@ -1,16 +1,18 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, ToolCallInput, ToolCallResult } from 'claude-code'
 
-import type { Agent, Entry, FileChange, Info, Picker, RepoChanges, Step, Ttl } from '../types'
+import type { Agent, Entry, FileChange, Handover, Info, Picker, RepoChanges, Step, TrackedIssue, TrackedPr, Ttl } from '../types'
 
-import { parseNumstat, parseStatus, treeRows } from './files'
+import { LOG_FORMAT, parseLog, parseNumstat, parseStatus, treeRows } from './files'
+import { PR_COLOR, RANK, findRefs, linearOfResult, prState, refsOfGh, repoOfRemote, titleOfSlug } from './tracker'
+import type { GithubRef, LinearRef } from './tracker'
 
 const PANE = 'session-panel'
 const TITLE = 'Session'
 const HISTORY_CAP = 400
 const STEPS_CAP = 300
-/** Steps shown while the list is folded: the current action and the one before. */
-const STEPS_SHOWN = 2
+/** Finished steps shown while the list is folded, above the current one. */
+const DONE_SHOWN = 4
 
 const info = atom({ plugin: 'session-panel', key: 'info' } as const, {
   model: null,
@@ -25,10 +27,25 @@ const stepsOpen = atom({ plugin: 'session-panel', key: 'stepsOpen' } as const, f
 const roots = atom({ plugin: 'session-panel', key: 'roots' } as const, [] as string[])
 const changes = atom({ plugin: 'session-panel', key: 'changes' } as const, [] as RepoChanges[])
 const UNTRACKED_COUNTED = 30
+const COMMITS_SHOWN = 8
 const EDITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Bash'])
 const prompts = atom({ plugin: 'session-panel', key: 'prompts' } as const, [] as string[])
 const view = atom({ plugin: 'session-panel', key: 'view' } as const, 'overview' as 'overview' | 'prompts')
 const picking = atom({ plugin: 'session-panel', key: 'picking' } as const, null as Picker)
+const tracker = atom({ plugin: 'session-panel', key: 'tracker' } as const, { issue: null, pr: null, mentioned: [] } as {
+  issue: TrackedIssue | null
+  pr: TrackedPr | null
+  mentioned: string[]
+})
+const handover = atom({ plugin: 'session-panel', key: 'handover' } as const, null as Handover | null)
+/** Main-loop calls that returned, possibly before the step that made them ended. */
+const returned = new Set<string>()
+let hasLinearApp = false
+/** The dock width last asked for: half the terminal, asked again when the terminal resizes. */
+let askedColumns = 0
+const home = atom({ plugin: 'session-panel', key: 'home' } as const, null as string | null)
+const LINEAR_ID = /\b[A-Z][A-Z0-9]{1,9}-\d+\b/g
+const ISSUE_ICON = { github: { glyph: '◉', color: '#3fb950' }, linear: { glyph: '◐', color: '#5e6ad2' } } as const
 
 /** The models the selector offers, each in its Catppuccin Frappé colour. */
 const MODELS = [
@@ -129,6 +146,38 @@ export const promptText = (raw: string): string | null => {
   return text || null
 }
 
+/** The last whole sentence of a text being streamed, once there is one. */
+export const lastSentence = (text: string): string | null => {
+  const sentences = text.replace(/\s+/g, ' ').match(/[^.!?]+[.!?]+(?=\s|$)/g)
+  return sentences?.length ? oneLine(sentences[sentences.length - 1]!.trim(), 200) : null
+}
+
+/** A step is current while its answer streams or a call it made has not returned. */
+export const isRunning = (s: Step): boolean => !s.isDone || !(s.toolIds ?? []).every(id => s.doneIds?.includes(id))
+
+/** A handover's title: its front matter's `summary`, else its `# Handover:` heading. */
+export const handoverTitle = (text: string): string | null => {
+  const front = /^---\n([\s\S]*?)\n---/.exec(text)?.[1]
+  const summary = front && /^summary:\s*["']?(.+?)["']?\s*$/m.exec(front)?.[1]
+  return summary || /^#\s*Hand(?:over|off):\s*(.+)$/m.exec(text)?.[1]?.trim() || null
+}
+
+const kilo = (n: number) => (n < 1000 ? String(n) : n < 10_000 ? `${(n / 1000).toFixed(1)}k` : `${Math.floor(n / 1000)}k`)
+
+/** What the handover plugin's status line says, in the same words and colours. */
+export const handoverStatus = (h: Handover, tokens: number): { text: string; color: string } => {
+  if (h.error) return { text: `failed · ${h.error}`, color: '#e78284' }
+  if (h.isWriting) return { text: 'writing…', color: '#ef9f76' }
+  if (h.written) return { text: 'ready · run /clear', color: '#a6d189' }
+  const suggested = h.suggest > 0 && tokens >= h.suggest
+  if (!h.trigger) return { text: suggested ? 'suggested' : 'trigger off', color: '#a5adce' }
+  if (tokens >= h.trigger) return { text: 'wind-down on the next tool call', color: '#ef9f76' }
+  return {
+    text: `${suggested ? 'suggested · ' : ''}triggers at ${kilo(h.trigger)} · now ${kilo(tokens)}`,
+    color: tokens >= h.trigger - h.warn ? '#e5c890' : '#a5adce',
+  }
+}
+
 const ttlMs = (ttl: Ttl): number => (ttl === '1h' ? 3_600_000 : 300_000)
 
 async function addEntry($: EngineInterface, agentId: string, entry: Entry) {
@@ -183,9 +232,138 @@ async function refreshFiles($: EngineInterface) {
       }
       files.push({ path, status: kind, added: count?.added ?? 0, removed: count?.removed ?? 0 })
     }
-    if (files.length) next.push({ root, files })
+    const log = await $.process.run(['git', '-C', root, 'log', `-n${COMMITS_SHOWN}`, `--format=${LOG_FORMAT}`])
+    const ahead = await $.process.run(['git', '-C', root, 'rev-list', '@{u}..HEAD'])
+    const unpushed = ahead.exitCode === 0 ? new Set(ahead.stdout.split('\n').filter(Boolean)) : ('all' as const)
+    const commits = log.exitCode === 0 ? parseLog(log.stdout, unpushed) : []
+    const branch = (await $.process.run(['git', '-C', root, 'branch', '--show-current'])).stdout.trim() || 'detached'
+    if (files.length || commits.length) next.push({ root, branch, files, commits })
   }
   await update($, changes, () => next)
+}
+
+/** Marks a main-loop call as returned, so the step that made it can end. */
+async function markReturned($: EngineInterface, toolUseId: string) {
+  await update($, steps, list =>
+    list.map(s => (s.toolIds?.includes(toolUseId) ? { ...s, doneIds: [...(s.doneIds ?? []), toolUseId] } : s)),
+  )
+}
+
+/** Keeps the issue or pull request seen with the best rank, the first one on a tie. */
+async function keep($: EngineInterface, slot: 'issue' | 'pr', next: TrackedIssue | TrackedPr) {
+  await update($, tracker, t => {
+    const cur = t[slot]
+    const same = cur && ('key' in cur ? cur.key : `${cur.repo}#${cur.number}`) === ('key' in next ? next.key : `${next.repo}#${next.number}`)
+    if (same) return { ...t, [slot]: { ...next, rank: Math.min(cur.rank, next.rank) } }
+    if (cur && cur.rank <= next.rank) return t
+    return { ...t, [slot]: next }
+  })
+}
+
+/** Reads a GitHub issue or pull request and keeps it in its slot. */
+async function noteGithub($: EngineInterface, ref: GithubRef, rank: number) {
+  const jq = '{title,state,url:.html_url,isPr:(.pull_request!=null),merged:(.pull_request.merged_at!=null),draft:(.draft // false)}'
+  const got = await $.process.run(['gh', 'api', `repos/${ref.repo}/issues/${ref.number}`, '--jq', jq])
+  let data: { title?: string; state?: string; url?: string; isPr?: boolean; merged?: boolean; draft?: boolean } | null = null
+  try {
+    data = got.exitCode === 0 ? JSON.parse(got.stdout) : null
+  } catch {
+    data = null
+  }
+  if (!data && ref.type === null) return
+  const isPr = data ? Boolean(data.isPr) : ref.type === 'pull'
+  const url = data?.url ?? `https://github.com/${ref.repo}/${isPr ? 'pull' : 'issues'}/${ref.number}`
+  if (isPr) {
+    const state = data ? prState(data) : null
+    await keep($, 'pr', { repo: ref.repo, number: ref.number, title: data?.title ?? null, url, state, rank })
+  } else {
+    await keep($, 'issue', { platform: 'github', key: `${ref.repo}#${ref.number}`, title: data?.title ?? null, url, appUrl: null, rank })
+  }
+}
+
+async function noteLinear($: EngineInterface, ref: LinearRef, title: string | null, rank: number) {
+  const mentioned = (await read($, tracker)).mentioned.includes(ref.id)
+  const base = ref.workspace ? `linear.app/${ref.workspace}/issue/${ref.id}` : null
+  await keep($, 'issue', {
+    platform: 'linear',
+    key: ref.id,
+    title: title ?? titleOfSlug(ref.slug),
+    url: base && `https://${base}${ref.slug ? `/${ref.slug}` : ''}`,
+    appUrl: ref.workspace ? `linear://${ref.workspace}/issue/${ref.id}` : null,
+    rank: mentioned ? RANK.prompt : rank,
+  })
+}
+
+/** Looks for the issues and pull requests a prompt names. */
+async function scanPrompt($: EngineInterface, text: string) {
+  const ids = text.match(LINEAR_ID) ?? []
+  if (ids.length) await update($, tracker, t => ({ ...t, mentioned: [...new Set([...t.mentioned, ...ids])] }))
+  for (const ref of findRefs(text, await read($, home))) {
+    if (ref.platform === 'github') await noteGithub($, ref, RANK.prompt)
+    else await noteLinear($, ref, null, RANK.prompt)
+  }
+}
+
+/** Looks for an issue or pull request a `gh` command or a Linear tool worked on. */
+async function scanCall($: EngineInterface, tool: string, input: Record<string, unknown>, ran: ToolCallResult) {
+  if (ran.deny !== undefined || ran.isError) return
+  if (tool === 'Bash' && typeof input.command === 'string') {
+    const found = refsOfGh(input.command, ran.text ?? '', await read($, home))
+    for (const ref of found?.refs ?? []) {
+      if (ref.platform === 'github') await noteGithub($, ref, found!.rank)
+      else await noteLinear($, ref, null, found!.rank)
+    }
+  } else if (/linear/i.test(tool) && ran.text) {
+    const issue = linearOfResult(ran.text)
+    if (issue) await noteLinear($, issue.ref, issue.title, /create/i.test(tool) ? RANK.created : RANK.worked)
+  }
+}
+
+/** Reads the shown pull request's state again: it moves on GitHub. */
+async function refreshPr($: EngineInterface) {
+  const pr = (await read($, tracker)).pr
+  if (pr) await noteGithub($, { platform: 'github', repo: pr.repo, number: pr.number, type: 'pull' }, pr.rank)
+}
+
+const HANDOVER_READ = `d="$HOME/.claude/plugins/data/handover-fundriven"
+test -e "$d/live/$1" && echo on
+echo "@@"; cat "$d/sessions/$1.json" 2>/dev/null
+echo "@@"; cat "$d/options.json" 2>/dev/null`
+
+/** Reads the handover plugin's state for this session, as its status line does. */
+async function readHandover($: EngineInterface) {
+  const sid = await $.session.id()
+  const out = await $.process.run(['sh', '-c', HANDOVER_READ, 'sh', sid])
+  const [live = '', state = '', opts = ''] = out.stdout.split('@@\n')
+  const parse = (text: string): Record<string, unknown> => {
+    try {
+      return JSON.parse(text) as Record<string, unknown>
+    } catch {
+      return {}
+    }
+  }
+  const st = parse(state)
+  const opt = parse(opts)
+  const num = (key: string, fallback: number) => (typeof opt[key] === 'number' ? (opt[key] as number) : fallback)
+  const titled = async (path: unknown) => {
+    if (typeof path !== 'string' || !path) return null
+    const head = await $.process.run(['head', '-n', '40', path])
+    return { path, title: head.exitCode === 0 ? handoverTitle(head.stdout) : null }
+  }
+  const written = st.written as { ok?: boolean } | undefined
+  const writer = st.writer as { since?: number } | undefined
+  const now = (await $.clock.now()) / 1000
+  const next: Handover = {
+    isOn: live.trim() === 'on',
+    loaded: await titled(st.loaded_from),
+    written: written?.ok ? await titled(st.path) : null,
+    suggest: num('suggest_tokens', 150_000),
+    trigger: num('trigger_tokens', 185_000),
+    warn: num('warn_tokens', 20_000),
+    isWriting: typeof writer?.since === 'number' && now - writer.since < 660,
+    error: typeof st.error === 'string' ? st.error : null,
+  }
+  await update($, handover, () => next)
 }
 
 async function finish($: EngineInterface, agentId: string, answer?: string) {
@@ -207,7 +385,17 @@ export const register: Register = (on, options) => {
     await $.command.register({ name: 'session-panel', description: 'Open the session overview pane' })
     void $.ui.open({ id: PANE, title: TITLE })
     ticker?.cancel()
-    ticker = $.clock.every(1000, () => $.ui.invalidate('ui.render'))
+    let ticks = 0
+    ticker = $.clock.every(1000, () => {
+      ticks++
+      if (ticks % 5 === 0) void readHandover($)
+      if (ticks % 60 === 0) void refreshPr($)
+      $.ui.invalidate('ui.render')
+    })
+    const remote = await $.process.run(['git', '-C', e.cwd, 'remote', 'get-url', 'origin'])
+    await update($, home, () => (remote.exitCode === 0 ? repoOfRemote(remote.stdout) : null))
+    hasLinearApp = (await $.process.run(['test', '-d', '/Applications/Linear.app'])).exitCode === 0
+    await readHandover($)
     await trackRepo($, e.cwd)
     await refreshFiles($)
 
@@ -217,6 +405,7 @@ export const register: Register = (on, options) => {
         .map(m => promptText(m.text))
         .filter((text): text is string => text !== null)
       if (typed.length) await update($, prompts, () => typed)
+      for (const text of typed) await scanPrompt($, text)
     }
 
     return next(e)
@@ -229,7 +418,10 @@ export const register: Register = (on, options) => {
 
   on('prompt.submit', async ($, e, next) => {
     const text = e.origin.kind === 'composer' ? promptText(e.text) : null
-    if (text) await update($, prompts, list => [...list, text])
+    if (text) {
+      await update($, prompts, list => [...list, text])
+      await scanPrompt($, text)
+    }
     return next(e)
   })
 
@@ -249,6 +441,7 @@ export const register: Register = (on, options) => {
     const thinking = new Map<number, string>()
     const text = new Map<number, string>()
     const toolIds: string[] = []
+    let live = 'Thinking…'
     const stream = next(e)
     let item = await stream.next()
     while (!item.done) {
@@ -256,6 +449,16 @@ export const register: Register = (on, options) => {
       if (chunk.kind === 'thinking') thinking.set(chunk.index, (thinking.get(chunk.index) ?? '') + chunk.text)
       if (chunk.kind === 'text') text.set(chunk.index, (text.get(chunk.index) ?? '') + chunk.text)
       if (chunk.kind === 'tool') toolIds.push(chunk.id)
+      if (!agentId) {
+        const label =
+          chunk.kind === 'tool'
+            ? `${chunk.name}…`
+            : lastSentence([...(chunk.kind === 'text' ? text : thinking).values()].join(' ')) ?? live
+        if (label !== live) {
+          live = label
+          await update($, steps, list => list.map(s => (s.id === stepId ? { ...s, label } : s)))
+        }
+      }
       yield chunk
       item = await stream.next()
     }
@@ -283,7 +486,7 @@ export const register: Register = (on, options) => {
         const repeats = same ? (same.repeats ?? 1) + 1 : undefined
         return list.map(s =>
           s.id === stepId
-            ? { ...s, label, how, why, toolIds, isDone: true, ...(repeats ? { flag: 'repeat' as const, repeats } : {}) }
+            ? { ...s, label, how, why, toolIds, doneIds: toolIds.filter(id => returned.has(id)), isDone: true, ...(repeats ? { flag: 'repeat' as const, repeats } : {}) }
             : s,
         )
       })
@@ -323,23 +526,22 @@ export const register: Register = (on, options) => {
 
   on('tool.call', async ($, e, next) => {
     const agentId = e.agentId
-    if (EDITING_TOOLS.has(String(e.tool))) {
-      const ran = await next(e)
-      const path = (e as unknown as { file_path?: unknown; notebook_path?: unknown }).file_path
+    const ran = await next(e)
+    const tool = String(e.tool)
+    const input = e as unknown as Record<string, unknown>
+    if (EDITING_TOOLS.has(tool)) {
+      const path = input.file_path
       if (typeof path === 'string' && path.includes('/')) await trackRepo($, path.slice(0, path.lastIndexOf('/')) || '/')
       refresh?.cancel()
       refresh = $.clock.after(400, () => void refreshFiles($))
-      if (agentId) await logCall($, agentId, e, ran)
-      else await flagStep($, e.tool_use_id, ran)
-      return ran
     }
-    if (!agentId) {
-      const ran = await next(e)
+    if (agentId) await logCall($, agentId, e, ran)
+    else {
+      returned.add(e.tool_use_id)
       await flagStep($, e.tool_use_id, ran)
-      return ran
+      await markReturned($, e.tool_use_id)
     }
-    const ran = await next(e)
-    await logCall($, agentId, e, ran)
+    await scanCall($, tool, input, ran)
     return ran
   })
 
@@ -356,8 +558,8 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
-    const [now, i, all, done, open, isStepsOpen, picker, repos, typed, shown] = await Promise.all([
+    const { Box, Text, Button, Link } = $.ui.resolve(e)
+    const [now, i, all, done, open, isStepsOpen, picker, repos, typed, shown, t, ho] = await Promise.all([
       $.clock.now(),
       read($, info),
       read($, agents),
@@ -368,8 +570,15 @@ export const register: Register = (on, options) => {
       read($, changes),
       read($, prompts),
       read($, view),
+      read($, tracker),
+      read($, handover),
     ])
     const usage = await $.session.usage()
+    const half = e.viewport && e.surface === 'terminal' ? Math.floor(e.viewport.columns / 2) - 4 : 0
+    if (half > 20 && half !== askedColumns) {
+      askedColumns = half
+      void $.ui.open({ id: PANE, title: TITLE, columns: half })
+    }
 
     const ttl = i.ttl ?? defaultTtl
     const cache =
@@ -383,16 +592,12 @@ export const register: Register = (on, options) => {
 
     const running = all.filter(a => a.endedAt === null)
     const finished = all.filter(a => a.endedAt !== null)
-    const teammates = all.filter(a => a.isTeammate)
-    const background = all.filter(a => a.isBackground && !a.isTeammate)
-    const dedicated =
-      teammates.length > 0
-        ? `yes, ${teammates.length} teammate session${teammates.length > 1 ? 's' : ''}`
-        : all.length === 0
-          ? 'none yet'
-          : background.length > 0
-            ? `no, ${background.length} in background here`
-            : 'no, they run inside this session'
+    /** What a sub-agent is doing now: its last call, else its last thought or words. */
+    const currentTask = (a: Agent) => {
+      const last = [...a.history].reverse().find(entry => entry.kind !== 'result')
+      return last ? last.text : 'starting…'
+    }
+    const kindOf = (a: Agent) => (a.isTeammate ? 'teammate' : a.isBackground ? 'background' : 'sub-agent')
 
     const section = (title: string) => (
       <Text bold color="claude">
@@ -473,7 +678,10 @@ export const register: Register = (on, options) => {
             )
           : null
 
-    const shownSteps = isStepsOpen ? done : done.slice(-STEPS_SHOWN)
+    const last = done[done.length - 1]
+    const current = last && isRunning(last) ? last : null
+    const completed = current ? done.slice(0, -1) : done
+    const shownSteps = isStepsOpen ? done : [...completed.slice(-DONE_SHOWN), ...(current ? [current] : [])]
     const folded = done.length - shownSteps.length
     const hidden = done.slice(0, folded)
     const foldedIssues = (['refused', 'failed', 'repeat'] as const)
@@ -481,6 +689,50 @@ export const register: Register = (on, options) => {
       .filter(([, n]) => n > 0)
       .map(([flag, n]) => ` · ${n} ${flag === 'repeat' ? 'repeated' : flag}`)
       .join('')
+
+    const issueHref = t.issue && (e.surface === 'terminal' && hasLinearApp && t.issue.appUrl ? t.issue.appUrl : t.issue.url)
+    const prColor = t.pr?.state ? PR_COLOR[t.pr.state] : '#a5adce'
+    const corner = (
+      <Box flexDirection="column" alignItems="flex-end" flexShrink={1}>
+        {t.issue && (
+          <Text wrap="truncate-end">
+            <Text color={ISSUE_ICON[t.issue.platform].color}>{ISSUE_ICON[t.issue.platform].glyph} </Text>
+            {issueHref ? (
+              <Link href={issueHref} label={t.issue.title ?? t.issue.key} />
+            ) : (
+              t.issue.title ?? t.issue.key
+            )}
+          </Text>
+        )}
+        {t.pr && (
+          <Text wrap="truncate-end">
+            <Link href={t.pr.url}>
+              <Text color={prColor}>
+                ⎇ {t.pr.repo.split('/').pop()} #{t.pr.number}
+              </Text>
+            </Link>
+            {t.pr.state && <Text dimColor> {t.pr.state}</Text>}
+          </Text>
+        )}
+      </Box>
+    )
+
+    const handoverRows = (() => {
+      if (!ho) return [<Text dimColor>Not read yet.</Text>]
+      if (!ho.isOn) return [<Text dimColor>The handover plugin is off in this session.</Text>]
+      const status = handoverStatus(ho, usage.context.tokens ?? 0)
+      const file = (label: string, f: { path: string; title: string | null } | null) => (
+        <Text wrap="truncate-end">
+          <Text dimColor>{label} </Text>
+          {f ? <Link href={`file://${f.path}`} label={f.title ?? f.path.split('/').pop() ?? f.path} /> : <Text dimColor>none</Text>}
+        </Text>
+      )
+      return [
+        <Text color={status.color}>✋ {status.text}</Text>,
+        file('loaded', ho.loaded),
+        ...(ho.written ? [file('written', ho.written)] : []),
+      ]
+    })()
 
     if (shown === 'prompts') {
       return (
@@ -497,33 +749,52 @@ export const register: Register = (on, options) => {
       )
     }
 
+    const agentLine = (a: Agent, isDone: boolean) => {
+      const key = a.id ?? a.toolUseId
+      if (open === key) return card(a, isDone)
+      return (
+        <Box key={key} flexDirection="column">
+          <Button
+            key={`agent:${key}`}
+            label={`▸ ${a.description}`}
+            plain
+            dimColor={isDone}
+            onPress={() => update($, expanded, cur => (cur === key ? null : key))}
+          />
+          <Text dimColor wrap="truncate-end">
+            {'  '}
+            {kindOf(a)} · {duration((a.endedAt ?? now) - a.startedAt)} · {isDone ? 'done' : currentTask(a)}
+          </Text>
+        </Box>
+      )
+    }
+
     return (
       <Box flexDirection="column" paddingX={1}>
-        <Box flexDirection="column" marginBottom={1}>
-          <Box flexDirection="row" columnGap={1}>
-            {pill('pick:model', i.model ? prettyModel(i.model) : 'model…', modelColor(i.model), picker === 'model', () =>
-              toggle('model'),
-            )}
-            {pill('pick:effort', effortLabel(i.effort), effortColor(i.effort), picker === 'effort', () =>
-              toggle('effort'),
-            )}
-          </Box>
-          {options && (
-            <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
-              {options}
+        <Box flexDirection="row" justifyContent="space-between" columnGap={2} marginBottom={1}>
+          <Box flexDirection="column" flexShrink={0}>
+            <Box flexDirection="row" columnGap={1}>
+              {pill('pick:model', i.model ? prettyModel(i.model) : 'model…', modelColor(i.model), picker === 'model', () =>
+                toggle('model'),
+              )}
+              {pill('pick:effort', effortLabel(i.effort), effortColor(i.effort), picker === 'effort', () =>
+                toggle('effort'),
+              )}
             </Box>
-          )}
-          <Text>
-            <Text dimColor>running </Text>
-            {duration(now - usage.startedAt)}
-            <Text dimColor>   cache </Text>
-            <Text color={cache.color}>{cache.text}</Text>
-            <Text dimColor> ({ttl})</Text>
-          </Text>
-          <Text>
-            <Text dimColor>sub-agent session </Text>
-            {dedicated}
-          </Text>
+            {options && (
+              <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
+                {options}
+              </Box>
+            )}
+            <Text>
+              <Text dimColor>running </Text>
+              {duration(now - usage.startedAt)}
+              <Text dimColor>   cache </Text>
+              <Text color={cache.color}>{cache.text}</Text>
+              <Text dimColor> ({ttl})</Text>
+            </Text>
+          </Box>
+          {corner}
         </Box>
 
         <Box flexDirection="row">
@@ -540,95 +811,126 @@ export const register: Register = (on, options) => {
           <Text wrap="wrap">{typed.length ? oneLine(typed[typed.length - 1]!, 360) : '—'}</Text>
         </Box>
 
+        {section('Handover')}
+        <Box flexDirection="column" marginBottom={1}>
+          {handoverRows}
+        </Box>
+
         {section('Steps')}
         <Box flexDirection="column" marginBottom={1}>
-          {done.length > STEPS_SHOWN ? (
+          {folded > 0 || isStepsOpen ? (
             <Button
               key="steps"
-              label={isStepsOpen ? `▾ fold ${done.length - STEPS_SHOWN} earlier steps` : `▸ ${folded} earlier steps${foldedIssues}`}
+              label={isStepsOpen ? '▾ fold earlier steps' : `▸ ${folded} earlier steps${foldedIssues}`}
               plain
               dimColor
               onPress={() => update($, stepsOpen, cur => !cur)}
             />
           ) : (
-            <Text dimColor>{done.length === 0 ? 'None yet.' : ' '}</Text>
+            done.length === 0 && <Text dimColor>None yet.</Text>
           )}
           {shownSteps.map(s => {
+            const isCurrent = s === current
             const mark =
               s.flag === 'refused' || s.flag === 'failed'
                 ? { glyph: '✗ ', color: '#e78284' }
                 : s.flag === 'repeat'
                   ? { glyph: '↻ ', color: '#e5c890' }
-                  : s.isDone
-                    ? { glyph: '✓ ', color: '#a6d189' }
-                    : { glyph: '○ ', color: '#e5c890' }
+                  : isCurrent
+                    ? { glyph: '● ', color: '#e5c890' }
+                    : { glyph: '✓ ', color: '#a6d189' }
             const isIssue = s.flag !== undefined
             return (
               <Box key={s.id} flexDirection="column">
-                <Text wrap="truncate-end" dimColor={s.isDone && !isIssue}>
+                <Text wrap="wrap" dimColor={!isCurrent && !isIssue}>
                   <Text color={mark.color}>{mark.glyph}</Text>
                   {s.label}
                   {s.flag === 'repeat' && <Text color="#e5c890"> ×{s.repeats}</Text>}
                 </Text>
-                {isStepsOpen && s.why && (
-                  <Text dimColor italic wrap="truncate-end">
+                {(isStepsOpen || isCurrent) && s.why && (
+                  <Text dimColor italic wrap="wrap">
                     {'  ∴ '}
                     {s.why}
                   </Text>
                 )}
-                <Text dimColor wrap="truncate-end" color={s.note ? '#e78284' : undefined}>
-                  {'  '}
-                  {s.note ? `${s.flag}: ${s.note}` : s.how ?? ' '}
-                </Text>
+                {(s.note || s.how) && (
+                  <Text dimColor wrap="wrap" color={s.note ? '#e78284' : undefined}>
+                    {'  '}
+                    {s.note ? `${s.flag}: ${s.note}` : s.how}
+                  </Text>
+                )}
               </Box>
             )
           })}
-          {Array.from({ length: 2 * Math.max(0, STEPS_SHOWN - shownSteps.length) }, () => (
-            <Text> </Text>
-          ))}
         </Box>
 
-        <Box flexDirection="row" columnGap={2}>
-          <Box flexDirection="column" width="50%">
-            {section(`Running · ${running.length}`)}
-            {running.length === 0 && <Text dimColor>No sub-agent running.</Text>}
-            {running.map(a => card(a, false))}
-          </Box>
-          <Box flexDirection="column" width="50%">
-            <Text bold dimColor>
-              Done · {finished.length}
-            </Text>
-            {finished.length === 0 && <Text dimColor>—</Text>}
-            {[...finished].reverse().map(a => card(a, true))}
-          </Box>
+        {section(`Sub-agents · ${running.length} running · ${finished.length} done`)}
+        <Box flexDirection="column">
+          {all.length === 0 && <Text dimColor>None yet.</Text>}
+          {running.map(a => agentLine(a, false))}
+          {[...finished].reverse().map(a => agentLine(a, true))}
         </Box>
         <Box flexDirection="column" marginTop={1}>
-          {section('Files')}
+          {section('Files and history')}
           {repos.length === 0 && <Text dimColor>No change.</Text>}
           {repos.map(repo => (
-            <Box key={repo.root} flexDirection="column">
+            <Box key={repo.root} flexDirection="column" marginBottom={1}>
               <Text dimColor>
-                {repo.root.split('/').pop()}{' '}
+                {repo.root.split('/').pop()} <Text color="#8caaee">⎇ {repo.branch}</Text>{' '}
                 <Text color="#a6d189">+{repo.files.reduce((n, f) => n + f.added, 0)}</Text>{' '}
                 <Text color="#e78284">−{repo.files.reduce((n, f) => n + f.removed, 0)}</Text>
               </Text>
-              {treeRows(repo.files).map(row => (
-                <Text wrap="truncate-end">
-                  <Text dimColor>{row.indent}</Text>
-                  {row.change ? (
-                    <Text>
-                      <Text color={SIGN_COLOR[row.change.status]}>{SIGN[row.change.status]} </Text>
-                      <Text dimColor={row.change.status === 'deleted'} strikethrough={row.change.status === 'deleted'}>
-                        {row.name}
-                      </Text>{' '}
-                      {row.change.added > 0 && <Text color="#a6d189">+{row.change.added} </Text>}
-                      {row.change.removed > 0 && <Text color="#e78284">−{row.change.removed}</Text>}
+              <Box flexDirection="row" columnGap={2}>
+                <Box flexDirection="column" width="50%">
+                  {repo.files.length === 0 && <Text dimColor>No change.</Text>}
+                  {treeRows(repo.files).map(row => (
+                    <Text wrap="truncate-end">
+                      <Text dimColor>{row.indent}</Text>
+                      {row.change ? (
+                        <Text>
+                          <Text color={SIGN_COLOR[row.change.status]}>{SIGN[row.change.status]} </Text>
+                          <Text dimColor={row.change.status === 'deleted'} strikethrough={row.change.status === 'deleted'}>
+                            {row.name}
+                          </Text>{' '}
+                          {row.change.added > 0 && <Text color="#a6d189">+{row.change.added} </Text>}
+                          {row.change.removed > 0 && <Text color="#e78284">−{row.change.removed}</Text>}
+                        </Text>
+                      ) : (
+                        <Text dimColor>{row.name}</Text>
+                      )}
                     </Text>
-                  ) : (
-                    <Text dimColor>{row.name}</Text>
-                  )}
-                </Text>
-              ))}
+                  ))}
+                </Box>
+                <Box flexDirection="column" width="50%">
+                  {repo.commits.map(c => {
+                    const key = `commit:${repo.root}:${c.hash}`
+                    const isOpen = open === key
+                    return (
+                      <Box key={key} flexDirection="column">
+                        <Box flexDirection="row">
+                          <Text color={c.isPushed ? '#a6d189' : '#e5c890'}>{c.isPushed ? '● ' : '○ '}</Text>
+                          <Button
+                            key={key}
+                            label={c.subject}
+                            plain
+                            dimColor={c.isPushed && !isOpen}
+                            onPress={() => update($, expanded, cur => (cur === key ? null : key))}
+                          />
+                        </Box>
+                        <Text dimColor wrap="truncate-end">
+                          {'  '}
+                          {c.hash.slice(0, 7)} · {duration(now - c.at)} ago · {c.isPushed ? 'pushed' : 'local'}
+                        </Text>
+                        {isOpen && c.body && (
+                          <Box paddingLeft={2}>
+                            <Text wrap="wrap">{c.body}</Text>
+                          </Box>
+                        )}
+                      </Box>
+                    )
+                  })}
+                </Box>
+              </Box>
             </Box>
           ))}
         </Box>

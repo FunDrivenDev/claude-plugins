@@ -1,4 +1,4 @@
-import type { FileChange } from '../types'
+import type { Commit, FileChange } from '../types'
 
 /** `git status --porcelain=v1 -z` → each changed path and how it changed. */
 export const parseStatus = (out: string): Map<string, FileChange['status']> => {
@@ -78,3 +78,17 @@ export const treeRows = (changes: readonly FileChange[]): TreeRow[] => {
   walk(root, '')
   return rows
 }
+
+/** The `git log` format `parseLog` reads: hash, time, subject and body, unit-separated. */
+export const LOG_FORMAT = '%H%x1f%ct%x1f%s%x1f%b%x1e'
+
+/** `git log --format=LOG_FORMAT` → commits, pushed unless `unpushed` holds them. */
+export const parseLog = (out: string, unpushed: ReadonlySet<string> | 'all'): Commit[] =>
+  out
+    .split('\x1e')
+    .map(record => record.replace(/^\n/, ''))
+    .filter(record => record.includes('\x1f'))
+    .map(record => {
+      const [hash = '', at = '0', subject = '', body = ''] = record.split('\x1f')
+      return { hash, subject, body: body.trim(), at: Number(at) * 1000, isPushed: unpushed !== 'all' && !unpushed.has(hash) }
+    })
