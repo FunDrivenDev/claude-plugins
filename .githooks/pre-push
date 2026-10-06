@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# No push with a failing check: lint, smoke tests, the validator and the mods' tests.
+set -euo pipefail
+just check

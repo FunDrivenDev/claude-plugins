@@ -1,4 +1,4 @@
-# Continuous integration: the same `just` recipes as the pre-commit hook, with
+# Continuous integration: `just lint` and `just test`, as the git hooks run them, with
 # the toolchain from mise.toml. The smoke tests also run on macOS, whose
 # /bin/bash 3.2 is what most colleagues' status lines run under.
 name: CI
@@ -31,7 +31,7 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
-          install_args: just shellcheck actionlint
+          install_args: just shellcheck actionlint biome
       - run: just lint
 
   test:
