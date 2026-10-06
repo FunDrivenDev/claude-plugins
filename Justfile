@@ -16,6 +16,6 @@ lint:
 test:
     mise exec -- tests/run.sh
 
-# Check the marketplace and every plugin with Claude Code's own validator (needs the claude CLI, so not in CI).
+# Check the marketplace and every plugin with Claude Code's own validator, and run the mods' tests (needs the claude CLI, so not in CI).
 validate:
     scripts/validate.sh
