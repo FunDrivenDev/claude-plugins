@@ -18,8 +18,9 @@ Tools are pinned in `mise.toml` and run through `just`:
 | Recipe | What it does |
 |---|---|
 | `just init` | Installs the pinned tools and turns on the git hooks (`.githooks`); safe to re-run |
-| `just lint` | `shellcheck` on every shell script and hook, `actionlint` on CI |
+| `just lint` | `shellcheck` on every shell script and hook, `actionlint` on CI, `biome lint` on the mods' TypeScript (`biome.json`) |
 | `just test` | The plugins' smoke tests, under the default `bash` and macOS's `/bin/bash` 3.2 |
 | `just validate` | `claude plugin validate` on the marketplace and each plugin, and `claude plugin test` on each plugin with tests (needs the `claude` CLI) |
+| `just check` | All of the above: `lint`, `test`, `validate` |
 
-The pre-commit hook runs `just lint` and `just test`; CI runs the same, the tests on Linux and macOS. Renovate keeps the tools and the actions current.
+The pre-commit hook runs `just lint`, the pre-push hook `just check`; CI runs `just lint` and `just test`, the tests on Linux and macOS. Renovate keeps the tools and the actions current.
