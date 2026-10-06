@@ -3,7 +3,6 @@ export type Ttl = '5m' | '1h'
 export type Info = {
   model: string | null
   effort: string | null
-  firstPrompt: string | null
   lastRequestAt: number | null
   ttl: Ttl | null
 }
@@ -35,7 +34,21 @@ export type RepoChanges = { root: string; files: FileChange[] }
 
 export type Picker = 'model' | 'effort' | null
 
-export type Step = { id: string; label: string; isDone: boolean }
+export type Step = {
+  id: string
+  /** What the step did, in the agent's own words (a Bash call's description). */
+  label: string
+  /** How: the command, path or pattern. */
+  how?: string
+  /** Why: the first sentence of the thinking before it. */
+  why?: string
+  toolIds?: string[]
+  isDone: boolean
+  /** Refused or failed calls, and the same action taken again. */
+  flag?: 'refused' | 'failed' | 'repeat'
+  note?: string
+  repeats?: number
+}
 
 declare module 'claude-code' {
   interface PluginState {
@@ -46,6 +59,8 @@ declare module 'claude-code' {
       expanded: string | null
       stepsOpen: boolean
       picking: Picker
+      prompts: string[]
+      view: 'overview' | 'prompts'
       roots: string[]
       changes: RepoChanges[]
     }

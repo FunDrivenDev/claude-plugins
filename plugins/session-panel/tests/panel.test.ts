@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { describeCall, duration, effortColor, headline, modelColor, prettyModel } from '../hooks/register'
+import { describeCall, duration, promptText, effortColor, headline, modelColor, prettyModel } from '../hooks/register'
 
 const PANE = {
   component: 'Pane',
@@ -27,6 +27,8 @@ describe('helpers', () => {
     expect(describeCall('Bash', { command: 'ls -la' })).toBe('Bash: ls -la')
     expect(modelColor('claude-opus-5-5[1m]')).toBe('#ef9f76')
     expect(effortColor('high')).toBe('#b1b9f9')
+    expect(promptText('<command-name>/login</command-name>')).toBeNull()
+    expect(promptText('<system-reminder>x</system-reminder>\n<pasted_content id="1">Build a mod</pasted_content id="1">')).toBe('Build a mod')
   })
 })
 
@@ -52,8 +54,9 @@ test('the pane shows the first prompt and moves a finished sub-agent to the done
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'session-panel', surface, ...PANE })
-    expect(await ui.find({ text: /Build a calm side panel/ })).toBeDefined()
-    expect(await ui.find({ text: /another prompt/ })).toBeUndefined()
+    expect(await ui.find({ text: /and another prompt/ })).toBeDefined()
+    expect(await ui.find({ text: /Build a calm side panel/ })).toBeUndefined()
+    expect((await ui.find({ key: 'prompts' }))?.props.label).toBe('(2)')
     expect(await ui.find({ text: /Running · 1/ })).toBeDefined()
     expect((await ui.find({ key: 'agent:a1' }))?.props.label).toContain('Find hooks')
     await ui.unmount()
@@ -66,6 +69,11 @@ test('the pane shows the first prompt and moves a finished sub-agent to the done
   expect(await ui.find({ text: /Running · 0/ })).toBeDefined()
   await ui.press({ key: 'agent:a1' })
   expect(await ui.find({ text: /Found them/ })).toBeDefined()
+  await ui.press({ key: 'prompts' })
+  expect(await ui.find({ text: /Build a calm side panel/ })).toBeDefined()
+  expect(await ui.find({ text: /and another prompt/ })).toBeDefined()
+  await ui.press({ key: 'prompts:back' })
+  expect(await ui.find({ key: 'prompts' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -73,12 +81,12 @@ test('a step shows the command it ran, and only the two latest stay unfolded', a
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
   on('turn.step', async function* ($, e) {
-    const command = `echo ${e.index}`
+    const command = e.index === 3 ? 'echo 2' : `echo ${e.index}`
     return {
       turnId: e.turnId,
       index: e.index,
       answer: '',
-      toolUses: [{ name: 'Bash', input: { command } }],
+      toolUses: [{ name: 'Bash', input: { command, description: `Say ${command}` } }],
       stopReason: 'tool_use' as const,
       usage: null,
     }
@@ -91,13 +99,13 @@ test('a step shows the command it ran, and only the two latest stay unfolded', a
   }
 
   const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
-  expect(await ui.find({ text: /Bash: echo 3/ })).toBeDefined()
-  expect(await ui.find({ text: /Bash: echo 2/ })).toBeDefined()
-  expect(await ui.find({ text: /Bash: echo 1/ })).toBeUndefined()
+  expect(await ui.find({ text: /Say echo 2 ×2/ })).toBeDefined()
+  expect(await ui.find({ text: /^\s*echo 2$/ })).toBeDefined()
+  expect(await ui.find({ text: /Say echo 1/ })).toBeUndefined()
   expect((await ui.find({ key: 'steps' }))?.props.label).toContain('2 earlier steps')
   expect(await ui.find({ text: /Opus 5\.5/ })).toBeDefined()
   await ui.press({ key: 'steps' })
-  expect(await ui.find({ text: /Bash: echo 0/ })).toBeDefined()
+  expect(await ui.find({ text: /Say echo 0/ })).toBeDefined()
   await ui.unmount()
 })
 

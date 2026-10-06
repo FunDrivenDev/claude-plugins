@@ -15,7 +15,6 @@ const STEPS_SHOWN = 2
 const info = atom({ plugin: 'session-panel', key: 'info' } as const, {
   model: null,
   effort: null,
-  firstPrompt: null,
   lastRequestAt: null,
   ttl: null,
 } as Info)
@@ -27,6 +26,8 @@ const roots = atom({ plugin: 'session-panel', key: 'roots' } as const, [] as str
 const changes = atom({ plugin: 'session-panel', key: 'changes' } as const, [] as RepoChanges[])
 const UNTRACKED_COUNTED = 30
 const EDITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Bash'])
+const prompts = atom({ plugin: 'session-panel', key: 'prompts' } as const, [] as string[])
+const view = atom({ plugin: 'session-panel', key: 'view' } as const, 'overview' as 'overview' | 'prompts')
 const picking = atom({ plugin: 'session-panel', key: 'picking' } as const, null as Picker)
 
 /** The models the selector offers, each in its Catppuccin Frappé colour. */
@@ -101,6 +102,33 @@ export const describeCall = (tool: string, input: Record<string, unknown>): stri
 const SIGN: Record<FileChange['status'], string> = { added: '+', modified: '~', deleted: '−' }
 const SIGN_COLOR: Record<FileChange['status'], string> = { added: '#a6d189', modified: '#e5c890', deleted: '#e78284' }
 
+const fileName = (path: unknown) => (typeof path === 'string' ? path.split('/').pop() : undefined)
+
+/** What a call does, in the agent's words where it gave some, and how. */
+export const intentOf = (tool: string, input: Record<string, unknown>): { what: string; how?: string } => {
+  const how = ['command', 'file_path', 'notebook_path', 'pattern', 'url', 'query', 'skill']
+    .map(field => input[field])
+    .find((value): value is string => typeof value === 'string' && value.trim() !== '')
+  const description = typeof input.description === 'string' ? input.description.trim() : ''
+  if (description) return { what: description, how: how && oneLine(how, 200) }
+  const name = fileName(input.file_path ?? input.notebook_path)
+  if (name) return { what: `${tool === 'Write' ? 'Write' : tool === 'Read' ? 'Read' : 'Edit'} ${name}`, how: String(input.file_path ?? input.notebook_path) }
+  return { what: describeCall(tool, input), how: undefined }
+}
+
+/**
+ * The text a person typed, without the tags the engine wraps around it: a
+ * slash command's echo (`<command-name>`) or an injected block yields null.
+ */
+export const promptText = (raw: string): string | null => {
+  if (/<command-name>|<local-command-|<task-notification>/.test(raw)) return null
+  const text = raw
+    .replace(/<(system-reminder|local-command-caveat|local-command-stdout)>[\s\S]*?<\/\1>/g, '')
+    .replace(/<\/?[a-zA-Z][\w-]*(\s[^>]*)?>/g, '')
+    .trim()
+  return text || null
+}
+
 const ttlMs = (ttl: Ttl): number => (ttl === '1h' ? 3_600_000 : 300_000)
 
 async function addEntry($: EngineInterface, agentId: string, entry: Entry) {
@@ -119,6 +147,14 @@ async function logCall($: EngineInterface, agentId: string, e: ToolCallInput, ra
   if (ran.deny !== undefined) await addEntry($, agentId, { kind: 'error', text: `denied: ${ran.deny}` })
   else if (ran.isError) await addEntry($, agentId, { kind: 'error', text: ran.text ?? 'failed' })
   else if (ran.text) await addEntry($, agentId, { kind: 'result', text: ran.text })
+}
+
+/** Marks the main-loop step a refused or failed call belongs to. */
+async function flagStep($: EngineInterface, toolUseId: string, ran: ToolCallResult) {
+  const flag: Step['flag'] = ran.deny !== undefined ? 'refused' : ran.isError ? 'failed' : undefined
+  if (!flag) return
+  const note = oneLine(ran.deny ?? ran.text ?? '', 160)
+  await update($, steps, list => list.map((s): Step => (s.toolIds?.includes(toolUseId) ? { ...s, flag, note } : s)))
 }
 
 /** Adds the repository holding `dir` to those the Files section shows. */
@@ -175,9 +211,12 @@ export const register: Register = (on, options) => {
     await trackRepo($, e.cwd)
     await refreshFiles($)
 
-    if ((await read($, info)).firstPrompt === null) {
-      const first = (await $.session.messages()).find(m => m.role === 'user' && m.text.trim())
-      if (first) await update($, info, i => ({ ...i, firstPrompt: first.text.trim() }))
+    if ((await read($, prompts)).length === 0) {
+      const typed = (await $.session.messages())
+        .filter(m => m.role === 'user' && !m.toolResults?.length)
+        .map(m => promptText(m.text))
+        .filter((text): text is string => text !== null)
+      if (typed.length) await update($, prompts, () => typed)
     }
 
     return next(e)
@@ -189,9 +228,8 @@ export const register: Register = (on, options) => {
   })
 
   on('prompt.submit', async ($, e, next) => {
-    if ((await read($, info)).firstPrompt === null && e.text.trim()) {
-      await update($, info, i => ({ ...i, firstPrompt: e.text.trim() }))
-    }
+    const text = e.origin.kind === 'composer' ? promptText(e.text) : null
+    if (text) await update($, prompts, list => [...list, text])
     return next(e)
   })
 
@@ -210,12 +248,14 @@ export const register: Register = (on, options) => {
 
     const thinking = new Map<number, string>()
     const text = new Map<number, string>()
+    const toolIds: string[] = []
     const stream = next(e)
     let item = await stream.next()
     while (!item.done) {
       const chunk = item.value
       if (chunk.kind === 'thinking') thinking.set(chunk.index, (thinking.get(chunk.index) ?? '') + chunk.text)
       if (chunk.kind === 'text') text.set(chunk.index, (text.get(chunk.index) ?? '') + chunk.text)
+      if (chunk.kind === 'tool') toolIds.push(chunk.id)
       yield chunk
       item = await stream.next()
     }
@@ -229,12 +269,24 @@ export const register: Register = (on, options) => {
     } else {
       const now = await $.clock.now()
       const calls = result.toolUses.map(use =>
-        describeCall(use.name, typeof use.input === 'object' && use.input !== null ? (use.input as Record<string, unknown>) : {}),
+        intentOf(use.name, typeof use.input === 'object' && use.input !== null ? (use.input as Record<string, unknown>) : {}),
       )
       const label =
-        (calls.length && calls.join(' · ')) || (thought && headline(thought)) || (said && headline(said)) || 'Answered'
+        (calls.length && calls.map(c => c.what).join(' · ')) || (thought && headline(thought)) || (said && headline(said)) || 'Answered'
+      const how = calls.map(c => c.how).filter(Boolean).join(' · ') || undefined
+      const why = calls.length && thought ? headline(thought) : undefined
       await update($, info, i => ({ ...i, lastRequestAt: now }))
-      await update($, steps, list => list.map(s => (s.id === stepId ? { ...s, label, isDone: true } : s)))
+      await update($, steps, list => {
+        const index = list.findIndex(s => s.id === stepId)
+        const earlier = list.slice(Math.max(0, index - 3), index)
+        const same = calls.length ? earlier.reverse().find(s => s.label === label && s.how === how) : undefined
+        const repeats = same ? (same.repeats ?? 1) + 1 : undefined
+        return list.map(s =>
+          s.id === stepId
+            ? { ...s, label, how, why, toolIds, isDone: true, ...(repeats ? { flag: 'repeat' as const, repeats } : {}) }
+            : s,
+        )
+      })
     }
 
     return result
@@ -278,9 +330,14 @@ export const register: Register = (on, options) => {
       refresh?.cancel()
       refresh = $.clock.after(400, () => void refreshFiles($))
       if (agentId) await logCall($, agentId, e, ran)
+      else await flagStep($, e.tool_use_id, ran)
       return ran
     }
-    if (!agentId) return next(e)
+    if (!agentId) {
+      const ran = await next(e)
+      await flagStep($, e.tool_use_id, ran)
+      return ran
+    }
     const ran = await next(e)
     await logCall($, agentId, e, ran)
     return ran
@@ -300,7 +357,7 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
-    const [now, i, all, done, open, isStepsOpen, picker, repos] = await Promise.all([
+    const [now, i, all, done, open, isStepsOpen, picker, repos, typed, shown] = await Promise.all([
       $.clock.now(),
       read($, info),
       read($, agents),
@@ -309,6 +366,8 @@ export const register: Register = (on, options) => {
       read($, stepsOpen),
       read($, picking),
       read($, changes),
+      read($, prompts),
+      read($, view),
     ])
     const usage = await $.session.usage()
 
@@ -416,6 +475,27 @@ export const register: Register = (on, options) => {
 
     const shownSteps = isStepsOpen ? done : done.slice(-STEPS_SHOWN)
     const folded = done.length - shownSteps.length
+    const hidden = done.slice(0, folded)
+    const foldedIssues = (['refused', 'failed', 'repeat'] as const)
+      .map(flag => [flag, hidden.filter(s => s.flag === flag).length] as const)
+      .filter(([, n]) => n > 0)
+      .map(([flag, n]) => ` · ${n} ${flag === 'repeat' ? 'repeated' : flag}`)
+      .join('')
+
+    if (shown === 'prompts') {
+      return (
+        <Box flexDirection="column" paddingX={1}>
+          <Button key="prompts:back" label="← Overview" plain onPress={() => update($, view, () => 'overview')} />
+          {section(`Prompts · ${typed.length}`)}
+          {typed.map((text, index) => (
+            <Box key={`prompt:${index}`} flexDirection="column" marginBottom={1}>
+              <Text dimColor>#{index + 1}</Text>
+              <Text wrap="wrap">{text}</Text>
+            </Box>
+          ))}
+        </Box>
+      )
+    }
 
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -446,9 +526,18 @@ export const register: Register = (on, options) => {
           </Text>
         </Box>
 
-        {section('Prompt')}
+        <Box flexDirection="row">
+          {section('Last prompt ')}
+          <Button
+            key="prompts"
+            label={`(${typed.length})`}
+            plain
+            dimColor
+            onPress={() => update($, view, () => 'prompts')}
+          />
+        </Box>
         <Box marginBottom={1}>
-          <Text wrap="wrap">{i.firstPrompt ? oneLine(i.firstPrompt, 360) : '—'}</Text>
+          <Text wrap="wrap">{typed.length ? oneLine(typed[typed.length - 1]!, 360) : '—'}</Text>
         </Box>
 
         {section('Steps')}
@@ -456,7 +545,7 @@ export const register: Register = (on, options) => {
           {done.length > STEPS_SHOWN ? (
             <Button
               key="steps"
-              label={isStepsOpen ? `▾ fold ${done.length - STEPS_SHOWN} earlier steps` : `▸ ${folded} earlier steps`}
+              label={isStepsOpen ? `▾ fold ${done.length - STEPS_SHOWN} earlier steps` : `▸ ${folded} earlier steps${foldedIssues}`}
               plain
               dimColor
               onPress={() => update($, stepsOpen, cur => !cur)}
@@ -464,13 +553,37 @@ export const register: Register = (on, options) => {
           ) : (
             <Text dimColor>{done.length === 0 ? 'None yet.' : ' '}</Text>
           )}
-          {shownSteps.map(s => (
-            <Text dimColor={s.isDone} wrap="truncate-end">
-              <Text color={s.isDone ? 'success' : 'warning'}>{s.isDone ? '✓ ' : '○ '}</Text>
-              {s.label}
-            </Text>
-          ))}
-          {Array.from({ length: Math.max(0, STEPS_SHOWN - shownSteps.length) }, () => (
+          {shownSteps.map(s => {
+            const mark =
+              s.flag === 'refused' || s.flag === 'failed'
+                ? { glyph: '✗ ', color: '#e78284' }
+                : s.flag === 'repeat'
+                  ? { glyph: '↻ ', color: '#e5c890' }
+                  : s.isDone
+                    ? { glyph: '✓ ', color: '#a6d189' }
+                    : { glyph: '○ ', color: '#e5c890' }
+            const isIssue = s.flag !== undefined
+            return (
+              <Box key={s.id} flexDirection="column">
+                <Text wrap="truncate-end" dimColor={s.isDone && !isIssue}>
+                  <Text color={mark.color}>{mark.glyph}</Text>
+                  {s.label}
+                  {s.flag === 'repeat' && <Text color="#e5c890"> ×{s.repeats}</Text>}
+                </Text>
+                {isStepsOpen && s.why && (
+                  <Text dimColor italic wrap="truncate-end">
+                    {'  ∴ '}
+                    {s.why}
+                  </Text>
+                )}
+                <Text dimColor wrap="truncate-end" color={s.note ? '#e78284' : undefined}>
+                  {'  '}
+                  {s.note ? `${s.flag}: ${s.note}` : s.how ?? ' '}
+                </Text>
+              </Box>
+            )
+          })}
+          {Array.from({ length: 2 * Math.max(0, STEPS_SHOWN - shownSteps.length) }, () => (
             <Text> </Text>
           ))}
         </Box>

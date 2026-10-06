@@ -9,13 +9,15 @@ A calm side pane for a Claude Code session: what runs, since when, how warm the 
 running 1h 12m   cache 54m 03s left (1h)
 sub-agent session no, they run inside this session
 
-Prompt
-Build a mod that is a side panel…
+Last prompt (7)
+Strip the XML tags and show only the last prompt…
 
 Steps
-▸ 37 earlier steps
-✓ Bash: just validate
-○ Thinking…
+▸ 37 earlier steps · 2 refused · 1 repeated
+✓ Sync, validate, commit, push, update PR
+    cp … && just validate && git commit …
+✗ Add file-tree tests and run them
+    failed: AssertionError: expect(received).toEqual()
 
 Running · 1                     Done · 2
 ▸ Find hooks                    ▸ Review diff
@@ -34,8 +36,8 @@ claude-plugins +412 −3
 
 - **Selectors**: the main loop's model and effort as two rounded pills, the model in its colour (Catppuccin Frappé: Opus peach, Fable mauve, Sonnet blue, Haiku green), the effort in the colour `/effort` gives its level. Press one to open its choices, press a choice to switch (it runs `/model` or `/effort`).
 - **Header**: the session's age, the time left before the prompt cache expires (yellow under a minute, then how long ago it expired), and whether sub-agents run in sessions of their own (teammates) or inside this one.
-- **Prompt**: the session's first prompt.
-- **Steps**: one line per model request of the main loop, named by what it ran (`Bash: just validate`, `Read: src/main.rs`), or else the first sentence of its thinking or text; ✓ once answered. Only the two latest show, the earlier ones folded into one line you press to unfold, so the list never pushes the sub-agents down.
+- **Last prompt**: the last prompt you typed, without the tags the engine wraps around it; slash commands are left out. Press the count beside it to see every prompt of the session, then `← Overview` to come back.
+- **Steps**: an audit trail of the main loop, one entry per model request: what it did in the agent's own words (a Bash call's description, `Edit register.tsx`), and beneath it how (the command or path), or why it was refused or failed. `↻ ×N` marks the same action taken again within a few steps, a sign of a loop; `✗` a refused or failed call. Only the two latest show; the earlier ones fold into one line that counts their refusals, failures and repeats, and unfolds with the reasoning (`∴`) of each.
 - **Files**, at the bottom: the changes against `HEAD` of the session's repository and of every repository a tool edited in (worktrees included), as a tree following the hierarchy; `+` added, `~` modified, `−` deleted, with the lines added in green and removed in red. Refreshed after each edit or Bash command.
 - **Running / Done**: each sub-agent with its type, model, age, the task it was given and its last entries (thinking `∴`, text `“`, tool calls `›`, results `⎿`, errors `✗`). Press its name to expand the full task and history. A finished one moves to the greyed Done column.
 
