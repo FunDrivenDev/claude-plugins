@@ -1,0 +1,100 @@
+import { describe, expect, mock, test } from 'claude-code/testing'
+
+import { describeCall, duration, headline, prettyModel } from '../hooks/register'
+
+const PANE = {
+  component: 'Pane',
+  requestId: 'session-panel',
+  props: {
+    title: 'Session',
+    isFocused: false,
+    bodyColumns: 60,
+    placement: 'dock',
+    scroll: { offset: 0, bodyRows: 40 },
+    view: {},
+  },
+} as const
+
+const typed = (text: string) => ({ text, wait: false, origin: { kind: 'composer' } as const })
+
+describe('helpers', () => {
+  test('names models and durations calmly', async () => {
+    expect(prettyModel('claude-opus-5-5')).toBe('Opus 5.5')
+    expect(prettyModel('claude-haiku-4-5-20251001')).toBe('Haiku 4.5')
+    expect(duration(3_725_000)).toBe('1h 02m')
+    expect(duration(65_000)).toBe('1m 05s')
+    expect(headline('Read the pane example first. Then write it.')).toBe('Read the pane example first.')
+    expect(describeCall('Bash', { command: 'ls -la' })).toBe('Bash: ls -la')
+  })
+})
+
+test('the pane shows the first prompt and moves a finished sub-agent to the done column', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
+  on('prompt.submit', ($, e) => ({ text: e.text }))
+  on('turn.complete', ($, e) => ({ text: e.answer }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
+
+  await $.prompt.submit(typed('Build a calm side panel'))
+  await $.prompt.submit(typed('and another prompt'))
+  await $.agent.spawn({
+    tool_use_id: 'tu1',
+    prompt: 'Find the hooks',
+    description: 'Find hooks',
+    subagentType: 'Explore',
+    provider: { plugin: 'engine', tier: 'core' },
+    parentModel: 'claude-opus-5-5',
+    background: false,
+    fork: false,
+  })
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'session-panel', surface, ...PANE })
+    expect(await ui.find({ text: /Build a calm side panel/ })).toBeDefined()
+    expect(await ui.find({ text: /another prompt/ })).toBeUndefined()
+    expect(await ui.find({ text: /Running · 1/ })).toBeDefined()
+    expect((await ui.find({ key: 'agent:a1' }))?.props.label).toContain('Find hooks')
+    await ui.unmount()
+  }
+
+  await $.turn.complete({ answer: 'Found them', durationMs: 5, isAborted: false, turnId: 't', agentId: 'a1', reason: 'answer' })
+
+  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  expect(await ui.find({ text: /Done · 1/ })).toBeDefined()
+  expect(await ui.find({ text: /Running · 0/ })).toBeDefined()
+  await ui.press({ key: 'agent:a1' })
+  expect(await ui.find({ text: /Found them/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a step shows the command it ran, and only the two latest stay unfolded', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
+  on('turn.step', async function* ($, e) {
+    const command = `echo ${e.index}`
+    return {
+      turnId: e.turnId,
+      index: e.index,
+      answer: '',
+      toolUses: [{ name: 'Bash', input: { command } }],
+      stopReason: 'tool_use' as const,
+      usage: null,
+    }
+  })
+
+  for (const index of [0, 1, 2, 3]) {
+    for await (const _ of $.turn.step({ turnId: 't1', index, model: 'claude-opus-5-5', effort: 'high', messageCount: 1 })) {
+      // drained
+    }
+  }
+
+  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  expect(await ui.find({ text: /Bash: echo 3/ })).toBeDefined()
+  expect(await ui.find({ text: /Bash: echo 2/ })).toBeDefined()
+  expect(await ui.find({ text: /Bash: echo 1/ })).toBeUndefined()
+  expect((await ui.find({ key: 'steps' }))?.props.label).toContain('2 earlier steps')
+  expect(await ui.find({ text: /Opus 5\.5/ })).toBeDefined()
+  await ui.press({ key: 'steps' })
+  expect(await ui.find({ text: /Bash: echo 0/ })).toBeDefined()
+  await ui.unmount()
+})

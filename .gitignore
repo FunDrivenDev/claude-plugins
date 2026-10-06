@@ -1,1 +1,3 @@
 .DS_Store
+# Types the Claude Code engine lays beside a mod at each load
+plugins/*/.claude-plugin/types/

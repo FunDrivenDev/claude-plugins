@@ -1,0 +1,30 @@
+{
+  "name": "session-panel",
+  "version": "0.1.0",
+  "description": "A calm side pane: model, effort, first prompt, uptime, cache TTL, sub-agents with their history, and the session's reasoning steps",
+  "author": {
+    "name": "Raphaël Louvradoux"
+  },
+  "homepage": "https://github.com/FunDrivenDev/claude-plugins/tree/main/plugins/session-panel",
+  "repository": "https://github.com/FunDrivenDev/claude-plugins",
+  "keywords": [
+    "pane",
+    "session",
+    "subagents",
+    "prompt-cache",
+    "mod"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "cacheTtl": {
+      "type": "string",
+      "title": "Prompt-cache TTL",
+      "description": "The prompt-cache lifetime to count down from (a model switch reports the real one)",
+      "options": [
+        "1h",
+        "5m"
+      ],
+      "default": "1h"
+    }
+  }
+}

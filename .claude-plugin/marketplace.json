@@ -11,6 +11,12 @@
       "description": "Context-budget status line: tokens against the auto-compact trigger, prompt-cache countdown, quota pace, git branch and PR, plus plugin segments.",
       "source": "./plugins/statusline",
       "category": "productivity"
+    },
+    {
+      "name": "session-panel",
+      "description": "A calm side pane: model and effort, first prompt, uptime, prompt-cache countdown, sub-agents with their task and full history, and a checklist of the session's steps.",
+      "source": "./plugins/session-panel",
+      "category": "productivity"
     }
   ]
 }
