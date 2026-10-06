@@ -21,6 +21,10 @@ Tools are pinned in `mise.toml` and run through `just`:
 | `just lint` | `shellcheck` on every shell script and hook, `actionlint` on CI, `biome lint` on the mods' TypeScript (`biome.json`) |
 | `just test` | The plugins' smoke tests, under the default `bash` and macOS's `/bin/bash` 3.2 |
 | `just validate` | `claude plugin validate` on the marketplace and each plugin, and `claude plugin test` on each plugin with tests (needs the `claude` CLI) |
-| `just check` | All of the above: `lint`, `test`, `validate` |
+| `just versions` | Fails when a plugin changed since `origin/main` (outside its `tests/`) without a version bump |
+| `just bump <plugin> patch\|minor\|major` | Raises the plugin's version in its `plugin.json` |
+| `just check` | All of the above: `lint`, `test`, `versions`, `validate` |
 
 The pre-commit hook runs `just lint`, the pre-push hook `just check`; CI runs `just lint` and `just test`, the tests on Linux and macOS. Renovate keeps the tools and the actions current.
+
+Merging a PR is the release: the marketplace serves `main`, and Claude Code updates an installed plugin only when its version changes. So a PR that changes a plugin bumps it (`just bump`: patch for a fix, minor for a feature, major for a breaking change), and the pre-push `just versions` refuses one that doesn't.
