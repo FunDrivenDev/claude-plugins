@@ -996,7 +996,7 @@ export const register: Register = (on, options) => {
             done.length === 0 && <Text dimColor>none yet</Text>
           )}
         </Box>
-        <Box flexDirection="column">
+        <Box flexDirection="column" marginBottom={1}>
           {shownSteps.map(s => {
             const isCurrent = s === current
             const mark =
@@ -1009,7 +1009,7 @@ export const register: Register = (on, options) => {
                     : { glyph: '✓ ', color: '#a6d189' }
             const isIssue = s.flag !== undefined
             return (
-              <Box key={s.id} flexDirection="column" marginBottom={1}>
+              <Box key={s.id} flexDirection="column">
                 <Text wrap="wrap" dimColor={!isCurrent && !isIssue}>
                   <Text color={mark.color}>{mark.glyph}</Text>
                   {s.label}
