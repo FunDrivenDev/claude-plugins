@@ -102,7 +102,7 @@ const oneLine = (text: string, max = 160): string => {
 export const headline = (text: string): string => {
   const flat = text.replace(/\s+/g, ' ').trim()
   const end = flat.search(/[.!?](\s|$)/)
-  return oneLine(end > 0 ? flat.slice(0, end + 1) : flat, 90)
+  return end > 0 ? flat.slice(0, end + 1) : flat
 }
 
 /** What a tool call is about, in a few words. */
@@ -147,7 +147,7 @@ export const promptText = (raw: string): string | null => {
 /** The last whole sentence of a text being streamed, once there is one. */
 export const lastSentence = (text: string): string | null => {
   const sentences = text.replace(/\s+/g, ' ').match(/[^.!?]+[.!?]+(?=\s|$)/g)
-  return sentences?.length ? oneLine(sentences[sentences.length - 1]!.trim(), 200) : null
+  return sentences?.length ? sentences[sentences.length - 1]!.trim() : null
 }
 
 /** A step is current while its answer streams or a call it made has not returned. */
@@ -836,7 +836,7 @@ export const register: Register = (on, options) => {
                     : { glyph: '✓ ', color: '#a6d189' }
             const isIssue = s.flag !== undefined
             return (
-              <Box key={s.id} flexDirection="column">
+              <Box key={s.id} flexDirection="column" marginBottom={1}>
                 <Text wrap="wrap" dimColor={!isCurrent && !isIssue}>
                   <Text color={mark.color}>{mark.glyph}</Text>
                   {s.label}
@@ -848,10 +848,10 @@ export const register: Register = (on, options) => {
                     {s.why}
                   </Text>
                 )}
-                {(s.note || s.how) && (
-                  <Text dimColor wrap="wrap" color={s.note ? '#e78284' : undefined}>
+                {s.note && (
+                  <Text wrap="wrap" color="#e78284">
                     {'  '}
-                    {s.note ? `${s.flag}: ${s.note}` : s.how}
+                    {s.flag}: {s.note}
                   </Text>
                 )}
               </Box>

@@ -106,7 +106,7 @@ test('a step shows the command it ran, and only the four latest stay unfolded', 
 
   const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
   expect(await ui.find({ text: /Say echo 5 ×2/ })).toBeDefined()
-  expect(await ui.find({ text: /^\s*echo 5$/ })).toBeDefined()
+  expect(await ui.find({ text: /^\s*echo 5$/ })).toBeUndefined()
   expect(await ui.find({ text: /Say echo 3/ })).toBeDefined()
   expect(await ui.find({ text: /Say echo 2/ })).toBeUndefined()
   expect((await ui.find({ key: 'steps' }))?.props.label).toContain('3 earlier steps')
