@@ -109,6 +109,20 @@ export type Handover = {
   error: string | null
 }
 
+/** `$HOME`, and the folder `~/Notes` links to (null where it is no link or is missing). */
+export type NotesRoot = { home: string; real: string | null }
+
+/** A file the session wrote under `~/Notes`. */
+export type Note = {
+  path: string
+  /** Its path under the notes folder, the same through the link or not. */
+  rel: string
+  /** Its inbox (`Reports`, `Agent handovers`), else its top folder. */
+  kind: string
+  /** Its file name without `.md`. */
+  name: string
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'session-panel': {
@@ -127,6 +141,7 @@ declare module 'claude-code' {
       handover: Handover | null
       quotaLayout: QuotaLayout
       worktree: string | null
+      notes: Note[]
     }
   }
 }

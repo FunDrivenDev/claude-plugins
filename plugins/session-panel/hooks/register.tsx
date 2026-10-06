@@ -1,9 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, ToolCallInput, ToolCallResult } from 'claude-code'
 
-import type { Agent, Entry, FileChange, Handover, Info, Picker, Quota, QuotaLayout, RepoChanges, Step, TrackedIssue, TrackedPr, Ttl } from '../types'
+import type { Agent, Entry, FileChange, Handover, Info, Note, NotesRoot, Picker, Quota, QuotaLayout, RepoChanges, Step, TrackedIssue, TrackedPr, Ttl } from '../types'
 
 import { LOG_FORMAT, parseLog, parseNumstat, parseStatus, treeRows } from './files'
+import { noteGroups, noteOf, notePaths } from './notes'
 import { PR_COLOR, RANK, findRefs, linearOfResult, prState, refsOfGh, repoOfRemote, titleOfSlug } from './tracker'
 import type { GithubRef, LinearRef } from './tracker'
 
@@ -41,6 +42,9 @@ const tracker = atom({ plugin: 'session-panel', key: 'tracker' } as const, { iss
   mentioned: string[]
 })
 const handover = atom({ plugin: 'session-panel', key: 'handover' } as const, null as Handover | null)
+const notes = atom({ plugin: 'session-panel', key: 'notes' } as const, [] as Note[])
+const WRITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
+let notesRoot: NotesRoot | null = null
 /** Main-loop calls that returned, possibly before the step that made them ended. */
 const returned = new Set<string>()
 let hasLinearApp = false
@@ -439,6 +443,39 @@ async function refreshPr($: EngineInterface) {
   if (pr) await noteGithub($, { platform: 'github', repo: pr.repo, number: pr.number, type: 'pull' }, pr.rank)
 }
 
+/** `$HOME` and the folder `~/Notes` links to, read once. */
+async function rootOfNotes($: EngineInterface): Promise<NotesRoot> {
+  if (notesRoot) return notesRoot
+  const out = await $.process.run(['sh', '-c', 'printf "%s\\n" "$HOME"; cd "$HOME/Notes" 2>/dev/null && pwd -P'])
+  const [home = '', real = ''] = out.stdout.split('\n')
+  const root = { home, real: real && real !== `${home}/Notes` ? real : null }
+  if (home) notesRoot = root
+  return root
+}
+
+/** Adds the files under `~/Notes` among `paths` to the session's notes, once each. */
+async function keepNotes($: EngineInterface, paths: string[]) {
+  const root = await rootOfNotes($)
+  if (!root.home) return
+  const found = paths.map(path => noteOf(path, root)).filter((n): n is Note => n !== null)
+  if (found.length) await update($, notes, list => [...list, ...found.filter(n => !list.some(o => o.rel === n.rel))])
+}
+
+const WRITTEN_SINCE = 'start=$1; shift; for f; do [ -f "$f" ] && [ "$(date -r "$f" +%s)" -ge "$start" ] && echo "$f"; done'
+
+/** The notes a call wrote: an editing tool's file, or a file under `~/Notes` a command names and that changed since the session began. */
+async function scanNotes($: EngineInterface, tool: string, input: Record<string, unknown>, ran: ToolCallResult) {
+  if (ran.deny !== undefined || ran.isError) return
+  const path = input.file_path ?? input.notebook_path
+  if (WRITING_TOOLS.has(tool) && typeof path === 'string') return keepNotes($, [path])
+  if (tool !== 'Bash' || typeof input.command !== 'string') return
+  const named = notePaths(input.command, await rootOfNotes($))
+  if (!named.length) return
+  const since = String(Math.floor((await $.session.usage()).startedAt / 1000))
+  const written = await $.process.run(['sh', '-c', WRITTEN_SINCE, 'sh', since, ...named])
+  await keepNotes($, written.stdout.split('\n').filter(Boolean))
+}
+
 const HANDOVER_READ = `d="$HOME/.claude/plugins/data/handover-fundriven"
 test -e "$d/live/$1" && echo on
 echo "@@"; cat "$d/sessions/$1.json" 2>/dev/null
@@ -478,6 +515,7 @@ async function readHandover($: EngineInterface) {
     error: typeof st.error === 'string' ? st.error : null,
   }
   await update($, handover, () => next)
+  if (next.written) await keepNotes($, [next.written.path])
 }
 
 async function finish($: EngineInterface, agentId: string, answer?: string) {
@@ -657,6 +695,7 @@ export const register: Register = (on, options) => {
       await markReturned($, e.tool_use_id)
     }
     await scanCall($, tool, input, ran)
+    await scanNotes($, tool, input, ran)
     return ran
   })
 
@@ -689,6 +728,7 @@ export const register: Register = (on, options) => {
       read($, handover),
     ])
     const tree = await read($, worktree)
+    const written = await read($, notes)
     const usage = await $.session.usage()
     const layout = await read($, quotaLayout)
     const quotas = usage.rateLimits
@@ -980,6 +1020,28 @@ export const register: Register = (on, options) => {
         {section('Handover')}
         <Box flexDirection="column" marginBottom={1}>
           {handoverRows}
+        </Box>
+
+        {section('Notes')}
+        <Box flexDirection="column" marginBottom={1}>
+          {written.length === 0 && <Text dimColor>None written yet.</Text>}
+          {noteGroups(written).map(group => (
+            <Box key={`notes:${group.kind}`} flexDirection="column">
+              <Text dimColor>{group.kind}</Text>
+              {group.notes.map(n =>
+                e.surface === 'terminal' ? (
+                  <Text wrap="truncate-end">
+                    {'  '}
+                    <Link href={`file://${n.path}`} label={n.name} />
+                  </Text>
+                ) : (
+                  <Box key={`note:${n.rel}:row`} paddingLeft={2}>
+                    <Button key={`note:${n.rel}`} label={n.name} plain onPress={() => $.process.run(['open', n.path])} />
+                  </Box>
+                ),
+              )}
+            </Box>
+          ))}
         </Box>
 
         <Box flexDirection="row">
