@@ -32,11 +32,17 @@ Sub-agents · 1 running · 1 done
 
 Files and history
 claude-plugins ⎇ feat/session-panel +412 −3
-├ plugins/session-panel/          ○ session-panel: tracker corner
-│ ├ + README.md +58                 3f2a1bc · 2m 10s ago · local
-│ └ hooks/                        ● session-panel: steps as an audit…
-│   └ ~ register.tsx +40 −6         2ad70a1 · 1h 05m ago · pushed
+├ plugins/session-panel/
+│ ├ + README.md +58
+│ └ hooks/
+│   └ ~ register.tsx +40 −6
 └ ~ README.md +1 −1
+
+History
+○ session-panel: tracker corner
+  3f2a1bc · 2m 10s ago · local
+● session-panel: steps as an audit trail, last prompt with its history
+  2ad70a1 · 1h 05m ago · pushed
 ```
 
 - **Selectors**: the main loop's model and effort as two rounded pills, the model in its colour (Catppuccin Frappé: Opus peach, Fable mauve, Sonnet blue, Haiku green), the effort in the colour `/effort` gives its level. Press one to open its choices, press a choice to switch (it runs `/model` or `/effort`).
@@ -46,7 +52,7 @@ claude-plugins ⎇ feat/session-panel +412 −3
 - **Last prompt**: the last prompt you typed, without the tags the engine wraps around it; slash commands are left out. Press the count beside it to see every prompt of the session, then `← Overview` to come back.
 - **Steps**: an audit trail of the main loop, one entry per model request: what it did in the agent's own words (a Bash call's description, `Edit register.tsx`), printed in full with a blank line between steps, and beneath it why it was refused or failed when it was. `↻ ×N` marks the same action taken again within a few steps, a sign of a loop; `✗` a refused or failed call. The current step shows live, its latest whole sentence while the model thinks, then the call it runs until it returns, under the four latest finished steps, all in full; the earlier ones fold into one line that counts their refusals, failures and repeats, and unfolds with the reasoning (`∴`) of each.
 - **Sub-agents**: how many run and are done, then one line per sub-agent, background agent or teammate: its mission, its kind, its age and what it is doing now (its last call or thought). Press one to expand its full task and history.
-- **Files and history**, at the bottom: for the session's repository and every repository a tool edited in (worktrees included), the changes against `HEAD` as a tree (`+` added, `~` modified, `−` deleted, lines added in green and removed in red), and beside them the branch's latest commits by subject, `○` local or `●` pushed; press a commit to read its body. Refreshed after each edit or Bash command.
+- **Files and history**, at the bottom: for the session's repository and every repository a tool edited in (worktrees included), the changes against `HEAD` as a tree (`+` added, `~` modified, `−` deleted, lines added in green and removed in red), and below them, full width, the branch's latest commits by subject, `○` local or `●` pushed; press a commit to read its body. Refreshed after each edit or Bash command.
 
 It is a mod: a plugin of function hooks, drawn by the engine (no shell script, no status line).
 

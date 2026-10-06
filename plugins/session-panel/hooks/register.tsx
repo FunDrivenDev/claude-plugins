@@ -875,57 +875,58 @@ export const register: Register = (on, options) => {
                 <Text color="#a6d189">+{repo.files.reduce((n, f) => n + f.added, 0)}</Text>{' '}
                 <Text color="#e78284">−{repo.files.reduce((n, f) => n + f.removed, 0)}</Text>
               </Text>
-              <Box flexDirection="row" columnGap={2}>
-                <Box flexDirection="column" width="50%">
-                  {repo.files.length === 0 && <Text dimColor>No change.</Text>}
-                  {treeRows(repo.files).map(row => (
-                    <Text wrap="truncate-end">
-                      <Text dimColor>{row.indent}</Text>
-                      {row.change ? (
-                        <Text>
-                          <Text color={SIGN_COLOR[row.change.status]}>{SIGN[row.change.status]} </Text>
-                          <Text dimColor={row.change.status === 'deleted'} strikethrough={row.change.status === 'deleted'}>
-                            {row.name}
-                          </Text>{' '}
-                          {row.change.added > 0 && <Text color="#a6d189">+{row.change.added} </Text>}
-                          {row.change.removed > 0 && <Text color="#e78284">−{row.change.removed}</Text>}
-                        </Text>
-                      ) : (
-                        <Text dimColor>{row.name}</Text>
-                      )}
+              {repo.files.length === 0 && <Text dimColor>No change.</Text>}
+              {treeRows(repo.files).map(row => (
+                <Text wrap="truncate-end">
+                  <Text dimColor>{row.indent}</Text>
+                  {row.change ? (
+                    <Text>
+                      <Text color={SIGN_COLOR[row.change.status]}>{SIGN[row.change.status]} </Text>
+                      <Text dimColor={row.change.status === 'deleted'} strikethrough={row.change.status === 'deleted'}>
+                        {row.name}
+                      </Text>{' '}
+                      {row.change.added > 0 && <Text color="#a6d189">+{row.change.added} </Text>}
+                      {row.change.removed > 0 && <Text color="#e78284">−{row.change.removed}</Text>}
                     </Text>
-                  ))}
+                  ) : (
+                    <Text dimColor>{row.name}</Text>
+                  )}
+                </Text>
+              ))}
+              {repo.commits.length > 0 && (
+                <Box marginTop={1}>
+                  <Text bold dimColor>
+                    History
+                  </Text>
                 </Box>
-                <Box flexDirection="column" width="50%">
-                  {repo.commits.map(c => {
-                    const key = `commit:${repo.root}:${c.hash}`
-                    const isOpen = open === key
-                    return (
-                      <Box key={key} flexDirection="column">
-                        <Box flexDirection="row">
-                          <Text color={c.isPushed ? '#a6d189' : '#e5c890'}>{c.isPushed ? '● ' : '○ '}</Text>
-                          <Button
-                            key={key}
-                            label={c.subject}
-                            plain
-                            dimColor={c.isPushed && !isOpen}
-                            onPress={() => update($, expanded, cur => (cur === key ? null : key))}
-                          />
-                        </Box>
-                        <Text dimColor wrap="truncate-end">
-                          {'  '}
-                          {c.hash.slice(0, 7)} · {duration(now - c.at)} ago · {c.isPushed ? 'pushed' : 'local'}
-                        </Text>
-                        {isOpen && c.body && (
-                          <Box paddingLeft={2}>
-                            <Text wrap="wrap">{c.body}</Text>
-                          </Box>
-                        )}
+              )}
+              {repo.commits.map(c => {
+                const key = `commit:${repo.root}:${c.hash}`
+                const isOpen = open === key
+                return (
+                  <Box key={key} flexDirection="column">
+                    <Box flexDirection="row">
+                      <Text color={c.isPushed ? '#a6d189' : '#e5c890'}>{c.isPushed ? '● ' : '○ '}</Text>
+                      <Button
+                        key={key}
+                        label={c.subject}
+                        plain
+                        dimColor={c.isPushed && !isOpen}
+                        onPress={() => update($, expanded, cur => (cur === key ? null : key))}
+                      />
+                    </Box>
+                    <Text dimColor wrap="truncate-end">
+                      {'  '}
+                      {c.hash.slice(0, 7)} · {duration(now - c.at)} ago · {c.isPushed ? 'pushed' : 'local'}
+                    </Text>
+                    {isOpen && c.body && (
+                      <Box paddingLeft={2}>
+                        <Text wrap="wrap">{c.body}</Text>
                       </Box>
-                    )
-                  })}
-                </Box>
-              </Box>
+                    )}
+                  </Box>
+                )
+              })}
             </Box>
           ))}
         </Box>
