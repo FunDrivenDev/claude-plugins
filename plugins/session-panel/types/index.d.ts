@@ -107,6 +107,8 @@ export type Handover = {
   warn: number
   isWriting: boolean
   error: string | null
+  /** The message the closing reply gives the next session to start on, once the handover is written. */
+  resume: string | null
 }
 
 /** `$HOME`, and the folder `~/Notes` links to (null where it is no link or is missing). */
