@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, ToolCallInput, ToolCallResult } from 'claude-code'
 
-import type { Agent, Entry, FileChange, Handover, Info, Picker, RepoChanges, Step, TrackedIssue, TrackedPr, Ttl } from '../types'
+import type { Agent, Entry, FileChange, Handover, Info, Picker, Quota, QuotaLayout, RepoChanges, Step, TrackedIssue, TrackedPr, Ttl } from '../types'
 
 import { LOG_FORMAT, parseLog, parseNumstat, parseStatus, treeRows } from './files'
 import { PR_COLOR, RANK, findRefs, linearOfResult, prState, refsOfGh, repoOfRemote, titleOfSlug } from './tracker'
@@ -31,6 +31,9 @@ const COMMITS_SHOWN = 8
 const EDITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Bash'])
 const prompts = atom({ plugin: 'session-panel', key: 'prompts' } as const, [] as string[])
 const view = atom({ plugin: 'session-panel', key: 'view' } as const, 'overview' as 'overview' | 'prompts')
+/** The linked worktree the session last edited in, by its folder's name; null in a main checkout. */
+const worktree = atom({ plugin: 'session-panel', key: 'worktree' } as const, null as string | null)
+const quotaLayout = atom({ plugin: 'session-panel', key: 'quotaLayout' } as const, 'side' as QuotaLayout)
 const picking = atom({ plugin: 'session-panel', key: 'picking' } as const, null as Picker)
 const tracker = atom({ plugin: 'session-panel', key: 'tracker' } as const, { issue: null, pr: null, mentioned: [] } as {
   issue: TrackedIssue | null
@@ -106,6 +109,77 @@ export const minutesLeft = (ms: number): string => (ms < 60_000 ? '<1m' : `${Mat
 /** The status line's grading: green while half the TTL is left, yellow down to a fifth, then orange. */
 export const cacheColor = (left: number, ttl: number): string =>
   left * 2 >= ttl ? '#5fff00' : left * 5 >= ttl ? '#ffff00' : '#ffaf00'
+
+/** The rate-limit windows the status line shows, by their length. */
+const WINDOWS: Record<string, { label: string; ms: number }> = {
+  five_hour: { label: '5h', ms: 18_000_000 },
+  seven_day: { label: '7d', ms: 604_800_000 },
+}
+/** Share of a window that must elapse before its pace is judged, as the status line's CC_PACE_MIN. */
+const PACE_MIN = 0.1
+const TONE = { ok: '#a6d189', tight: '#e5c890', out: '#e78284' } as const
+
+/** Coarse time left, as the status line writes it: `2d 07h`, `3h 14m`, `42m`. */
+export const span = (ms: number): string => {
+  const m = Math.max(0, Math.floor(ms / 60_000))
+  const d = Math.floor(m / 1440)
+  const h = Math.floor((m % 1440) / 60)
+  if (d > 0) return `${d}d ${String(h).padStart(2, '0')}h`
+  if (h > 0) return `${h}h ${String(m % 60).padStart(2, '0')}m`
+  return `${m}m`
+}
+
+/**
+ * A rate-limit window read as the status line reads it: the average burn so
+ * far extrapolated to the reset lands under 90% (ok), at 90-100% (tight), or
+ * runs out before it; judged once a tenth of the window has elapsed.
+ */
+export const quotaOf = (kind: string, percentUsed: number, resetsAt: string | undefined, now: number): Quota | null => {
+  const win = WINDOWS[kind]
+  if (!win) return null
+  const used = Math.round(percentUsed)
+  const reset = resetsAt ? Date.parse(resetsAt) : NaN
+  const resetsIn = Number.isFinite(reset) && reset > now ? Math.min(reset - now, win.ms) : null
+  const elapsed = resetsIn === null ? null : (win.ms - resetsIn) / win.ms
+  let verdict: Quota['verdict'] = null
+  if (used >= 100) verdict = { text: 'max', tone: 'out' }
+  else if (elapsed !== null && elapsed > 0 && elapsed >= PACE_MIN) {
+    const projected = Math.round(used / elapsed)
+    if (projected > 100) {
+      const dry = ((100 - used) * elapsed * win.ms) / Math.max(used, 1)
+      verdict = { text: `out in ${span(dry)}`, tone: 'out' }
+    } else verdict = { text: `→${projected}%`, tone: projected >= 90 ? 'tight' : 'ok' }
+  }
+  return { label: win.label, used, elapsed, verdict, resetsIn }
+}
+
+export type BarRun = { text: string; color: string; isPace?: boolean; isAhead?: boolean }
+
+/**
+ * A quota bar `width` cells wide, in half-cell steps: fill up to the pace tick
+ * in green, fill past it (ahead of even spending) in the verdict's colour, the
+ * rest a faint track; the tick marks where even spending would be by now.
+ */
+export const barRuns = (q: Quota, width: number): BarRun[] => {
+  const tone = TONE[q.verdict?.tone ?? 'ok']
+  const halves = Math.round((Math.min(q.used, 100) / 100) * width * 2)
+  const pace = q.elapsed === null ? -1 : Math.min(width - 1, Math.round(q.elapsed * width))
+  const runs: BarRun[] = []
+  const push = (text: string, color: string, flags: Omit<BarRun, 'text' | 'color'> = {}) => {
+    const last = runs[runs.length - 1]
+    if (last && last.color === color && !last.isPace && !flags.isPace && !!last.isAhead === !!flags.isAhead) last.text += text
+    else runs.push({ text, color, ...flags })
+  }
+  for (let cell = 0; cell < width; cell++) {
+    const filled = halves - cell * 2
+    const isAhead = pace >= 0 && cell > pace
+    if (cell === pace) push('┃', '#c6d0f5', { isPace: true })
+    else if (filled >= 2) push('━', isAhead ? tone : TONE.ok, { isAhead })
+    else if (filled === 1) push('╸', isAhead ? tone : TONE.ok, { isAhead })
+    else push('─', '#51576d')
+  }
+  return runs
+}
 
 /** How long ago, coarsely: minutes within the hour, then hours, then days. */
 export const ago = (ms: number): string => {
@@ -241,7 +315,11 @@ async function trackRepo($: EngineInterface, dir: string) {
 async function refreshFiles($: EngineInterface) {
   const next: RepoChanges[] = []
   const since = Math.floor((await $.session.usage()).startedAt / 1000)
+  let tree: string | null = null
   for (const root of await read($, roots)) {
+    const dirs = await $.process.run(['git', '-C', root, 'rev-parse', '--git-dir', '--git-common-dir'])
+    const [gitDir, commonDir] = dirs.stdout.trim().split('\n')
+    if (dirs.exitCode === 0 && gitDir !== commonDir) tree = root.split('/').pop() ?? root
     const status = await $.process.run(['git', '-C', root, 'status', '--porcelain=v1', '-z', '--untracked-files=all'])
     if (status.exitCode !== 0) continue
     const kinds = parseStatus(status.stdout)
@@ -264,6 +342,7 @@ async function refreshFiles($: EngineInterface) {
     if (files.length || commits.length) next.push({ root, branch, files, commits })
   }
   await update($, changes, () => next)
+  await update($, worktree, () => tree)
 }
 
 /**
@@ -609,7 +688,12 @@ export const register: Register = (on, options) => {
       read($, tracker),
       read($, handover),
     ])
+    const tree = await read($, worktree)
     const usage = await $.session.usage()
+    const layout = await read($, quotaLayout)
+    const quotas = usage.rateLimits
+      .map(l => quotaOf(l.kind, l.percentUsed, l.resetsAt, now))
+      .filter((q): q is Quota => q !== null)
 
     const ttl = i.ttl ?? defaultTtl
     const cache =
@@ -634,6 +718,31 @@ export const register: Register = (on, options) => {
       <Text bold color="claude">
         {title}
       </Text>
+    )
+
+    const columns = Math.max(12, e.props.bodyColumns - 2)
+    /** Ahead of pace, the overshoot breathes with the clock, once a second. */
+    const isBright = Math.floor(now / 1000) % 2 === 0
+    const quotaBar = (q: Quota, width: number) => (
+      <Box key={`quota:${q.label}`} flexDirection="column" width={width}>
+        <Box flexDirection="row" justifyContent="space-between">
+          <Text>
+            <Text dimColor>{q.label} </Text>
+            <Text bold color={TONE[q.verdict?.tone ?? 'ok']}>
+              {q.used}%
+            </Text>
+            {q.verdict && <Text color={TONE[q.verdict.tone]}> {q.verdict.text}</Text>}
+          </Text>
+          {q.resetsIn !== null && <Text dimColor>↻ {span(q.resetsIn)}</Text>}
+        </Box>
+        <Text>
+          {barRuns(q, width).map((run, k) => (
+            <Text key={k} color={run.color} bold={run.isPace} dimColor={run.isAhead && q.verdict?.tone !== 'ok' && !isBright}>
+              {run.text}
+            </Text>
+          ))}
+        </Text>
+      </Box>
     )
 
     const card = (a: Agent, isDone: boolean) => {
@@ -747,6 +856,13 @@ export const register: Register = (on, options) => {
             {t.pr.state && <Text dimColor> {t.pr.state}</Text>}
           </Text>
         )}
+        {tree ? (
+          <Text wrap="truncate-end" color="#81c8be">
+            ▣ {tree}
+          </Text>
+        ) : (
+          <Text dimColor>main checkout</Text>
+        )}
       </Box>
     )
 
@@ -829,6 +945,24 @@ export const register: Register = (on, options) => {
           {corner}
         </Box>
 
+        {quotas.length > 0 && (
+          <Box flexDirection="column" marginBottom={1}>
+            <Box flexDirection="row">
+              {section('Quotas ')}
+              <Button
+                key="quotas:layout"
+                label={layout === 'side' ? '⇄ one per line' : '⇄ side by side'}
+                plain
+                dimColor
+                onPress={() => update($, quotaLayout, cur => (cur === 'side' ? 'stacked' : 'side'))}
+              />
+            </Box>
+            <Box flexDirection={layout === 'side' ? 'row' : 'column'} columnGap={3}>
+              {quotas.map(q => quotaBar(q, layout === 'side' ? Math.floor((columns - 3 * (quotas.length - 1)) / quotas.length) : columns))}
+            </Box>
+          </Box>
+        )}
+
         <Box flexDirection="row">
           {section('Last prompt ')}
           <Button
@@ -905,7 +1039,7 @@ export const register: Register = (on, options) => {
           {[...finished].reverse().map(a => agentLine(a, true))}
         </Box>
         <Box flexDirection="column" marginTop={1}>
-          {section('Files and history')}
+          {section('Git diff')}
           {repos.length === 0 && <Text dimColor>No change.</Text>}
           {repos.map(repo => (
             <Box key={repo.root} flexDirection="column" marginBottom={1}>
@@ -933,11 +1067,7 @@ export const register: Register = (on, options) => {
                 </Text>
               ))}
               {repo.commits.length > 0 && (
-                <Box marginTop={1}>
-                  <Text bold dimColor>
-                    History
-                  </Text>
-                </Box>
+                <Box marginTop={1}>{section('Git History')}</Box>
               )}
               {repo.commits.map(c => {
                 const key = `commit:${repo.root}:${c.hash}`

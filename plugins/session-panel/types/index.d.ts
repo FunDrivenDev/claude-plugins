@@ -36,6 +36,20 @@ export type RepoChanges = { root: string; branch: string; files: FileChange[]; c
 
 export type Picker = 'model' | 'effort' | null
 
+/** The quota bars side by side, half the width each, or one per line. */
+export type QuotaLayout = 'side' | 'stacked'
+
+export type Quota = {
+  label: string
+  used: number
+  /** Share of the window elapsed, 0 to 1; null while the reset time is unknown. */
+  elapsed: number | null
+  /** Where the average burn lands at the reset, or when the limit runs out. */
+  verdict: { text: string; tone: 'ok' | 'tight' | 'out' } | null
+  /** Milliseconds until the window resets. */
+  resetsIn: number | null
+}
+
 export type Step = {
   id: string
   /** What the step did, in the agent's own words (a Bash call's description). */
@@ -111,6 +125,8 @@ declare module 'claude-code' {
       tracker: Tracker
       home: string | null
       handover: Handover | null
+      quotaLayout: QuotaLayout
+      worktree: string | null
     }
   }
 }
