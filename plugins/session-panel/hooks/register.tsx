@@ -41,8 +41,6 @@ const handover = atom({ plugin: 'session-panel', key: 'handover' } as const, nul
 /** Main-loop calls that returned, possibly before the step that made them ended. */
 const returned = new Set<string>()
 let hasLinearApp = false
-/** The dock width last asked for: half the terminal, asked again when the terminal resizes. */
-let askedColumns = 0
 const home = atom({ plugin: 'session-panel', key: 'home' } as const, null as string | null)
 const LINEAR_ID = /\b[A-Z][A-Z0-9]{1,9}-\d+\b/g
 const ISSUE_ICON = { github: { glyph: '◉', color: '#3fb950' }, linear: { glyph: '◐', color: '#5e6ad2' } } as const
@@ -574,11 +572,6 @@ export const register: Register = (on, options) => {
       read($, handover),
     ])
     const usage = await $.session.usage()
-    const half = e.viewport && e.surface === 'terminal' ? Math.floor(e.viewport.columns / 2) - 4 : 0
-    if (half > 20 && half !== askedColumns) {
-      askedColumns = half
-      void $.ui.open({ id: PANE, title: TITLE, columns: half })
-    }
 
     const ttl = i.ttl ?? defaultTtl
     const cache =
@@ -694,6 +687,8 @@ export const register: Register = (on, options) => {
     const prColor = t.pr?.state ? PR_COLOR[t.pr.state] : '#a5adce'
     const corner = (
       <Box flexDirection="column" alignItems="flex-end" flexShrink={1}>
+        {!t.issue && <Text dimColor>no issue</Text>}
+        {!t.pr && <Text dimColor>no pull request</Text>}
         {t.issue && (
           <Text wrap="truncate-end">
             <Text color={ISSUE_ICON[t.issue.platform].color}>{ISSUE_ICON[t.issue.platform].glyph} </Text>

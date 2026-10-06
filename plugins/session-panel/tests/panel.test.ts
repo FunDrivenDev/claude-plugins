@@ -64,6 +64,7 @@ test('the pane shows the first prompt and moves a finished sub-agent to the done
     expect(await ui.find({ text: /Build a calm side panel/ })).toBeUndefined()
     expect((await ui.find({ key: 'prompts' }))?.props.label).toBe('(2)')
     expect(await ui.find({ text: /1 running · 0 done/ })).toBeDefined()
+    expect(await ui.find({ text: /no pull request/ })).toBeDefined()
     expect((await ui.find({ key: 'agent:a1' }))?.props.label).toContain('Find hooks')
     await ui.unmount()
   }
