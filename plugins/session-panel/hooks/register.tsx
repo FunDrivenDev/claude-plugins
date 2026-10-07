@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, ToolCallInput, ToolCallResult, UiCopyArgs } from 'claude-code'
 
-import type { Agent, Entry, FileChange, Handover, Info, Note, NotesRoot, Picker, Quota, QuotaLayout, RepoChanges, Step, TrackedIssue, TrackedPr, Ttl } from '../types'
+import type { Agent, Entry, FileChange, Handover, HandoverFile, Info, Note, NotesRoot, Picker, Quota, QuotaLayout, RepoChanges, Step, TrackedIssue, TrackedPr, Ttl } from '../types'
 
 import { LOG_FORMAT, parseLog, parseNumstat, parseStatus, treeRows } from './files'
 import { noteGroups, noteOf, notePaths } from './notes'
@@ -306,6 +306,17 @@ export const handoverTitle = (text: string): string | null => {
   return summary || /^#\s*Hand(?:over|off):\s*(.+)$/m.exec(text)?.[1]?.trim() || null
 }
 
+/** A handover file's length and last change, `142 lines · 2026-10-07 09:32` in local time; null when neither is known. */
+export const fileMeta = (lines: number | null, modifiedAt: number | null): string | null => {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const d = modifiedAt === null ? null : new Date(modifiedAt)
+  const parts = [
+    lines === null ? null : `${lines} ${lines === 1 ? 'line' : 'lines'}`,
+    d && `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`,
+  ].filter(Boolean)
+  return parts.length ? parts.join(' · ') : null
+}
+
 const kilo = (n: number) => (n < 1000 ? String(n) : n < 10_000 ? `${(n / 1000).toFixed(1)}k` : `${Math.floor(n / 1000)}k`)
 
 /** What the handover plugin's status line says, in the same words and colours. */
@@ -530,6 +541,10 @@ test -e "$d/live/$1" && echo on
 echo "@@"; cat "$d/sessions/$1.json" 2>/dev/null
 echo "@@"; cat "$d/options.json" 2>/dev/null`
 
+/** A handover's first lines, for its title, then its line count and last change (`date -r` works on macOS and GNU). */
+const HANDOVER_FILE = `head -n 40 "$1" || exit 1
+printf '\\n@@\\n'; wc -l < "$1"; date -r "$1" +%s`
+
 /** Reads the handover plugin's state for this session, as its status line does. */
 async function readHandover($: EngineInterface) {
   const sid = await $.session.id()
@@ -545,10 +560,15 @@ async function readHandover($: EngineInterface) {
   const st = parse(state)
   const opt = parse(opts)
   const num = (key: string, fallback: number) => (typeof opt[key] === 'number' ? (opt[key] as number) : fallback)
-  const titled = async (path: unknown) => {
+  const titled = async (path: unknown): Promise<HandoverFile | null> => {
     if (typeof path !== 'string' || !path) return null
-    const head = await $.process.run(['head', '-n', '40', path])
-    return { path, title: head.exitCode === 0 ? handoverTitle(head.stdout) : null }
+    const out = await $.process.run(['sh', '-c', HANDOVER_FILE, 'sh', path])
+    const cut = out.stdout.lastIndexOf('\n@@\n')
+    if (out.exitCode !== 0 || cut < 0) return { path, title: null, lines: null, modifiedAt: null }
+    const [lines, seconds] = out.stdout.slice(cut + 4).split('\n').map(n => Number.parseInt(n.trim(), 10))
+    const known = (n: number | undefined) => (n !== undefined && Number.isFinite(n) ? n : null)
+    const at = known(seconds)
+    return { path, title: handoverTitle(out.stdout.slice(0, cut)), lines: known(lines), modifiedAt: at === null ? null : at * 1000 }
   }
   const written = st.written as { ok?: boolean } | undefined
   const said = written?.ok ? (await $.session.messages()).filter(m => m.role === 'assistant').pop()?.text : undefined
@@ -1006,12 +1026,16 @@ export const register: Register = (on, options) => {
       if (!ho) return [<Text dimColor>Not read yet.</Text>]
       if (!ho.isOn) return [<Text dimColor>The handover plugin is off in this session.</Text>]
       const status = handoverStatus(ho, usage.context.tokens ?? 0)
-      const file = (label: string, f: { path: string; title: string | null } | null) => (
-        <Text wrap="truncate-end">
-          <Text dimColor>{label} </Text>
-          {f ? <Link href={`file://${f.path}`} label={f.title ?? f.path.split('/').pop() ?? f.path} /> : <Text dimColor>none</Text>}
-        </Text>
-      )
+      const file = (label: string, f: HandoverFile | null) => {
+        const meta = f && fileMeta(f.lines, f.modifiedAt)
+        return (
+          <Text wrap="truncate-end">
+            <Text dimColor>{label} </Text>
+            {f ? <Link href={`file://${f.path}`} label={f.title ?? f.path.split('/').pop() ?? f.path} /> : <Text dimColor>none</Text>}
+            {meta && <Text dimColor> ({meta})</Text>}
+          </Text>
+        )
+      }
       const isStopped = ho.written !== null && current === null
       return [
         <Text color={status.color}>✋ {status.text}</Text>,

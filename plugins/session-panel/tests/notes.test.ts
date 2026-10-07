@@ -12,6 +12,7 @@ test('a file under ~/Notes, through its link or not, is a note of its inbox or f
     name: '26-10-06-ci-ok-wrap-up',
   })
   expect(noteOf('/Users/me/Code/notes/personal/claude/agent-handovers/x.md', root)?.kind).toBe('Agent handovers')
+  expect(noteOf('/Users/me/Notes/claude/agent-handovers/2026/10/07/09h32-panel.md', root)).toMatchObject({ kind: 'Agent handovers', name: '09h32-panel' })
   expect(noteOf('/Users/me/Notes/voice-ideas/idea.md', root)?.kind).toBe('Voice ideas')
   expect(noteOf('/Users/me/Code/repo/README.md', root)).toBeNull()
 })
