@@ -13,6 +13,9 @@ const TITLE = 'Session'
 /** The dock's opening width in fullscreen; a width the person dragged or keyed wins. */
 const DOCK_COLUMNS = 116
 const HISTORY_CAP = 400
+/** An open sub-agent's latest entries and the head of its task: the whole of either can pass the engine's 100,000 drawn characters. */
+const OPEN_HISTORY = 40
+const OPEN_PROMPT = 4000
 const STEPS_CAP = 300
 /** Finished steps shown while the list is folded, above the current one. */
 const DONE_SHOWN = 4
@@ -718,6 +721,8 @@ export const register: Register = (on, options) => {
   let scheme: Scheme = 'dark'
 
   on('session.start', async ($, e, next) => {
+    await update($, expanded, () => null)
+    await update($, view, () => 'overview')
     await $.command.register({ name: 'session-panel', description: 'Open the session overview pane' })
     void $.ui.open({ id: PANE, title: TITLE, columns: DOCK_COLUMNS })
     ticker?.cancel()
@@ -753,7 +758,10 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'session-panel' }, async $ => {
+    await update($, expanded, () => null)
+    await update($, view, () => 'overview')
     await $.ui.open({ id: PANE, title: TITLE, focus: true, columns: DOCK_COLUMNS })
+    void $.ui.scroll({ in: PANE, to: 'start' }).catch(() => undefined)
     return { text: 'Session panel opened.' }
   })
 
@@ -975,10 +983,18 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
+    /** Opens or closes a sub-agent, its heading brought to the top of the pane. */
+    const toggleAgent = async (key: string) => {
+      await update($, expanded, cur => (cur === key ? null : key))
+      await $.ui.scroll({ to: { key: `agent:${key}` }, block: 'start' }).catch(() => undefined)
+    }
+
     const card = (a: Agent, isDone: boolean) => {
       const key = a.id ?? a.toolUseId
       const isOpen = open === key
-      const history = isOpen ? a.history : a.history.slice(-3)
+      const history = a.history.slice(isOpen ? -OPEN_HISTORY : -3)
+      const earlier = a.history.length - history.length
+      const prompt = a.prompt.length > OPEN_PROMPT ? `${a.prompt.slice(0, OPEN_PROMPT - 1)}…` : a.prompt
       const elapsed = duration((a.endedAt ?? now) - a.startedAt)
       return (
         <Box key={key} flexDirection="column" marginBottom={1}>
@@ -987,7 +1003,7 @@ export const register: Register = (on, options) => {
             label={`${isOpen ? '▾' : '▸'} ${a.description}`}
             plain
             dimColor={isDone}
-            onPress={() => update($, expanded, cur => (cur === key ? null : key))}
+            onPress={() => toggleAgent(key)}
           />
           <Text dimColor wrap="truncate-end">
             {a.type}
@@ -995,11 +1011,12 @@ export const register: Register = (on, options) => {
             {a.isBackground ? ' · bg' : ''}
           </Text>
           <Text dimColor={isDone} italic wrap={isOpen ? 'wrap' : 'truncate-end'}>
-            {isOpen ? a.prompt : oneLine(a.prompt, 200)}
+            {isOpen ? prompt : oneLine(a.prompt, 200)}
           </Text>
-          {!isOpen && a.history.length > 3 && <Text dimColor>… {a.history.length - 3} earlier</Text>}
-          {history.map(entry => (
+          {earlier > 0 && <Text dimColor>… {earlier} earlier</Text>}
+          {history.map((entry, index) => (
             <Text
+              key={`agent:${key}:${earlier + index}`}
               dimColor={isDone || entry.kind === 'result' || entry.kind === 'think'}
               color={entry.kind === 'error' ? 'error' : undefined}
               wrap={isOpen ? 'wrap' : 'truncate-end'}
@@ -1008,6 +1025,9 @@ export const register: Register = (on, options) => {
               {entry.text}
             </Text>
           ))}
+          {isOpen && (
+            <Button key={`agent:${key}:close`} label="▴ Collapse" plain dimColor onPress={() => toggleAgent(key)} />
+          )}
         </Box>
       )
     }
@@ -1169,7 +1189,7 @@ export const register: Register = (on, options) => {
             label={`▸ ${a.description}`}
             plain
             dimColor={isDone}
-            onPress={() => update($, expanded, cur => (cur === key ? null : key))}
+            onPress={() => toggleAgent(key)}
           />
           <Text dimColor wrap="truncate-end">
             {'  '}

@@ -93,6 +93,46 @@ test('the pane shows the first prompt and moves a finished sub-agent to the done
   await ui.unmount()
 })
 
+test('an open sub-agent shows its latest entries only and collapses from its foot', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
+  on('tool.call', () => ({ result: {} as never, text: 'y'.repeat(300) }) as never)
+  on('process.run', () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
+  on('ui.open', () => ({ value: undefined }))
+  await $.agent.spawn({
+    tool_use_id: 'tu1',
+    prompt: 'P'.repeat(9000),
+    description: 'Review the branch',
+    subagentType: 'general-purpose',
+    provider: { plugin: 'engine', tier: 'core' },
+    parentModel: 'claude-opus-5-5',
+    background: true,
+    fork: false,
+  })
+  for (let k = 0; k < 200; k++) await $.tool.call({ tool: 'Bash', command: `echo step-${k}`, agentId: 'a1' } as never)
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'session-panel', surface, ...PANE })
+    await ui.press({ key: 'agent:a1' })
+    expect(await ui.find({ text: /echo step-199/ })).toBeDefined()
+    expect(await ui.find({ text: /echo step-150/ })).toBeUndefined()
+    expect(await ui.find({ text: /… 360 earlier/ })).toBeDefined()
+    expect(await ui.find({ text: /P{3999}…/ })).toBeDefined()
+    await ui.press({ key: 'agent:a1:close' })
+    expect(await ui.find({ key: 'agent:a1:close' })).toBeUndefined()
+    expect((await ui.find({ key: 'agent:a1' }))?.props.label).toBe('▸ Review the branch')
+    await ui.unmount()
+  }
+
+  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'agent:a1' })
+  expect(await ui.find({ key: 'agent:a1:close' })).toBeDefined()
+  await $.command.run({ command: 'session-panel' } as never)
+  expect(await ui.find({ key: 'agent:a1:close' })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('a step shows the command it ran, and only the four latest stay unfolded', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))

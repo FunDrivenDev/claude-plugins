@@ -1,6 +1,6 @@
 {
   "name": "session-panel",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "A calm side pane: model, effort, first prompt, uptime, cache TTL, sub-agents with their history, and the session's reasoning steps",
   "author": {
     "name": "Raphaël Louvradoux"
