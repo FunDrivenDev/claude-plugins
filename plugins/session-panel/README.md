@@ -73,7 +73,7 @@ It is a mod: a plugin of function hooks, drawn by the engine (no shell script, n
 /plugin install session-panel@fundrivendev
 ```
 
-The pane opens at session start when the terminal is at least 144 columns wide; `/session-panel` opens it at any width.
+The pane opens at session start when the terminal is at least 144 columns wide; `/session-panel` opens it at any width. Docked beside a fullscreen transcript it opens 116 columns wide, unless a width was dragged or keyed since.
 
 ## Settings
 

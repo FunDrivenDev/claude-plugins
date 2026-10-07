@@ -10,6 +10,8 @@ import type { GithubRef, LinearRef } from './tracker'
 
 const PANE = 'session-panel'
 const TITLE = 'Session'
+/** The dock's opening width in fullscreen; a width the person dragged or keyed wins. */
+const DOCK_COLUMNS = 116
 const HISTORY_CAP = 400
 const STEPS_CAP = 300
 /** Finished steps shown while the list is folded, above the current one. */
@@ -625,7 +627,7 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'session-panel', description: 'Open the session overview pane' })
-    void $.ui.open({ id: PANE, title: TITLE })
+    void $.ui.open({ id: PANE, title: TITLE, columns: DOCK_COLUMNS })
     ticker?.cancel()
     let ticks = 0
     ticker = $.clock.every(1000, () => {
@@ -657,7 +659,7 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'session-panel' }, async $ => {
-    await $.ui.open({ id: PANE, title: TITLE, focus: true })
+    await $.ui.open({ id: PANE, title: TITLE, focus: true, columns: DOCK_COLUMNS })
     return { text: 'Session panel opened.' }
   })
 
