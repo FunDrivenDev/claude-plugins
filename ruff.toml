@@ -1,0 +1,9 @@
+# Lint for the plugins' Python scripts (`just lint`). The hooks run them with the
+# system python3, 3.9 on macOS: ruff flags any syntax newer than that.
+target-version = "py39"
+# The width the scripts were written to.
+line-length = 120
+
+[lint]
+# Times are read and shown in the user's local time, naive on purpose.
+ignore = ["DTZ005", "DTZ006"]

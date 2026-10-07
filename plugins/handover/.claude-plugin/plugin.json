@@ -1,0 +1,93 @@
+{
+  "name": "handover",
+  "description": "Hand a session over to a fresh one before its context fills up: a separate model writes the handover from the transcript, /clear loads it",
+  "version": "0.13.0",
+  "author": {
+    "name": "Raphaël Louvradoux",
+    "url": "https://github.com/rlvdx"
+  },
+  "repository": "https://github.com/FunDrivenDev/claude-plugins",
+  "userConfig": {
+    "handover_dir": {
+      "type": "directory",
+      "title": "Handover folder",
+      "description": "Base folder of the handover documents, written as YYYY/MM/DD/HHhMM-<topic>.md",
+      "default": "~/Notes/claude/agent-handovers"
+    },
+    "suggest_tokens": {
+      "type": "number",
+      "title": "Suggest a handover (tokens)",
+      "description": "Context size at which the session is told, once, to hand over by itself (the handover skill) at the next boundary between scopes. Only below trigger_tokens. 0 never tells it",
+      "default": 150000,
+      "min": 0
+    },
+    "trigger_tokens": {
+      "type": "number",
+      "title": "Trigger (tokens)",
+      "description": "Context size at which the session is told to start no new task, finish those in progress (the current step, its subagents, its [await] commands) and hand over; the handover is written once it has. 0 turns the trigger off: handovers are then written only when the session asks for one (the handover skill) and before compaction",
+      "default": 185000,
+      "min": 0
+    },
+    "await_minutes": {
+      "type": "number",
+      "title": "Wait for [await] commands (minutes)",
+      "description": "During the wind-down, how long each background command tagged [await] (a test run, a build) is waited for before the plugin stops it and names it in the handover, as it does at once with [endless] ones",
+      "default": 10,
+      "min": 1
+    },
+    "writer_model": {
+      "type": "string",
+      "title": "Writer model",
+      "description": "Model that writes the handover from the transcript (claude --model value)",
+      "default": "sonnet"
+    },
+    "handover_chars": {
+      "type": "number",
+      "title": "Handover length (characters)",
+      "description": "Length the writer aims for. A loaded handover is cut at 9,500 characters, Claude Code's limit for injected context",
+      "default": 8000,
+      "min": 2000,
+      "max": 9500
+    },
+    "warn_tokens": {
+      "type": "number",
+      "title": "Status line warning (tokens before the trigger)",
+      "description": "How far below trigger_tokens the status line turns yellow",
+      "default": 20000,
+      "min": 0
+    },
+    "refresh_tokens": {
+      "type": "number",
+      "title": "Refresh tolerance (tokens)",
+      "description": "A handover this many tokens behind the session is rewritten before /clear, exit or compaction uses it",
+      "default": 2000,
+      "min": 0
+    },
+    "compact_reserve_tokens": {
+      "type": "number",
+      "title": "Compaction reserve (tokens)",
+      "description": "How far below autoCompactWindow auto-compaction fires. /handover:stats uses it to estimate the margin until real compactions have been recorded",
+      "default": 33000,
+      "min": 0
+    },
+    "relay_limit": {
+      "type": "number",
+      "title": "Relay limit (handovers)",
+      "description": "Handovers in a chain of sessions the relay hands over to one another without the user. At the last one the chain halts, with a macOS notification and a terminal bell, and waits for /clear",
+      "default": 5,
+      "min": 1
+    },
+    "delegate": {
+      "type": "boolean",
+      "title": "Delegate to subagents",
+      "description": "Tell each session, as it starts on a fresh context, to keep its own context for steering and give self-contained tasks to subagents, so it fills more slowly",
+      "default": true
+    },
+    "yolo_guard_paths": {
+      "type": "string",
+      "title": "YOLO guarded paths",
+      "description": "Extra files or folders a YOLO run must not write, separated by spaces or commas (~ allowed), on top of the plugin, its data and the settings that load it: a gate the run must not edit to get through, for instance",
+      "default": ""
+    }
+  }
+}

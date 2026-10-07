@@ -7,16 +7,19 @@ _default:
 init:
     scripts/init.sh
 
-# Lint every shell script and git hook (shellcheck), the CI workflow (actionlint) and the mods' TypeScript (biome); the pre-commit hook.
+# Lint every shell script and git hook (shellcheck), the CI workflow (actionlint), the mods' TypeScript (biome) and the Python scripts (ruff format --check and ruff check, ruff.toml); the pre-commit hook.
 lint:
     git ls-files -z --cached --others --exclude-standard '*.sh' '.githooks/*' | xargs -0 mise exec -- shellcheck
     mise exec -- actionlint
     mise exec -- biome lint --error-on-warnings
+    mise exec -- ruff format --check --quiet
+    mise exec -- ruff check --quiet
 
 # Run the plugins' smoke tests.
 test:
     mise exec -- tests/run.sh
     mise exec -- tests/versions.sh
+    mise exec -- tests/handover.sh
 
 # Fail when a plugin changed since origin/main without a version bump (needs origin/main, so not in CI).
 versions:

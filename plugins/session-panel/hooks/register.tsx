@@ -606,7 +606,8 @@ async function scanNotes($: EngineInterface, tool: string, input: Record<string,
   await keepNotes($, written.stdout.split('\n').filter(Boolean))
 }
 
-const HANDOVER_READ = `d="$HOME/.claude/plugins/data/handover-fundriven"
+const HANDOVER_READ = `d="$HOME/.claude/plugins/data/handover-fundrivendev"
+test -d "$d" || d="$HOME/.claude/plugins/data/handover-fundriven"
 test -e "$d/live/$1" && echo on
 echo "@@"; cat "$d/sessions/$1.json" 2>/dev/null
 echo "@@"; cat "$d/options.json" 2>/dev/null`

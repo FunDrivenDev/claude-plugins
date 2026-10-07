@@ -17,6 +17,12 @@
       "description": "A calm side pane: model and effort, first prompt, uptime, prompt-cache countdown, sub-agents with their task and full history, and a checklist of the session's steps.",
       "source": "./plugins/session-panel",
       "category": "productivity"
+    },
+    {
+      "name": "handover",
+      "description": "Hand a session over to a fresh one before its context fills up: a separate model writes the handover from the transcript, /clear loads it",
+      "source": "./plugins/handover",
+      "category": "productivity"
     }
   ]
 }

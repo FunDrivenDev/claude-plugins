@@ -1,3 +1,6 @@
 .DS_Store
 # Types the Claude Code engine lays beside a mod at each load
 plugins/*/.claude-plugin/types/
+# Python bytecode from the handover plugin's scripts
+__pycache__/
+*.pyc

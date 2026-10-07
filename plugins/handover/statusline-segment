@@ -1,0 +1,4 @@
+#!/bin/sh
+# The handover line under the statusline plugin's status line
+# (FunDrivenDev/claude-plugins), which runs this with its payload on stdin.
+exec python3 "$(dirname "$0")/scripts/handover.py" statusline
