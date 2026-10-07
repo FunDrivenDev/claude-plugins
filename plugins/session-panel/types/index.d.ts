@@ -96,12 +96,15 @@ export type Tracker = {
   mentioned: string[]
 }
 
+/** A handover file, with its length and last change (epoch ms) as read, null when unread. */
+export type HandoverFile = { path: string; title: string | null; lines: number | null; modifiedAt: number | null }
+
 export type Handover = {
   /** The handover plugin runs in this session. */
   isOn: boolean
   /** The handover this session started from, and the one it wrote. */
-  loaded: { path: string; title: string | null } | null
-  written: { path: string; title: string | null } | null
+  loaded: HandoverFile | null
+  written: HandoverFile | null
   suggest: number
   trigger: number
   warn: number

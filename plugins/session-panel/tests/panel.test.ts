@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { ago, barRuns, cacheColor, contextOf, describeCall, duration, effortColor, handoverStatus, handoverTitle, headline, kfmt, lastSentence, minutesLeft, modelColor, modelId, prettyModel, promptText, quotaOf, resumeMessage, span } from '../hooks/register'
+import { ago, barRuns, cacheColor, contextOf, describeCall, duration, effortColor, fileMeta, handoverStatus, handoverTitle, headline, kfmt, lastSentence, minutesLeft, modelColor, modelId, prettyModel, promptText, quotaOf, resumeMessage, span } from '../hooks/register'
 
 const PANE = {
   component: 'Pane',
@@ -37,6 +37,9 @@ describe('helpers', () => {
     expect(lastSentence('Read the types. Then search engine types for link supp')).toBe('Read the types.')
     expect(handoverTitle('---\nstatus: done\nsummary: "panel corner"\n---\n# Handover: x')).toBe('panel corner')
     expect(handoverTitle('# Handover: session-panel tracker\n')).toBe('session-panel tracker')
+    expect(fileMeta(142, new Date(2026, 9, 7, 9, 32).getTime())).toBe('142 lines · 2026-10-07 09:32')
+    expect(fileMeta(1, null)).toBe('1 line')
+    expect(fileMeta(null, null)).toBeNull()
     const ho = { isOn: true, loaded: null, written: null, suggest: 150_000, trigger: 185_000, warn: 20_000, isWriting: false, error: null, resume: null }
     expect(handoverStatus(ho, 92_000).text).toBe('triggers at 185k · now 92k')
     expect(handoverStatus(ho, 170_000).color).toBe('#e5c890')
