@@ -79,6 +79,63 @@ export const modelColor = (id: string | null): string => {
 export const effortColor = (level: string | null): string =>
   EFFORTS.find(e => e.level === level)?.color ?? '#a5adce'
 
+export type Scheme = 'dark' | 'light'
+
+/**
+ * Each colour the pane draws, as written for a dark background, with its twin
+ * for a light one: Catppuccin Latte for Frappé; for the status line's bright
+ * grading, GitHub's and `/effort`'s colours, the nearest tone that reads on white.
+ */
+const LIGHT: Record<string, string> = {
+  '#a6d189': '#40a02b',
+  '#e5c890': '#9a6700',
+  '#e78284': '#d20f39',
+  '#ef9f76': '#fe640b',
+  '#8caaee': '#1e66f5',
+  '#ca9ee6': '#8839ef',
+  '#babbf1': '#7287fd',
+  '#81c8be': '#179299',
+  '#a5adce': '#6c6f85',
+  '#c6d0f5': '#4c4f69',
+  '#51576d': '#bcc0cc',
+  '#8a8a8a': '#7c7f93',
+  '#5fff00': '#40a02b',
+  '#ffff00': '#9a6700',
+  '#ffaf00': '#fe640b',
+  '#ff0000': '#d20f39',
+  '#ffc107': '#9a6700',
+  '#4eba65': '#40a02b',
+  '#b1b9f9': '#7287fd',
+  '#af87ff': '#8839ef',
+  '#eb5f57': '#d20f39',
+  '#3fb950': '#1a7f37',
+  '#f85149': '#cf222e',
+  '#a371f7': '#8250df',
+}
+
+const swap = (props: Record<string, unknown>): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(props).map(([k, v]) => [k, typeof v === 'string' ? (LIGHT[v] ?? v) : v]))
+
+/** The pane's tree for the OS appearance: on a light one, every colour swapped for its twin (LIGHT). */
+export const recolor = <T,>(node: T, scheme: Scheme): T => {
+  if (scheme === 'dark' || node === null || typeof node !== 'object') return node
+  if (Array.isArray(node)) return node.map(child => recolor(child, scheme)) as T
+  const el = node as { props?: Record<string, unknown>; hover?: Record<string, unknown>; children?: unknown[] }
+  return {
+    ...el,
+    ...(el.props && { props: swap(el.props) }),
+    ...(el.hover && { hover: swap(el.hover) }),
+    ...(el.children && { children: el.children.map(child => recolor(child, scheme)) }),
+  } as T
+}
+
+/** macOS's appearance: `AppleInterfaceStyle` is `Dark` in dark mode and unset in light mode; dark elsewhere. */
+async function readScheme($: EngineInterface): Promise<Scheme> {
+  const r = await $.process.run(['defaults', 'read', '-g', 'AppleInterfaceStyle'])
+  if (r.exitCode === 0) return 'dark'
+  return /does not exist/.test(r.stderr) ? 'light' : 'dark'
+}
+
 const effortLabel = (level: string | null): string => {
   const rank = EFFORTS.findIndex(e => e.level === level)
   return rank < 0 ? (level ?? 'default') : `${level} ${rank + 1}/${EFFORTS.length}`
@@ -122,32 +179,45 @@ const RESERVE = 33_000
 /** Where the context counter turns yellow, orange and red, as shares of the limit (CC_TOKEN_WARN, _DANGER, _ALERT). */
 const STAGES = [0.5, 0.75, 0.9] as const
 
+/** The auto-compact trigger (`limit`) and the window it sits a margin below. */
+export type Limit = { limit: number; window: number }
+
 /** `78234` → `78.2k`, `934` → `934`, as the status line counts tokens. */
 export const kfmt = (n: number): string => (n < 1000 ? String(n) : `${Math.floor(n / 1000)}.${Math.floor((n % 1000) / 100)}k`)
 
+const cap = (n: number): string => (n % 1000 === 0 ? `${n / 1000}k` : kfmt(n))
+
 /**
- * The context counter as the status line draws it: tokens against the
- * auto-compact trigger, green to half of it, yellow to three quarters, orange
- * to nine tenths, then red, and compacting once reached.
+ * The context counter: tokens against the auto-compact trigger, how it is
+ * reckoned in brackets (`250k − 33k`), green to half of the trigger, yellow to
+ * three quarters, orange to nine tenths, then red, and compacting once reached.
  */
-export const contextOf = (tokens: number | undefined, limit: number): { text: string; color: string; isCompacting: boolean } => {
-  const cap = limit % 1000 === 0 ? `${limit / 1000}k` : kfmt(limit)
-  if (tokens === undefined) return { text: `0/${cap}`, color: '#8a8a8a', isCompacting: false }
-  const text = `${kfmt(tokens)}/${cap} ${Math.floor((tokens * 100) / limit)}%`
+export const contextOf = (tokens: number | undefined, { limit, window }: Limit): { text: string; color: string; isCompacting: boolean } => {
+  const sum = window > limit ? ` (${cap(window)} − ${cap(window - limit)})` : ''
+  if (tokens === undefined) return { text: `0/${cap(limit)}${sum}`, color: '#8a8a8a', isCompacting: false }
+  const text = `${kfmt(tokens)}/${cap(limit)}${sum} ${Math.floor((tokens * 100) / limit)}%`
   if (tokens >= limit) return { text: `${text} ⚠ compacting`, color: '#ff0000', isCompacting: true }
   const stage = STAGES.findIndex(share => tokens <= limit * share)
   return { text, color: ['#5fff00', '#ffff00', '#ffaf00'][stage] ?? '#ff0000', isCompacting: false }
 }
 
-/** The auto-compact trigger, as the status line reckons it: CC_TOKEN_LIMIT, else `autoCompactWindow`, else 200k; less CC_TOKEN_RESERVE. */
-async function readLimit($: EngineInterface): Promise<number> {
+/**
+ * The auto-compact trigger as the engine sets it (/context's figures); where
+ * the engine gives none, as the status line reckons it: CC_TOKEN_LIMIT, else
+ * `autoCompactWindow`, else 200k; less CC_TOKEN_RESERVE.
+ */
+async function readLimit($: EngineInterface): Promise<Limit> {
+  const b = (await $.session.usage({ breakdown: 'summary' })).context.breakdown
+  if (b?.autoCompactThreshold && b.autoCompactThreshold > 0)
+    return { limit: b.autoCompactThreshold, window: Math.max(b.rawMaxTokens, b.autoCompactThreshold) }
+  if (b && !b.isAutoCompactEnabled && b.rawMaxTokens > 0) return { limit: b.rawMaxTokens, window: b.rawMaxTokens }
   const whole = (value: unknown) => {
     const n = typeof value === 'string' && /^\d{1,12}$/.test(value) ? Number(value) : value
     return typeof n === 'number' && Number.isInteger(n) && n > 0 ? n : null
   }
   const window = whole(await $.env.get('CC_TOKEN_LIMIT')) ?? whole((await $.settings.read()).autoCompactWindow) ?? WINDOW
   const limit = window - (whole(await $.env.get('CC_TOKEN_RESERVE')) ?? RESERVE)
-  return limit > 0 ? limit : window
+  return { limit: limit > 0 ? limit : window, window }
 }
 
 /** The message the closing reply hands the next session: its code block after `/clear`, on one line, as the handover plugin reads it. */
@@ -643,7 +713,8 @@ async function finish($: EngineInterface, agentId: string, answer?: string) {
 export const register: Register = (on, options) => {
   const defaultTtl: Ttl = options.cacheTtl === '5m' ? '5m' : '1h'
   let ticker: { cancel: () => void } | null = null
-  let limit = WINDOW - RESERVE
+  let limit: Limit = { limit: WINDOW - RESERVE, window: WINDOW }
+  let scheme: Scheme = 'dark'
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'session-panel', description: 'Open the session overview pane' })
@@ -653,6 +724,7 @@ export const register: Register = (on, options) => {
     ticker = $.clock.every(1000, () => {
       ticks++
       if (ticks % 5 === 0) void readHandover($)
+      if (ticks % 5 === 0) void readScheme($).then(s => (scheme = s))
       if (ticks % 30 === 0) void readLimit($).then(n => (limit = n))
       if (ticks % 60 === 0) void refreshPr($)
       $.ui.invalidate('ui.render')
@@ -662,6 +734,7 @@ export const register: Register = (on, options) => {
     hasLinearApp = (await $.process.run(['test', '-d', '/Applications/Linear.app'])).exitCode === 0
     await readHandover($)
     limit = await readLimit($)
+    scheme = await readScheme($)
     await trackRepo($, e.cwd)
     await refreshFiles($)
     await seedModel($)
@@ -1105,7 +1178,7 @@ export const register: Register = (on, options) => {
       )
     }
 
-    return (
+    const pane = (
       <Box flexDirection="column" paddingX={1}>
         <Box flexDirection="row" justifyContent="space-between" columnGap={2} marginBottom={1}>
           <Box flexDirection="column" flexShrink={0}>
@@ -1316,5 +1389,6 @@ export const register: Register = (on, options) => {
         </Box>
       </Box>
     )
+    return recolor(pane, scheme)
   })
 }

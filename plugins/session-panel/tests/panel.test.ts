@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { ago, barRuns, cacheColor, contextOf, describeCall, duration, effortColor, fileMeta, handoverStatus, handoverTitle, headline, kfmt, lastSentence, minutesLeft, modelColor, modelId, prettyModel, promptText, quotaOf, resumeMessage, span } from '../hooks/register'
+import { ago, barRuns, cacheColor, contextOf, describeCall, duration, effortColor, fileMeta, handoverStatus, handoverTitle, headline, kfmt, lastSentence, minutesLeft, modelColor, modelId, prettyModel, promptText, quotaOf, recolor, resumeMessage, span } from '../hooks/register'
 
 const PANE = {
   component: 'Pane',
@@ -209,12 +209,32 @@ describe('quotas', () => {
   test('count the context against the auto-compact trigger, graded as the status line', () => {
     expect(kfmt(78_234)).toBe('78.2k')
     expect(kfmt(934)).toBe('934')
-    expect(contextOf(undefined, 167_000)).toEqual({ text: '0/167k', color: '#8a8a8a', isCompacting: false })
-    expect(contextOf(78_234, 167_000)).toEqual({ text: '78.2k/167k 46%', color: '#5fff00', isCompacting: false })
-    expect(contextOf(100_000, 167_000).color).toBe('#ffff00')
-    expect(contextOf(140_000, 167_000).color).toBe('#ffaf00')
-    expect(contextOf(160_000, 167_000).color).toBe('#ff0000')
-    expect(contextOf(170_000, 167_000)).toEqual({ text: '170.0k/167k 101% ⚠ compacting', color: '#ff0000', isCompacting: true })
+    const window = { limit: 167_000, window: 200_000 }
+    expect(contextOf(undefined, window)).toEqual({ text: '0/167k (200k − 33k)', color: '#8a8a8a', isCompacting: false })
+    expect(contextOf(78_234, window)).toEqual({ text: '78.2k/167k (200k − 33k) 46%', color: '#5fff00', isCompacting: false })
+    expect(contextOf(100_000, window).color).toBe('#ffff00')
+    expect(contextOf(140_000, window).color).toBe('#ffaf00')
+    expect(contextOf(160_000, window).color).toBe('#ff0000')
+    expect(contextOf(170_000, window)).toEqual({ text: '170.0k/167k (200k − 33k) 101% ⚠ compacting', color: '#ff0000', isCompacting: true })
+    expect(contextOf(78_234, { limit: 200_000, window: 200_000 }).text).toBe('78.2k/200k 39%')
+  })
+
+  test('grade the context on the trigger the person set, whatever its size', () => {
+    const set = { limit: 217_000, window: 250_000 }
+    expect(contextOf(108_000, set).color).toBe('#5fff00')
+    expect(contextOf(109_000, set).color).toBe('#ffff00')
+    expect(contextOf(163_000, set).color).toBe('#ffaf00')
+    expect(contextOf(196_000, set).color).toBe('#ff0000')
+  })
+
+  test('swap each colour for its light twin on a light appearance, and leave the dark one alone', () => {
+    const tree = { type: 'Box', props: { borderColor: '#a6d189' }, children: [{ type: 'Text', props: { color: '#ffff00', bold: true }, hover: { color: '#e78284' }, children: ['#ffff00'] }] }
+    expect(recolor(tree, 'dark')).toBe(tree)
+    expect(recolor(tree, 'light')).toEqual({
+      type: 'Box',
+      props: { borderColor: '#40a02b' },
+      children: [{ type: 'Text', props: { color: '#9a6700', bold: true }, hover: { color: '#d20f39' }, children: ['#ffff00'] }],
+    })
   })
 
   test('read the resume message the closing reply ends on', () => {
@@ -305,4 +325,30 @@ test('the notes the session writes list under their kind, linked, by name', asyn
     expect(await ui.find({ text: /\.md/ })).toBeUndefined()
     await ui.unmount()
   }
+})
+
+test('the context counter shows the engine trigger and its reckoning, in light colours on a light macOS', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  const breakdown = { autoCompactThreshold: 217_000, rawMaxTokens: 250_000, isAutoCompactEnabled: true }
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 120_000, window: 1_000_000, breakdown } as never, rateLimits: [] } }))
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.model', () => ({ value: 'opus' }))
+  on('command.register', () => ({ value: undefined }))
+  on('session.messages', () => ({ value: [] }))
+  on('session.id', () => ({ value: 's1' }))
+  on('ui.open', () => ({ value: undefined }))
+  on('env.get', () => ({ value: undefined }))
+  on('settings.read', () => ({ value: {} }))
+  on('process.run', ($, e) => {
+    const isAppearance = e.argv[0] === 'defaults'
+    const stderr = isAppearance ? 'The domain/default pair of (kCFPreferencesAnyApplication, AppleInterfaceStyle) does not exist' : ''
+    return { value: { exitCode: 1, stdout: '', stderr, isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  const pane = JSON.stringify(await ui.find({ text: /context/ }))
+  expect(pane).toContain('"color":"#9a6700","inverse":false},"children":["120.0k/217k (250k − 33k) 55%"]')
+  expect(pane).toContain('"borderColor":"#fe640b"')
+  await ui.unmount()
 })
