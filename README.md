@@ -10,6 +10,7 @@ Public Claude Code plugins by FunDrivenDev.
 |---|---|
 | [`statusline`](plugins/statusline/README.md) | A status line built around the context budget: tokens against the auto-compact trigger, prompt-cache countdown, 5-hour and 7-day quota pace, git branch and PR, and a segment for each plugin that ships one. |
 | [`session-panel`](plugins/session-panel/README.md) | A side pane: model and effort, first prompt, uptime, prompt-cache countdown, each sub-agent's task and full history (finished ones greyed beside the running ones), and a checklist of the session's steps. |
+| [`handover`](plugins/handover/README.md) | Takes over from auto-compaction: before the context fills up, a separate model writes a handover from the transcript and `/clear` starts a fresh session from it; plus a relay that clears and resumes sessions on its own, and an AFK mode. [`bench/handover/`](bench/handover/README.md) holds the benchmark behind it. |
 
 ## Working on this repo
 
@@ -18,8 +19,8 @@ Tools are pinned in `mise.toml` and run through `just`:
 | Recipe | What it does |
 |---|---|
 | `just init` | Installs the pinned tools and turns on the git hooks (`.githooks`); safe to re-run |
-| `just lint` | `shellcheck` on every shell script and hook, `actionlint` on CI, `biome lint` on the mods' TypeScript (`biome.json`) |
-| `just test` | The plugins' smoke tests, under the default `bash` and macOS's `/bin/bash` 3.2 |
+| `just lint` | `shellcheck` on every shell script and hook, `actionlint` on CI, `biome lint` on the mods' TypeScript (`biome.json`), `ruff` on the Python scripts (`ruff.toml`, Python 3.9 syntax: the handover hooks run the system `python3`) |
+| `just test` | The plugins' smoke tests: the status line under the default `bash` and macOS's `/bin/bash` 3.2, the handover plugin's carry-over of its old data |
 | `just validate` | `claude plugin validate` on the marketplace and each plugin, and `claude plugin test` on each plugin with tests (needs the `claude` CLI) |
 | `just versions` | Fails when a plugin changed since `origin/main` (outside its `tests/`) without a version bump |
 | `just bump <plugin> patch\|minor\|major` | Raises the plugin's version in its `plugin.json` |

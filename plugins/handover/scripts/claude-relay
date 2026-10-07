@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# Claude Code with the handover relay on: once a handover is ready and the session has
+# written its closing reply, a fresh session resumes from it without the user, up to
+# the plugin's relay_limit handovers. Arguments go to claude.
+#
+#   claude-relay [claude args]
+#   claude-relay --afk '<goal>' [--until <when>] [--yolo] [claude args]
+#
+# --afk runs toward a goal while the user is away: no relay_limit, sessions are sent back to
+# work until one ends a reply on `AFK done: <why>` or `AFK blocked: <why>`, and, with
+# --until (8, 8:30, tomorrow 8, mon 9:00, +10h), no new handover starts past the deadline.
+# The goal is also the first prompt. --yolo skips permission prompts
+# (--dangerously-skip-permissions), with deny rules on the plugin, its data and the settings
+# files; the plugin's hooks write every tool call to an audit log (/handover:stats).
+#
+# In tmux, started here when absent, the relay types /clear and the resume message into
+# the pane. Without tmux, this script loops: the relay leaves the resume message in
+# $HANDOVER_RELAY_FILE and ends claude, and the loop starts claude again with the same
+# arguments plus that message; there, give flags only and type the first prompt.
+set -euo pipefail
+
+here=$(cd "$(dirname "$0")" && pwd)
+goal="" until="" yolo=""
+args=()
+while (($#)); do
+  case $1 in
+    --afk) goal=${2:?--afk needs a goal}; shift 2 ;;
+    --until) until=${2:?--until needs a deadline}; shift 2 ;;
+    --yolo) yolo=1; shift ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+if [[ -n $until && -z $goal ]]; then
+  echo "claude-relay: --until goes with --afk" >&2
+  exit 2
+fi
+if [[ -n $yolo && -z $goal ]]; then
+  echo "claude-relay: --yolo goes with --afk" >&2
+  exit 2
+fi
+if [[ -n $until && $until != @* ]]; then
+  # Resolved once, here: `8` means the next 8:00 from now, not from a later restart.
+  until=@$(python3 "$here/handover.py" until "$until")
+fi
+afk=()
+[[ -n $goal ]] && afk=(--afk "$goal")
+[[ -n $until ]] && afk+=(--until "$until")
+[[ -n $yolo ]] && afk+=(--yolo)
+
+export HANDOVER_RELAY=1
+
+if [[ -z ${TMUX:-} ]] && command -v tmux >/dev/null; then
+  if [[ -n $goal ]]; then
+    # An AFK run outlives its tab: a named session, to find with `tmux ls` and rejoin.
+    name=afk-$(basename "$PWD" | tr '.:' '--') n=1
+    base=$name
+    while tmux has-session -t "=$name" 2>/dev/null; do name=$base-$((++n)); done
+    echo "claude-relay: AFK run in tmux session $name (tmux attach -t $name)" >&2
+    exec tmux new-session -s "$name" -c "$PWD" "$0" "${afk[@]}" ${args[@]+"${args[@]}"}
+  fi
+  exec tmux new-session -c "$PWD" -e HANDOVER_RELAY_OWN=1 "$0" ${args[@]+"${args[@]}"}
+fi
+
+if [[ -n $goal ]]; then
+  export HANDOVER_AFK_GOAL=$goal
+  [[ -n $until ]] && export HANDOVER_AFK_UNTIL=${until#@}
+  if [[ -n $yolo ]]; then
+    export HANDOVER_AFK_YOLO=1
+    # claude takes a single --settings: the user's own gets the deny rules added.
+    user_settings=() rest=()
+    set -- ${args[@]+"${args[@]}"}
+    while (($#)); do
+      case $1 in
+        --settings) user_settings=(--merge "${2:?--settings needs a value}"); shift 2 ;;
+        --settings=*) user_settings=(--merge "${1#--settings=}"); shift ;;
+        *) rest+=("$1"); shift ;;
+      esac
+    done
+    settings=$(python3 "$here/handover.py" yolo-settings ${user_settings[@]+"${user_settings[@]}"})
+    args=(--dangerously-skip-permissions --settings "$settings" ${rest[@]+"${rest[@]}"})
+  fi
+  args+=("$goal")
+fi
+
+if [[ -n ${TMUX:-} ]]; then
+  # A tmux session started above goes with its terminal tab, as claude would without tmux;
+  # an AFK run stays when the tab closes.
+  if [[ -n $goal ]]; then
+    tmux set-option -t "$TMUX_PANE" destroy-unattached off
+  elif [[ -n ${HANDOVER_RELAY_OWN:-} ]]; then
+    tmux set-option -t "$TMUX_PANE" destroy-unattached on
+  fi
+  exec claude ${args[@]+"${args[@]}"}
+fi
+
+HANDOVER_RELAY_FILE=$(mktemp -t claude-relay)
+HANDOVER_RELAY_PID=$$
+export HANDOVER_RELAY_FILE HANDOVER_RELAY_PID
+trap 'rm -f "$HANDOVER_RELAY_FILE"' EXIT
+
+# The goal is the first prompt only: a restart gets the resume message instead.
+[[ -n $goal ]] && unset 'args[${#args[@]}-1]'
+message=()
+[[ -n $goal ]] && message=("$goal")
+while true; do
+  claude ${args[@]+"${args[@]}"} ${message[@]+"${message[@]}"} || true
+  stty sane 2>/dev/null || true
+  [[ -s $HANDOVER_RELAY_FILE ]] || break
+  message=("$(<"$HANDOVER_RELAY_FILE")")
+  : >"$HANDOVER_RELAY_FILE"
+done
