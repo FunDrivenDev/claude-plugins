@@ -36,9 +36,6 @@ export type RepoChanges = { root: string; branch: string; files: FileChange[]; c
 
 export type Picker = 'model' | 'effort' | null
 
-/** The quota bars side by side, half the width each, or one per line. */
-export type QuotaLayout = 'side' | 'stacked'
-
 export type Quota = {
   label: string
   used: number
@@ -91,10 +88,14 @@ export type TrackedPr = {
 
 export type Tracker = {
   issue: TrackedIssue | null
-  pr: TrackedPr | null
+  /** One pull request per repository, `owner/repo`. */
+  prs: TrackedPr[]
   /** Bare `KEY-N` identifiers the prompts named, matched once a Linear tool shows one. */
   mentioned: string[]
 }
+
+/** A repository the session worked on: its git common dir, `owner/repo` from its origin, its name, and the linked worktree it last edited in. */
+export type Repo = { common: string; slug: string | null; name: string; worktree: string | null }
 
 /** A handover file, with its length and last change (epoch ms) as read, null when unread. */
 export type HandoverFile = { path: string; title: string | null; lines: number | null; modifiedAt: number | null }
@@ -109,23 +110,39 @@ export type Handover = {
   trigger: number
   warn: number
   isWriting: boolean
+  /** The wind-down has started (the trigger, a request or /handover:trigger): no new task, those in progress finish. */
+  isWindingDown: boolean
   error: string | null
   /** The message the closing reply gives the next session to start on, once the handover is written. */
   resume: string | null
 }
 
-/** `$HOME`, and the folder `~/Notes` links to (null where it is no link or is missing). */
-export type NotesRoot = { home: string; real: string | null }
+/** The pane's tabs: the session at a glance, the rest (steps, sub-agents, git), the values it reads from configuration, and what each item means. */
+/** A typed prompt and when it was submitted (epoch ms); `at` null for one read back from the transcript. */
+export type Prompt = { text: string; at: number | null }
 
-/** A file the session wrote under `~/Notes`. */
-export type Note = {
+export type Tab = 'main' | 'misc' | 'config' | 'help'
+
+/** Something tangible the session wrote: an artifact it published, or a Markdown file outside the project. */
+export type Doc = {
+  /** Its real path, or the artifact's link: one entry each. */
+  id: string
+  /** The path as written, or the artifact's link. */
   path: string
-  /** Its path under the notes folder, the same through the link or not. */
-  rel: string
-  /** Its inbox (`Reports`, `Agent handovers`), else its top folder. */
+  /** `Artifacts`, `Agent handovers`, `Plans`, else its folder's name. */
   kind: string
-  /** Its file name without `.md`. */
+  /** Its file name without `.md`, or the artifact's title. */
   name: string
+}
+
+/** The values the pane reads from configuration, as set; null where unset and the default applies. */
+export type Config = {
+  cacheTtl: Ttl
+  autoCompactWindow: number | null
+  tokenLimit: number | null
+  tokenReserve: number | null
+  plansDirectory: string | null
+  handoverDir: string | null
 }
 
 declare module 'claude-code' {
@@ -137,16 +154,21 @@ declare module 'claude-code' {
       expanded: string | null
       stepsOpen: boolean
       picking: Picker
-      prompts: string[]
+      prompts: (Prompt | string)[]
       view: 'overview' | 'prompts'
       roots: string[]
       changes: RepoChanges[]
       tracker: Tracker
       home: string | null
       handover: Handover | null
-      quotaLayout: QuotaLayout
-      worktree: string | null
-      notes: Note[]
+      repos: Repo[]
+      documents: Doc[]
+      config: Config
+      tab: Tab
+      quotasOpen: boolean
+      topic: string | null
+      /** The session whose title is set (by the agent or from its handover), and the one already reminded to set it. */
+      titled: { set: string | null; reminded: string | null }
     }
   }
 }

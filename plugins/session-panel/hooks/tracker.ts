@@ -3,16 +3,22 @@
  * prompts it was given and the commands it ran.
  */
 
-/** Where a reference was seen: the lower, the more it is the session's own. */
-export const RANK = { prompt: 0, created: 1, worked: 2 } as const
+/**
+ * Where a reference was seen: the lower, the more it is the session's own. A
+ * bare `#N` in a prompt (`#1, #2, #3` numbering a list) counts least.
+ */
+export const RANK = { prompt: 0, created: 1, worked: 2, mentioned: 3 } as const
 
-export type GithubRef = { platform: 'github'; repo: string; number: number; type: 'issue' | 'pull' | null }
+/** `isBare` marks a `#N` written without its repository. */
+export type GithubRef = { platform: 'github'; repo: string; number: number; type: 'issue' | 'pull' | null; isBare?: true }
 export type LinearRef = { platform: 'linear'; id: string; workspace: string | null; slug: string | null }
 export type Ref = GithubRef | LinearRef
 
 const GITHUB_URL = /https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/(issues|pull)\/(\d+)/g
 const GITHUB_SHORT = /(?<![\w/#])(?:([\w.-]+)\/)?([A-Za-z][\w.-]*)?#(\d+)\b/g
 const LINEAR_URL = /https:\/\/linear\.app\/([\w-]+)\/issue\/([A-Z][A-Z0-9]+-\d+)(?:\/([\w-]+))?/g
+/** The same, for the first match alone: `exec` on a non-global pattern keeps no state between calls. */
+const LINEAR_URL_FIRST = new RegExp(LINEAR_URL.source)
 
 /** `owner/repo` from a remote URL, ssh or https. */
 export const repoOfRemote = (remote: string): string | null =>
@@ -27,16 +33,15 @@ export const findRefs = (text: string, home: string | null): Ref[] => {
   const add = (ref: Ref) => {
     if (!refs.some(r => refKey(r) === refKey(ref))) refs.push(ref)
   }
-  const bare = text.replace(GITHUB_URL, m => {
-    const [, repo, kind, n] = new RegExp(GITHUB_URL.source).exec(m)!
-    add({ platform: 'github', repo: repo!, number: Number(n), type: kind === 'pull' ? 'pull' : 'issue' })
+  const bare = text.replace(GITHUB_URL, (_, repo: string, kind: string, n: string) => {
+    add({ platform: 'github', repo, number: Number(n), type: kind === 'pull' ? 'pull' : 'issue' })
     return ' '
   })
   for (const m of bare.matchAll(GITHUB_SHORT)) {
     const [, owner, name, n] = m
     const homeOwner = home?.split('/')[0]
     const repo = owner && name ? `${owner}/${name}` : name ? (homeOwner ? `${homeOwner}/${name}` : null) : home
-    if (repo) add({ platform: 'github', repo, number: Number(n), type: null })
+    if (repo) add({ platform: 'github', repo, number: Number(n), type: null, ...(name ? {} : { isBare: true as const }) })
   }
   for (const m of text.matchAll(LINEAR_URL)) add({ platform: 'linear', workspace: m[1]!, id: m[2]!, slug: m[3] ?? null })
   return refs
@@ -71,7 +76,7 @@ export const refsOfGh = (
 
 /** A Linear issue an MCP result describes: its identifier, title and URL. */
 export const linearOfResult = (text: string): { ref: LinearRef; title: string | null } | null => {
-  const url = new RegExp(LINEAR_URL.source).exec(text)
+  const url = LINEAR_URL_FIRST.exec(text)
   if (!url) return null
   let title: string | null = null
   try {

@@ -11,7 +11,7 @@ describe('tracker references', () => {
     ])
     expect(findRefs('see https://github.com/o/r/issues/12 and #3', home)).toEqual([
       { platform: 'github', repo: 'o/r', number: 12, type: 'issue' },
-      { platform: 'github', repo: home, number: 3, type: null },
+      { platform: 'github', repo: home, number: 3, type: null, isBare: true },
     ])
     expect(findRefs('fix https://linear.app/gs/issue/GS-42/fix-the-login', home)).toEqual([
       { platform: 'linear', workspace: 'gs', id: 'GS-42', slug: 'fix-the-login' },
