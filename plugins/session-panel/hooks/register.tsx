@@ -1238,21 +1238,23 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
+    /** A handover file by its title, linked, then greyed its length and last change; `none` without one. */
+    const handoverFile = (label: string, f: HandoverFile | null) => {
+      const meta = f && fileMeta(f.lines, f.modifiedAt)
+      return (
+        <Text wrap="truncate-end">
+          <Text dimColor>{label} </Text>
+          {f ? <Link href={`file://${f.path}`} label={f.title ?? f.path.split('/').pop() ?? f.path} /> : <Text dimColor>none</Text>}
+          {meta && <Text dimColor> ({meta})</Text>}
+        </Text>
+      )
+    }
+
     const handoverRows = (() => {
       if (!ho) return [<Text dimColor>Not read yet.</Text>]
       if (!ho.isOn) return [<Text dimColor>The handover plugin is off in this session.</Text>]
       const status = handoverStatus(ho, usage.context.tokens ?? 0)
       const phase = handoverPhase(ho, usage.context.tokens ?? 0)
-      const file = (label: string, f: HandoverFile | null) => {
-        const meta = f && fileMeta(f.lines, f.modifiedAt)
-        return (
-          <Text wrap="truncate-end">
-            <Text dimColor>{label} </Text>
-            {f ? <Link href={`file://${f.path}`} label={f.title ?? f.path.split('/').pop() ?? f.path} /> : <Text dimColor>none</Text>}
-            {meta && <Text dimColor> ({meta})</Text>}
-          </Text>
-        )
-      }
       const isStopped = ho.written !== null && current === null
       if (ho.written || ho.isWriting) triggered = false
       const isTriggerable = !ho.written && !ho.isWriting && !triggered && !(ho.trigger && (usage.context.tokens ?? 0) >= ho.trigger)
@@ -1270,8 +1272,7 @@ export const register: Register = (on, options) => {
       )
       return [
         phase ? <Text color={PHASES[phase].color}>{phaseLine(phase, now)}</Text> : <Text color={status.color}>✋ {status.text}</Text>,
-        file('loaded', ho.loaded),
-        ...(ho.written ? [file('written', ho.written)] : []),
+        ...(ho.written ? [handoverFile('written', ho.written)] : []),
         ...(isStopped
           ? [
               <Box key="handover:next" flexDirection="column" marginTop={1}>
@@ -1471,7 +1472,10 @@ export const register: Register = (on, options) => {
           <Text wrap="wrap">{typed.length ? oneLine(typed[typed.length - 1]!, 360) : '—'}</Text>
         </Box>
 
-        {section('Handover')}
+        <Box flexDirection="row" columnGap={2}>
+          {section('Handover')}
+          {ho?.isOn && handoverFile('loaded', ho.loaded)}
+        </Box>
         <Box flexDirection="column" marginBottom={1}>
           {handoverRows}
         </Box>
