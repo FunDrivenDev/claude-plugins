@@ -418,6 +418,7 @@ test('the context counter shows the engine trigger and its reckoning, in light c
 
 test('the top line shows the title the main agent sets, switches tabs and closes the pane', async ($, on) => {
   mock.clock(on, { now: 1_000 })
+  on('session.id', () => ({ value: 's1' }) as never)
   on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
   const ran: string[] = []
   on('command.list', () => ({ value: [{ name: 'rename' }] }) as never)
@@ -485,10 +486,64 @@ test('the handover section lists its pills, and Hand over now starts the wind-do
   expect(await ui.find({ text: /^Handover states$/ })).toBeDefined()
   for (const label of ['Winding down', 'Writing the handover', 'Ready for the next session'])
     expect(await ui.find({ text: new RegExp(`${label}$`) })).toBeDefined()
-  for (const label of ['Start next session', 'Review, then start', 'Hand over now'])
+  for (const label of ['Start next session', 'Hand over now'])
     expect(await ui.find({ text: new RegExp(`^${label}$`) })).toBeDefined()
   await ui.press({ key: 'handover:trigger' })
   expect(sent).toEqual(['/handover:trigger'])
   expect(await ui.find({ key: 'handover:trigger' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a written handover opens its prompt to edit, one press starts the next session with it, titled from its handover', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000 })
+  let sid = 's1'
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 50_000 } as never, rateLimits: [] } }))
+  on('process.run', ($, e) => {
+    if (e.argv.some(arg => arg.includes('handover-fundrivendev'))) {
+      const state = { written: { ok: true }, path: '/h/written.md', loaded_from: '/h/loaded.md' }
+      return { value: { exitCode: 0, stdout: `on\n@@\n${JSON.stringify(state)}\n@@\n{}`, stderr: '' } } as never
+    }
+    if (e.argv.includes('/h/loaded.md')) return { value: { exitCode: 0, stdout: '---\nsummary: "Ship the session panel"\n---\n@@\n12\n1000', stderr: '' } } as never
+    return { value: { exitCode: 1, stdout: '', stderr: '' } } as never
+  })
+  on('session.id', () => ({ value: sid }) as never)
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.model', () => ({ value: 'opus' }))
+  on('command.register', () => ({ value: undefined }) as never)
+  on('command.list', () => ({ value: [{ name: 'rename' }] }) as never)
+  on('session.messages', () => ({ value: [] }))
+  on('ui.open', () => ({ value: undefined }) as never)
+  on('ui.copy', () => ({ value: undefined }) as never)
+  on('env.get', () => ({ value: undefined }))
+  on('settings.read', () => ({ value: {} }))
+  const ran: string[] = []
+  on('command.run', ($, e) => {
+    ran.push(`/${e.command}${e.args ? ` ${e.args}` : ''}`)
+    if (e.command === 'clear') sid = 's2'
+    return { text: '' } as never
+  })
+  const filled: string[] = []
+  const sent: string[] = []
+  on('prompt.fill', ($, e) => {
+    filled.push(e.text)
+    return { isFilled: true } as never
+  })
+  on('prompt.submit', ($, e) => {
+    sent.push(e.text)
+    return { text: e.text } as never
+  })
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  expect(ran).toContain('/rename Ship the session panel')
+
+  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  expect(await ui.find({ text: /^Ship the session panel$/ })).toBeDefined()
+  await ui.input({ key: 'handover:prompt', text: 'Carry on with the pills', kind: 'change' })
+  await ui.press({ key: 'handover:run' })
+  expect(ran).toContain('/clear')
+  await clock.advance(5_000)
+  expect(filled).toEqual(['Carry on with the pills', ''])
+  expect(sent).toEqual(['Carry on with the pills'])
+  await ui.press({ key: 'handover:run' })
+  expect(ran.filter(c => c === '/clear')).toHaveLength(1)
   await ui.unmount()
 })
