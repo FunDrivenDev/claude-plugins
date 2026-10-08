@@ -448,3 +448,35 @@ test('the top line shows the title the main agent sets, switches tabs and closes
   expect(closed).toBe('session-panel')
   await ui.unmount()
 })
+
+test('the handover section lists its pills, and Trigger now starts the wind-down once', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 50_000 } as never, rateLimits: [] } }))
+  on('process.run', ($, e) => {
+    const isHandover = e.argv.some(arg => arg.includes('handover-fundrivendev'))
+    return { value: { exitCode: isHandover ? 0 : 1, stdout: isHandover ? 'on\n@@\n{}\n@@\n{}' : '', stderr: '' } } as never
+  })
+  on('session.id', () => ({ value: 's1' }) as never)
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.model', () => ({ value: 'opus' }))
+  on('command.register', () => ({ value: undefined }) as never)
+  on('session.messages', () => ({ value: [] }))
+  on('ui.open', () => ({ value: undefined }) as never)
+  on('env.get', () => ({ value: undefined }))
+  on('settings.read', () => ({ value: {} }))
+  const sent: string[] = []
+  on('command.run', ($, e) => {
+    sent.push(`/${e.command}`)
+    return { text: '' } as never
+  })
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+
+  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  expect(await ui.find({ text: /^Call-to-action pills$/ })).toBeDefined()
+  for (const label of ['Run right away', 'Clear and paste', 'Clear and start the next session', 'Trigger now'])
+    expect(await ui.find({ text: new RegExp(`^${label}$`) })).toBeDefined()
+  await ui.press({ key: 'handover:trigger' })
+  expect(sent).toEqual(['/handover:trigger'])
+  expect(await ui.find({ key: 'handover:trigger' })).toBeUndefined()
+  await ui.unmount()
+})

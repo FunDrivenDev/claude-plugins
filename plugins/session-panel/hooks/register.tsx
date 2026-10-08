@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, ToolCallInput, ToolCallResult, UiCopyArgs } from 'claude-code'
+import type { EngineInterface, Register, RenderElement, ToolCallInput, ToolCallResult, UiCopyArgs } from 'claude-code'
 
 import type { Agent, Entry, FileChange, Handover, HandoverFile, Info, Note, NotesRoot, Picker, Quota, QuotaLayout, RepoChanges, Step, Tab, TrackedIssue, TrackedPr, Ttl } from '../types'
 
@@ -413,6 +413,17 @@ export const handoverStatus = (h: Handover, tokens: number): { text: string; col
 const NEXT_ACTIONS = [
   { key: 'handover:run', emoji: '🚀', label: 'Run right away', color: '#a6d189', isSent: true },
   { key: 'handover:paste', emoji: '📋', label: 'Clear and paste', color: '#8caaee', isSent: false },
+] as const
+
+/** Starts the handover's wind-down at once, as `/handover:trigger` does. */
+const TRIGGER_NOW = { key: 'handover:trigger', emoji: '⚡', label: 'Trigger now', color: '#e5c890' } as const
+
+/** Every call-to-action pill of the Handover section, with what it does, listed at the section's foot. */
+const HANDOVER_PILLS = [
+  { ...NEXT_ACTIONS[0], does: 'Once the handover is written and the session stopped: copies the resume message, runs /clear, waits for the new session to load the handover, then sends the message.' },
+  { ...NEXT_ACTIONS[1], does: 'Once the handover is written and the session stopped: copies the resume message, runs /clear, and leaves the message in the prompt box to edit or send.' },
+  { ...NEXT_ACTIONS[1], label: 'Clear and start the next session', does: 'In place of both when the closing reply gave no resume message: runs /clear, the handover loading in the new session.' },
+  { ...TRIGGER_NOW, does: 'While no handover is under way, wherever the context stands: starts the wind-down now (/handover:trigger); the work in progress and its sub-agents finish, then the handover is written.' },
 ] as const
 
 const ttlMs = (ttl: Ttl): number => (ttl === '1h' ? 3_600_000 : 300_000)
@@ -902,6 +913,8 @@ export const register: Register = (on, options) => {
   let refresh: { cancel: () => void } | null = null
   /** The title the agent set, given to `/rename` once its turn ends: a command run from a tool call would wait on that turn. */
   let renaming: string | null = null
+  /** Trigger now was pressed: hidden until the handover is under way. */
+  let triggered = false
 
   on('tool.call', async ($, e, next) => {
     const agentId = e.agentId
@@ -1178,6 +1191,14 @@ export const register: Register = (on, options) => {
         )
       }
       const isStopped = ho.written !== null && current === null
+      if (ho.written || ho.isWriting) triggered = false
+      const isTriggerable = !ho.written && !ho.isWriting && !triggered && !(ho.trigger && (usage.context.tokens ?? 0) >= ho.trigger)
+      const pillShape = (a: { key: string; emoji: string; color: string }, label: RenderElement) => (
+        <Box key={`${a.key}:box`} borderStyle="round" borderColor={a.color} paddingX={1} flexShrink={0}>
+          <Text>{a.emoji} </Text>
+          {label}
+        </Box>
+      )
       return [
         <Text color={status.color}>✋ {status.text}</Text>,
         file('loaded', ho.loaded),
@@ -1208,6 +1229,37 @@ export const register: Register = (on, options) => {
               </Box>,
             ]
           : []),
+        ...(isTriggerable
+          ? [
+              <Box key="handover:now" flexDirection="row" marginTop={1}>
+                {pillShape(
+                  TRIGGER_NOW,
+                  <Button
+                    key={TRIGGER_NOW.key}
+                    label={TRIGGER_NOW.label}
+                    plain
+                    hover={{ color: TRIGGER_NOW.color }}
+                    onPress={async () => {
+                      triggered = true
+                      $.ui.invalidate('ui.render')
+                      await $.command.run({ command: 'handover:trigger' })
+                    }}
+                  />,
+                )}
+              </Box>,
+            ]
+          : []),
+        <Box key="handover:pills" flexDirection="column" marginTop={1}>
+          <Text dimColor>Call-to-action pills</Text>
+          {HANDOVER_PILLS.map(a => (
+            <Box key={`pills:${a.key}:${a.label}`} flexDirection="row" columnGap={1} alignItems="center">
+              {pillShape({ ...a, key: `pills:${a.key}:${a.label}` }, <Text color={a.color}>{a.label}</Text>)}
+              <Text dimColor wrap="wrap">
+                {a.does}
+              </Text>
+            </Box>
+          ))}
+        </Box>,
       ]
     })()
 
