@@ -1633,7 +1633,7 @@ export const register: Register = (on, options) => {
 
     /** An item as the pane draws it, in a fixed column, then greyed what it shows or does. */
     const helpRow = (key: string, example: RenderElement, does: string) => (
-      <Box key={`help:${key}`} flexDirection="row" columnGap={1} alignItems="center">
+      <Box key={`help:${key}`} flexDirection="row" columnGap={1} alignItems="center" marginBottom={1}>
         <Box flexShrink={0} width={HELP_EXAMPLE}>
           {example}
         </Box>
@@ -1652,7 +1652,7 @@ export const register: Register = (on, options) => {
     const helpBody = (
       <Box key="tab:help:body" flexDirection="column">
         {section('Top lines')}
-        <Box flexDirection="column" marginBottom={1}>
+        <Box flexDirection="column">
           {helpRow(
             'quotas',
             framed(
@@ -1687,7 +1687,7 @@ export const register: Register = (on, options) => {
         </Box>
 
         {section('Main')}
-        <Box flexDirection="column" marginBottom={1}>
+        <Box flexDirection="column">
           {helpRow(
             'cache',
             <Text>
@@ -1706,7 +1706,6 @@ export const register: Register = (on, options) => {
             </Text>,
             'Tokens against where Claude Code auto-compacts. 250k is the autoCompactWindow setting (100k to 1M, 200k by default), set through /config; 33k the auto-compaction margin, how far below that window it compacts. Green to half, yellow to 75%, orange to 90%, then red; "⚠ compacting" once reached.',
           )}
-          <Box key="help:context:gap" height={1} />
           {helpRow(
             'issue',
             <Text wrap="truncate-end">
