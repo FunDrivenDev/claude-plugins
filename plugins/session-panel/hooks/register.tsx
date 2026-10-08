@@ -1653,9 +1653,6 @@ export const register: Register = (on, options) => {
       <Box key="tab:help:body" flexDirection="column">
         {section('Top lines')}
         <Box flexDirection="column" marginBottom={1}>
-          {helpRow('title', <Text bold color="claude">Session panel tabs</Text>, `The session's topic, set by the agent once the task is clear, or taken from the handover it started from. It also names the session in /resume and the terminal tab; "${TITLE}" until then.`)}
-          {helpRow('main', framed('#51576d', <Text>Main</Text>), 'The session at a glance: time, cache, context, issue and PR, last prompt, handover, notes.')}
-          {helpRow('misc', framed('#51576d', <Text>MISC</Text>), "The agent's steps, its sub-agents, and the git diff with this session's commits.")}
           {helpRow(
             'quotas',
             framed(
@@ -1703,12 +1700,13 @@ export const register: Register = (on, options) => {
             'context',
             <Text>
               <Text dimColor>context </Text>
-              <Text bold color="#ffff00">
-                96.2k/167k 57%
+              <Text bold color="#5fff00">
+                96.2k/217k (250k − 33k) 44%
               </Text>
             </Text>,
-            'Tokens against the auto-compact trigger (window minus reserve, in brackets): green to half, yellow to 75%, orange to 90%, then red; "⚠ compacting" once reached.',
+            'Tokens against where Claude Code auto-compacts. 250k is the autoCompactWindow setting (100k to 1M, 200k by default), set through /config; 33k the auto-compaction margin, how far below that window it compacts. Green to half, yellow to 75%, orange to 90%, then red; "⚠ compacting" once reached.',
           )}
+          <Box key="help:context:gap" height={1} />
           {helpRow(
             'issue',
             <Text wrap="truncate-end">
