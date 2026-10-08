@@ -3,14 +3,13 @@
 A calm side pane for a Claude Code session: what runs, since when, how warm the prompt cache still is, and what every sub-agent was asked and did.
 
 ```
-                                        ╭──────╮ ╭──────╮       ╭─────╮
-Session panel tabs and topic title      │ Main │ │ MISC │       │  ✕  │
-                                        ╰──────╯ ╰──────╯       ╰─────╯
-╭────────────╮ ╭────────────╮        ◉ Publish the session-panel mod
-│ ○ Opus 5.5 │ │ ○ high 3/5 │        ⎇ claude-plugins #7 draft
-╰────────────╯ ╰────────────╯   ▣ session-panel-fixes
-⌛ running 1h12m   ⏳ cache 54m
-context 78.2k/217k (250k − 33k) 36%
+Session panel tabs and topic title
+╭────────────╮ ╭────────────╮ ╭──────╮ ╭──────╮            ╭─────╮
+│ ○ Opus 5.5 │ │ ○ high 3/5 │ │ Main │ │ MISC │            │  ✕  │
+╰────────────╯ ╰────────────╯ ╰──────╯ ╰──────╯            ╰─────╯
+⌛ running 1h12m   ⏳ cache 54m          ◉ Publish the session-panel mod
+context 78.2k/217k (250k − 33k) 36%       ⎇ claude-plugins #7 draft
+                                            ▣ session-panel-fixes
 
 Quotas ⇄ one per line
 5h 30% →60%       🔄 2h30m   7d 71% out in 1d21h  🔄 2d07h
@@ -57,9 +56,9 @@ Git History
   2ad70a1 · 1 hour ago · pushed
 ```
 
-- **Top line**: the session's title, its overall topic in a few words, then the tabs, then a close mark. A small model (Haiku, low effort) names the topic from your latest prompts after each prompt and each answer, and keeps the title unless the topic changed significantly; `Session` until it has named one. **Main** shows the session at a glance (everything down to Notes); **MISC** shows the steps, the sub-agents and the git diff. `✕`, framed so it is easy to hit, closes the pane; `/session-panel` reopens it on Main.
+- **Top lines**: the session's title, its overall topic in a few words, on a line of its own; beneath, the model and effort selectors, the tabs, and a close mark. The main agent names the topic with the plugin's `session_title` tool, once the first task is clear and again only when what the session is about changes significantly; once its turn ends, the title also goes to `/rename`, which names the session in `/resume` and the terminal tab. `Session` until it has named one. **Main** shows the session at a glance (everything down to Notes); **MISC** shows the steps, the sub-agents and the git diff. `✕`, framed so it is easy to hit, closes the pane; `/session-panel` reopens it on Main.
 - **Colours**: Catppuccin Frappé and the status line's bright tones on a dark macOS appearance; on a light one, every colour turns to its twin that reads on white (Catppuccin Latte, darker tones for the status line's yellow and orange), following the system setting within five seconds. Off macOS, the dark palette.
-- **Selectors**: the main loop's model and effort as two rounded pills, selected from the session's start (the model `/model` shows, the effort `/effort` saved), the model in its colour (Catppuccin Frappé: Opus peach, Fable mauve, Sonnet blue, Haiku green), the effort in the colour `/effort` gives its level. Press one to open its choices, press a choice to switch (it runs `/model` or `/effort`).
+- **Selectors**: the main loop's model and effort as two rounded pills beside the tabs, selected from the session's start (the model `/model` shows, the effort `/effort` saved), the model in its colour (Catppuccin Frappé: Opus peach, Fable mauve, Sonnet blue, Haiku green), the effort in the colour `/effort` gives its level. Press one to open its choices, press a choice to switch (it runs `/model` or `/effort`).
 - **Header**: the session's age (`⌛`) and the whole minutes left before the prompt cache expires (`⏳`), graded as in the status line (green down to half the TTL, yellow down to a fifth, then orange; red once expired). Beneath, the context counter: the tokens in the window against the auto-compact trigger the engine sets from your `autoCompactWindow` (the figures `/context` uses), followed in brackets by how it is reckoned, the window less Claude Code's margin (`217k (250k − 33k)`); where the engine gives none, the status line's reckoning (`CC_TOKEN_LIMIT`, else `autoCompactWindow`, else 200k, less `CC_TOKEN_RESERVE`, 33k by default). The grading follows that trigger, whatever its size: green up to half of it, yellow to three quarters, orange to nine tenths, then red, and `⚠ compacting` once reached.
 - **Quotas**, under the header: the 5-hour and 7-day windows as bars that fill with use, read as the status line reads them: the `┃` tick marks where even spending would be by now, fill up to it is green and fill past it takes the verdict's colour and breathes once a second; the verdict extrapolates the average burn to the reset (`→N%` green under 90%, yellow from 90%, `out in D` red when the limit comes first), judged once a tenth of the window has passed; `🔄` is the time to the reset. `⇄` switches between the two bars side by side, half the width each, and one per line. Absent off a subscription.
 - **Issue and pull request**, top right: the tracker issue the session is about, with its platform's icon (GitHub `◉`, Linear `◐`) and its title, and its pull request as `repo #N` in GitHub's colours (lavender draft, a lighter tone than GitHub's grey so it reads, green open, red closed, purple merged), both clickable, and beneath them the linked worktree the session last edited in (`▣ name`), or `main checkout`. The issue is the one your prompt names, else the one the session opened (`gh issue create`, a Linear tool's `create`), else one it worked on; the same for the pull request. GitHub items are read with `gh api`, the pull request's state again every minute. A Linear issue opens in the desktop app (`linear://`) where it is installed, else on linear.app; a bare `KEY-N` in a prompt counts once a Linear tool shows it, so an It's a Plan key is never taken for a Linear one.

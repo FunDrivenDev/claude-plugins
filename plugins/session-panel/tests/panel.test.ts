@@ -180,6 +180,10 @@ test('the model and effort pills open a coloured picker that switches them', asy
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
   const ran: string[] = []
+  on('ui.toast', ($, e) => {
+    ran.push(JSON.stringify(e))
+    return { value: undefined } as never
+  })
   on('command.run', ($, e) => {
     ran.push(`/${e.command} ${e.args}`)
     return { text: '' }
@@ -403,14 +407,15 @@ test('the context counter shows the engine trigger and its reckoning, in light c
   await ui.unmount()
 })
 
-test('the top line titles the session by its topic, switches tabs and closes the pane', async ($, on) => {
+test('the top line shows the title the main agent sets, switches tabs and closes the pane', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
-  on('prompt.submit', ($, e) => ({ text: e.text }))
-  const asked: string[] = []
-  on('model.complete', ($, e) => {
-    asked.push(String(e.prompt))
-    return { value: { isAnswered: true, text: 'Session panel tabs', usage: {} } } as never
+  const ran: string[] = []
+  on('command.list', () => ({ value: [{ name: 'rename' }] }) as never)
+  on('turn.complete', ($, e) => ({ text: e.answer }))
+  on('command.run', ($, e) => {
+    ran.push(`${e.command} ${e.args}`)
+    return { text: '' } as never
   })
   let closed = ''
   on('ui.close', ($, e) => {
@@ -418,14 +423,21 @@ test('the top line titles the session by its topic, switches tabs and closes the
     return { value: undefined } as never
   })
 
-  await $.prompt.submit(typed('Add tabs to the session panel'))
   let ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
-  for (let k = 0; k < 50 && !(await ui.find({ text: /^Session panel tabs$/ })); k++) {
-    await ui.unmount()
-    ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
-  }
+  expect(await ui.find({ text: /^Session$/ })).toBeDefined()
+  await ui.unmount()
+
+  const set = await $.tool.call({ tool: 'mcp__session-panel__session_title', title: '"Session panel tabs."' } as never)
+  expect(set.text).toBe('Session title set: Session panel tabs')
+  expect(ran).toEqual([])
+  await $.turn.complete({ answer: 'Done', durationMs: 5, isAborted: false, turnId: 't', reason: 'answer' } as never)
+  for (let k = 0; k < 50 && !ran.length; k++) await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE }).then(m => m.unmount())
+  expect(ran).toEqual(['rename Session panel tabs'])
+  const empty = await $.tool.call({ tool: 'mcp__session-panel__session_title', title: ' ' } as never)
+  expect(empty.deny).toContain('empty title')
+
+  ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
   expect(await ui.find({ text: /^Session panel tabs$/ })).toBeDefined()
-  expect(asked[0]).toContain('Add tabs to the session panel')
   expect(await ui.find({ text: /^Handover$/ })).toBeDefined()
   expect(await ui.find({ text: /^Git diff$/ })).toBeUndefined()
   await ui.press({ key: 'tab:misc' })

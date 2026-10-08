@@ -49,7 +49,7 @@ const tracker = atom({ plugin: 'session-panel', key: 'tracker' } as const, { iss
 const handover = atom({ plugin: 'session-panel', key: 'handover' } as const, null as Handover | null)
 const notes = atom({ plugin: 'session-panel', key: 'notes' } as const, [] as Note[])
 const tab = atom({ plugin: 'session-panel', key: 'tab' } as const, 'main' as Tab)
-/** The session's overall topic, as a small model names it from the prompts and answers. */
+/** The session's overall topic, as the main agent names it with the session_title tool. */
 const topic = atom({ plugin: 'session-panel', key: 'topic' } as const, null as string | null)
 const WRITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
 let notesRoot: NotesRoot | null = null
@@ -706,40 +706,16 @@ async function startNext($: EngineInterface, resume: string | null, surface: UiC
   if (isSent) $.ui.toast('The handover did not load: the resume message waits in the prompt box.')
 }
 
-const TOPIC_SYSTEM = `You keep the title of a coding session: 3 to 7 words naming its overall topic, in the language of the prompts, no quotes, no final period.
-Keep the current title word for word unless the session's overall topic has changed significantly, or the title is missing or vague.
-Answer with the title alone.`
+const TITLE_TOOL = 'session_title'
+const TITLE_TOOL_ID = `mcp__session-panel__${TITLE_TOOL}`
+const TITLE_TOOL_DESCRIPTION = `Sets this session's title: its overall topic in 3 to 7 words, in the language of the person's prompts. It heads the session panel and names the session (/resume, the terminal tab), so the person can tell sessions apart at a glance.
+Call it once the first task is clear, then only when what the session is about changes significantly (a new task, not a new step of the same one). Never call it every turn.`
 
-/** A model's reply read as a title: its first line, without a label, quotes or a final period; null when empty. */
-export const cleanTitle = (reply: string): string | null => {
-  const line = reply.split('\n').map(l => l.trim()).find(Boolean)
+/** A title as given: its first line, without a label, quotes or a final period; null when empty. */
+export const cleanTitle = (text: string): string | null => {
+  const line = text.split('\n').map(l => l.trim()).find(Boolean)
   const title = line?.replace(/^title:\s*/i, '').replace(/^["'“«*`]+|["'”»*`.]+$/g, '').trim()
   return title ? oneLine(title, 80) : null
-}
-
-/** Asks a small model whether the session's topic moved since its title, and keeps the title it names. */
-async function nameTopic($: EngineInterface, answer?: string) {
-  const typed = await read($, prompts)
-  if (!typed.length) return
-  const current = await read($, topic)
-  const asked = typed.slice(-6).map((p, k) => `${k + 1}. ${oneLine(p, 400)}`).join('\n')
-  const said = answer ? `\n\nThe latest answer:\n${oneLine(answer, 1200)}` : ''
-  const reply = await $.model.complete({
-    model: 'haiku',
-    system: TOPIC_SYSTEM,
-    prompt: `Current title: ${current ?? '(none)'}\n\nThe person's latest prompts, oldest first:\n${asked}${said}`,
-    maxTokens: 40,
-    effort: 'low',
-    timeoutMs: 30_000,
-  })
-  const next = reply.isAnswered ? cleanTitle(reply.text) : null
-  if (next && next !== current) await update($, topic, () => next)
-}
-
-/** One topic request at a time, each after the last, none failing the hook that asked. */
-let naming: Promise<void> = Promise.resolve()
-const retitle = ($: EngineInterface, answer?: string) => {
-  naming = naming.then(() => nameTopic($, answer)).catch(() => undefined)
 }
 
 async function finish($: EngineInterface, agentId: string, answer?: string) {
@@ -763,6 +739,18 @@ export const register: Register = (on, options) => {
     await update($, expanded, () => null)
     await update($, view, () => 'overview')
     await $.command.register({ name: 'session-panel', description: 'Open the session overview pane' })
+    await $.tool
+      .register({
+      name: TITLE_TOOL,
+      description: TITLE_TOOL_DESCRIPTION,
+      inputSchema: {
+        type: 'object',
+        properties: { title: { type: 'string', description: 'The overall topic, 3 to 7 words, no final period' } },
+        required: ['title'],
+      },
+      isDeferred: false,
+    })
+      .catch(() => undefined)
     void $.ui.open({ id: PANE, title: TITLE, columns: DOCK_COLUMNS })
     ticker?.cancel()
     let ticks = 0
@@ -792,7 +780,6 @@ export const register: Register = (on, options) => {
       if (typed.length) await update($, prompts, () => typed)
       for (const text of typed) await scanPrompt($, text)
     }
-    if ((await read($, topic)) === null) retitle($)
 
     return next(e)
   })
@@ -811,7 +798,6 @@ export const register: Register = (on, options) => {
     if (text) {
       await update($, prompts, list => [...list, text])
       await scanPrompt($, text)
-      retitle($)
     }
     return next(e)
   })
@@ -914,6 +900,8 @@ export const register: Register = (on, options) => {
   })
 
   let refresh: { cancel: () => void } | null = null
+  /** The title the agent set, given to `/rename` once its turn ends: a command run from a tool call would wait on that turn. */
+  let renaming: string | null = null
 
   on('tool.call', async ($, e, next) => {
     const agentId = e.agentId
@@ -937,11 +925,24 @@ export const register: Register = (on, options) => {
     return ran
   })
 
+  on('tool.call', { tool: TITLE_TOOL_ID }, async ($, e) => {
+    const title = cleanTitle(String((e as unknown as Record<string, unknown>).title ?? ''))
+    if (!title) return { deny: 'An empty title: give the overall topic in 3 to 7 words.' }
+    await update($, topic, () => title)
+    renaming = title
+    return { result: { title } as never, text: `Session title set: ${title}` }
+  })
+
   on('turn.complete', async ($, e, next) => {
+    const title = e.agentId ? null : renaming
+    if (title) {
+      renaming = null
+      const canRename = (await $.command.list()).some(c => c.name === 'rename')
+      if (canRename) void $.command.run({ command: 'rename', args: title }).catch(() => undefined)
+    }
     if (e.agentId && !(await read($, agents)).find(a => a.id === e.agentId)?.isTeammate) {
       await finish($, e.agentId, e.answer)
     }
-    if (!e.agentId && e.answer) retitle($, e.answer)
     return next(e)
   })
 
@@ -1224,14 +1225,15 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
-    /** The session's title, the tabs, and a close mark wide enough to click. */
+    /** The session's title on a line of its own; beneath, the model and effort, the tabs, and a close mark wide enough to click. */
     const header = (
-      <Box flexDirection="row" alignItems="center" columnGap={1} marginBottom={1}>
-        <Box flexShrink={1}>
-          <Text bold color="claude" wrap="truncate-end">
-            {title ?? TITLE}
-          </Text>
-        </Box>
+      <Box flexDirection="column" marginBottom={1}>
+        <Text bold color="claude" wrap="wrap">
+          {title ?? TITLE}
+        </Text>
+      <Box flexDirection="row" alignItems="center" columnGap={1}>
+        {pill('pick:model', i.model ? prettyModel(i.model) : 'model…', modelColor(i.model), picker === 'model', () => toggle('model'))}
+        {pill('pick:effort', effortLabel(i.effort), effortColor(i.effort), picker === 'effort', () => toggle('effort'))}
         {tabPill('main', 'Main')}
         {tabPill('misc', 'MISC')}
         <Box flexGrow={1} />
@@ -1244,6 +1246,12 @@ export const register: Register = (on, options) => {
             onPress={() => $.ui.close({ id: PANE }).catch(() => undefined)}
           />
         </Box>
+      </Box>
+        {options && (
+          <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
+            {options}
+          </Box>
+        )}
       </Box>
     )
 
@@ -1287,19 +1295,6 @@ export const register: Register = (on, options) => {
       <Box key="tab:main:body" flexDirection="column">
         <Box flexDirection="row" justifyContent="space-between" columnGap={2} marginBottom={1}>
           <Box flexDirection="column" flexShrink={0}>
-            <Box flexDirection="row" columnGap={1}>
-              {pill('pick:model', i.model ? prettyModel(i.model) : 'model…', modelColor(i.model), picker === 'model', () =>
-                toggle('model'),
-              )}
-              {pill('pick:effort', effortLabel(i.effort), effortColor(i.effort), picker === 'effort', () =>
-                toggle('effort'),
-              )}
-            </Box>
-            {options && (
-              <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
-                {options}
-              </Box>
-            )}
             <Text>
               ⌛ <Text dimColor>running </Text>
               {duration(now - usage.startedAt)}
