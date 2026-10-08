@@ -12,6 +12,8 @@ const PANE = 'session-panel'
 const TITLE = 'Session'
 /** The dock's opening width in fullscreen; a width the person dragged or keyed wins. */
 const DOCK_COLUMNS = 116
+/** The colour an action without its own takes under the pointer: Catppuccin Frappé blue. */
+const ACTION = '#8caaee'
 const HISTORY_CAP = 400
 /** An open sub-agent's latest entries and the head of its task: the whole of either can pass the engine's 100,000 drawn characters. */
 const OPEN_HISTORY = 40
@@ -1169,6 +1171,15 @@ export const register: Register = (on, options) => {
     }
     const kindOf = (a: Agent) => (a.isTeammate ? 'teammate' : a.isBackground ? 'background' : 'sub-agent')
 
+    /** An action lights in its colour under the pointer; each is its own hover group. */
+    const hot = (key: string, color: string = ACTION) => ({ scope: key.slice(-64), color })
+    /** A link underlines under the pointer, alone: its Text stands outside any other Text. */
+    const link = (key: string, href: string, label: RenderElement | string, color?: string) => (
+      <Text key={`link:${key}`} wrap="truncate-end" color={color} hover={{ scope: `link:${key}`.slice(-64), underline: true }}>
+        {typeof label === 'string' ? <Link href={href} label={label} /> : <Link href={href}>{label}</Link>}
+      </Text>
+    )
+
     const section = (title: string) => (
       <Text bold color="claude">
         {title}
@@ -1220,6 +1231,7 @@ export const register: Register = (on, options) => {
             label={`${isOpen ? '▾' : '▸'} ${a.description}`}
             plain
             dimColor={isDone}
+            hover={hot(`agent:${key}`)}
             onPress={() => toggleAgent(key)}
           />
           <Text dimColor wrap="truncate-end">
@@ -1243,7 +1255,7 @@ export const register: Register = (on, options) => {
             </Text>
           ))}
           {isOpen && (
-            <Button key={`agent:${key}:close`} label="▴ Collapse" plain dimColor onPress={() => toggleAgent(key)} />
+            <Button key={`agent:${key}:close`} label="▴ Collapse" plain dimColor hover={hot(`agent:${key}:close`)} onPress={() => toggleAgent(key)} />
           )}
         </Box>
       )
@@ -1252,7 +1264,7 @@ export const register: Register = (on, options) => {
     const pill = (key: string, label: string, color: string, isOn: boolean, onPress: () => unknown) => (
       <Box key={`${key}:pill`} borderStyle="round" borderColor={color} paddingX={1}>
         <Text color={color}>{isOn ? '● ' : '○ '}</Text>
-        <Button key={key} label={label} plain onPress={onPress} />
+        <Button key={key} label={label} plain hover={hot(key, color)} onPress={onPress} />
       </Box>
     )
 
@@ -1304,24 +1316,16 @@ export const register: Register = (on, options) => {
         {!t.issue && <Text dimColor>no issue</Text>}
         {!t.pr && <Text dimColor>no pull request</Text>}
         {t.issue && (
-          <Text wrap="truncate-end" hover={issueHref ? { scope: 'corner:issue', underline: true } : undefined}>
+          <Box flexDirection="row">
             <Text color={ISSUE_ICON[t.issue.platform].color}>{ISSUE_ICON[t.issue.platform].glyph} </Text>
-            {issueHref ? (
-              <Link href={issueHref} label={t.issue.title ?? t.issue.key} />
-            ) : (
-              t.issue.title ?? t.issue.key
-            )}
-          </Text>
+            {issueHref ? link('issue', issueHref, t.issue.title ?? t.issue.key) : <Text wrap="truncate-end">{t.issue.title ?? t.issue.key}</Text>}
+          </Box>
         )}
         {t.pr && (
-          <Text wrap="truncate-end" hover={{ scope: 'corner:pr', underline: true }}>
-            <Link href={t.pr.url}>
-              <Text color={prColor}>
-                ⎇ {t.pr.repo.split('/').pop()} #{t.pr.number}
-              </Text>
-            </Link>
+          <Box flexDirection="row">
+            {link('pr', t.pr.url, `⎇ ${t.pr.repo.split('/').pop()} #${t.pr.number}`, prColor)}
             {t.pr.state && <Text color={prColor}> {t.pr.state}</Text>}
-          </Text>
+          </Box>
         )}
         {tree ? (
           <Text wrap="truncate-end" color="#81c8be">
@@ -1337,11 +1341,11 @@ export const register: Register = (on, options) => {
     const handoverFile = (label: string, f: HandoverFile | null) => {
       const meta = f && fileMeta(f.lines, f.modifiedAt)
       return (
-        <Text wrap="truncate-end">
+        <Box flexDirection="row">
           <Text dimColor>{label} </Text>
-          {f ? <Link href={`file://${f.path}`} label={f.title ?? f.path.split('/').pop() ?? f.path} /> : <Text dimColor>none</Text>}
-          {meta && <Text dimColor> ({meta})</Text>}
-        </Text>
+          {f ? link(`handover:${label}`, `file://${f.path}`, f.title ?? f.path.split('/').pop() ?? f.path) : <Text dimColor>none</Text>}
+          {meta && <Text dimColor wrap="truncate-end"> ({meta})</Text>}
+        </Box>
       )
     }
 
@@ -1424,6 +1428,7 @@ export const register: Register = (on, options) => {
           label={label}
           plain
           dimColor={shownTab !== key}
+          hover={hot(`tab:${key}`)}
           onPress={async () => {
             await update($, view, () => 'overview')
             await update($, tab, () => key)
@@ -1438,12 +1443,12 @@ export const register: Register = (on, options) => {
       <Box key="quotas:box" borderStyle="round" borderColor="#51576d" paddingX={1} flexShrink={0}>
         {quotas.map((q, k) => (
           <Box key={`quotas:${q.label}:row`} flexDirection="row">
-            {k > 0 && <Button key={`quotas:${q.label}:divider`} label=" │ " plain dimColor onPress={toggleQuotas} />}
+            {k > 0 && <Button key={`quotas:${q.label}:divider`} label=" │ " plain dimColor hover={hot(`quotas:${q.label}:divider`)} onPress={toggleQuotas} />}
             <Text color={TONE[q.verdict?.tone ?? 'ok']}>● </Text>
             <Button key={`quotas:${q.label}`} label={`${q.label} ${q.used}%`} plain hover={{ color: TONE[q.verdict?.tone ?? 'ok'] }} onPress={toggleQuotas} />
           </Box>
         ))}
-        <Button key="quotas:fold" label={isQuotasOpen ? ' 🔼 ' : ' 🔽 '} plain onPress={toggleQuotas} />
+        <Button key="quotas:fold" label={isQuotasOpen ? ' 🔼 ' : ' 🔽 '} plain hover={hot('quotas:fold')} onPress={toggleQuotas} />
       </Box>
     )
 
@@ -1489,7 +1494,7 @@ export const register: Register = (on, options) => {
       return (
         <Box flexDirection="column" paddingX={1}>
           {header}
-          <Button key="prompts:back" label="← Overview" plain onPress={() => update($, view, () => 'overview')} />
+          <Button key="prompts:back" label="← Overview" plain hover={hot('prompts:back')} onPress={() => update($, view, () => 'overview')} />
           {section(`Prompts · ${typed.length}`)}
           {typed.map((p, index) => (
             <Box key={`prompt:${index}`} flexDirection="column" marginBottom={1}>
@@ -1514,6 +1519,7 @@ export const register: Register = (on, options) => {
             label={`▸ ${a.description}`}
             plain
             dimColor={isDone}
+            hover={hot(`agent:${key}`)}
             onPress={() => toggleAgent(key)}
           />
           <Text dimColor wrap="truncate-end">
@@ -1553,13 +1559,12 @@ export const register: Register = (on, options) => {
               <Text dimColor>{group.kind}</Text>
               {group.docs.map(d =>
                 e.surface === 'terminal' ? (
-                  <Text wrap="truncate-end">
-                    {'  '}
-                    <Link href={d.kind === ARTIFACTS ? d.path : `file://${d.path}`} label={d.name} />
-                  </Text>
+                  <Box key={`doc:${d.id}:row`} paddingLeft={2}>
+                    {link(`doc:${d.id}`, d.kind === ARTIFACTS ? d.path : `file://${d.path}`, d.name)}
+                  </Box>
                 ) : (
                   <Box key={`doc:${d.id}:row`} paddingLeft={2}>
-                    <Button key={`doc:${d.id}`} label={d.name} plain onPress={() => $.process.run(['open', d.path])} />
+                    <Button key={`doc:${d.id}`} label={d.name} plain hover={{ scope: `doc:${d.id}`.slice(-64), underline: true }} onPress={() => $.process.run(['open', d.path])} />
                   </Box>
                 ),
               )}
@@ -1581,6 +1586,7 @@ export const register: Register = (on, options) => {
             label={`(${previousPrompts(typed.length - 1)})`}
             plain
             dimColor
+            hover={hot('prompts')}
             onPress={() => update($, view, () => 'prompts')}
           />
         </Box>
@@ -1598,6 +1604,7 @@ export const register: Register = (on, options) => {
               label={isStepsOpen ? '▾ fold earlier steps' : `▸ ${folded} earlier${foldedIssues}`}
               plain
               dimColor
+              hover={hot('steps')}
               onPress={() => update($, stepsOpen, cur => !cur)}
             />
           ) : (
@@ -1689,6 +1696,7 @@ export const register: Register = (on, options) => {
                         label={c.subject}
                         plain
                         dimColor={c.isPushed && !isOpen}
+                        hover={hot(key)}
                         onPress={() => update($, expanded, cur => (cur === key ? null : key))}
                       />
                     </Box>
