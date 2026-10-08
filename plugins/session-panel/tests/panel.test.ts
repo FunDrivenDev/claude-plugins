@@ -570,3 +570,18 @@ test('a session without a title of its own reminds the agent once, and no more o
   await $.prompt.submit(typed('carry on'))
   expect(reminded()).toEqual([true, false, false])
 })
+
+test('the Help tab explains each item beside an example of it, in place of the rest', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
+  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'tab:help' })
+  expect(await ui.find({ text: /Closes the pane; \/session-panel reopens it/ })).toBeDefined()
+  expect(await ui.find({ text: /Hand over now/ })).toBeDefined()
+  expect(await ui.find({ text: /● pushed, ○ local only/ })).toBeDefined()
+  expect(await ui.find({ text: /Last prompt/ })).toBeDefined()
+  expect(await ui.find({ key: 'prompts' })).toBeUndefined()
+  await ui.press({ key: 'tab:main' })
+  expect(await ui.find({ key: 'prompts' })).toBeDefined()
+  await ui.unmount()
+})

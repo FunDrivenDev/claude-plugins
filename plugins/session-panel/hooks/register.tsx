@@ -457,6 +457,9 @@ export const phaseLine = (phase: HandoverPhase, now: number): string => {
   return `${p.frames[Math.floor(now / 1000) % p.frames.length]} ${p.label}`
 }
 
+/** Width of the Help tab's example column. */
+const HELP_EXAMPLE = 34
+
 /** Starts the handover's wind-down at once, as `/handover:trigger` does. */
 const TRIGGER_NOW = { key: 'handover:trigger', emoji: '✋', label: 'Hand over now', color: '#e5c890' } as const
 
@@ -1376,6 +1379,7 @@ export const register: Register = (on, options) => {
         {pill('pick:effort', effortLabel(i.effort), effortColor(i.effort), picker === 'effort', () => toggle('effort'))}
         {tabPill('main', 'Main')}
         {tabPill('misc', 'MISC')}
+        {tabPill('help', 'Help')}
         <Box flexGrow={1} />
         {quotaPill}
         <Box key="close:box" borderStyle="round" borderColor="#51576d" paddingX={1} flexShrink={0}>
@@ -1626,10 +1630,233 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
+
+    /** An item as the pane draws it, in a fixed column, then greyed what it shows or does. */
+    const helpRow = (key: string, example: RenderElement, does: string) => (
+      <Box key={`help:${key}`} flexDirection="row" columnGap={1} alignItems="center">
+        <Box flexShrink={0} width={HELP_EXAMPLE}>
+          {example}
+        </Box>
+        <Text dimColor wrap="wrap">
+          {does}
+        </Text>
+      </Box>
+    )
+    /** A pill as drawn in the pane, without its press. */
+    const framed = (border: string, content: RenderElement) => (
+      <Box borderStyle="round" borderColor={border} paddingX={1} flexShrink={0}>
+        {content}
+      </Box>
+    )
+    const sample: Quota = { label: '5h', used: 62, elapsed: 0.5, verdict: { text: '→124%', tone: 'out' }, resetsIn: 9_000_000 }
+    const helpBody = (
+      <Box key="tab:help:body" flexDirection="column">
+        {section('Top lines')}
+        <Box flexDirection="column" marginBottom={1}>
+          {helpRow('title', <Text bold color="claude">Session panel tabs</Text>, `The session's topic, set by the agent once the task is clear, or taken from the handover it started from. It also names the session in /resume and the terminal tab; "${TITLE}" until then.`)}
+          {helpRow('main', framed('#51576d', <Text>Main</Text>), 'The session at a glance: time, cache, context, issue and PR, last prompt, handover, notes.')}
+          {helpRow('misc', framed('#51576d', <Text>MISC</Text>), "The agent's steps, its sub-agents, and the git diff with this session's commits.")}
+          {helpRow(
+            'quotas',
+            framed(
+              '#51576d',
+              <Text>
+                <Text color={TONE.ok}>● </Text>5h 42%<Text dimColor> │ </Text>
+                <Text color={TONE.tight}>● </Text>7d 81% 🔽
+              </Text>,
+            ),
+            'Use of each rate-limit window, its dot coloured by pace: green on track, yellow tight (90-100% at reset), red runs out before the reset. Press to unfold the bars.',
+          )}
+          {helpRow(
+            'bar',
+            <Box flexDirection="column">
+              <Text>
+                <Text dimColor>5h </Text>
+                <Text bold color={TONE.out}>62%</Text>
+                <Text color={TONE.out}> →124%</Text>
+                <Text dimColor> 🔄 2h30m</Text>
+              </Text>
+              <Text>
+                {barRuns(sample, HELP_EXAMPLE - 2).map((run, k) => (
+                  <Text key={k} color={run.color} bold={run.isPace}>
+                    {run.text}
+                  </Text>
+                ))}
+              </Text>
+            </Box>,
+            '→ the use projected at the reset, or "out in" how long it lasts at this pace; 🔄 the time to the reset. ┃ marks where even spending would be by now: fill past it is spent ahead of pace, and blinks once tight.',
+          )}
+          {helpRow('close', framed('#51576d', <Text> ✕ </Text>), 'Closes the pane; /session-panel reopens it on Main.')}
+        </Box>
+
+        {section('Main')}
+        <Box flexDirection="column" marginBottom={1}>
+          {helpRow(
+            'cache',
+            <Text>
+              ⏳ <Text dimColor>cache </Text>
+              <Text color={cacheColor(240_000, 300_000)}>4m</Text>
+            </Text>,
+            'Time left before the prompt cache expires: green over half its TTL, then yellow, then orange; red "expired" means the next request rereads the whole context at full price.',
+          )}
+          {helpRow(
+            'context',
+            <Text>
+              <Text dimColor>context </Text>
+              <Text bold color="#ffff00">
+                96.2k/167k 57%
+              </Text>
+            </Text>,
+            'Tokens against the auto-compact trigger (window minus reserve, in brackets): green to half, yellow to 75%, orange to 90%, then red; "⚠ compacting" once reached.',
+          )}
+          {helpRow(
+            'issue',
+            <Text wrap="truncate-end">
+              <Text color={ISSUE_ICON.linear.color}>{ISSUE_ICON.linear.glyph} </Text>Fix the login loop
+            </Text>,
+            'The issue the session works on, linked: ◐ Linear, ◉ GitHub.',
+          )}
+          {helpRow(
+            'pr',
+            <Text>
+              <Text color={PR_COLOR.draft}>⎇ claude-plugins #21</Text>
+              <Text color={PR_COLOR.draft}> draft</Text>
+            </Text>,
+            'Its pull request, linked, in the colour of its state: draft, open, merged or closed.',
+          )}
+          {helpRow('worktree', <Text color="#81c8be">▣ session-panel-tabs</Text>, 'The worktree the session works in; "main checkout" otherwise.')}
+          {helpRow(
+            'prompts',
+            <Text>
+              <Text bold color="claude">
+                Last prompt{' '}
+              </Text>
+              <Text dimColor>(12)</Text>
+            </Text>,
+            'Your last typed prompt; press the count to read them all.',
+          )}
+          {helpRow(
+            'loaded',
+            <Text>
+              <Text bold color="claude">
+                Handover
+              </Text>
+              <Text dimColor>  loaded </Text>
+              <Text underline>Ship the panel</Text>
+            </Text>,
+            'The handover this session started from, linked; "none" for a fresh start.',
+          )}
+          {helpRow(
+            'status',
+            <Text color="#e5c890">✋ triggers at 150k · now 141k</Text>,
+            'Where the handover plugin winds the session down; yellow once close, "suggested" once a handover is worth doing at the next boundary.',
+          )}
+          {helpRow(
+            'trigger',
+            framed(TRIGGER_NOW.color, <Text>{TRIGGER_NOW.emoji} {TRIGGER_NOW.label}</Text>),
+            'Starts the wind-down at once (/handover:trigger) instead of waiting for the trigger.',
+          )}
+          {(Object.keys(PHASES) as HandoverPhase[]).map(key =>
+            helpRow(`phase:${key}`, <Text color={PHASES[key].color}>{phaseLine(key, now)}</Text>, PHASES[key].does),
+          )}
+          {helpRow(
+            'written',
+            <Text>
+              <Text dimColor>written </Text>
+              <Text underline>Next steps</Text>
+              <Text dimColor> (84 lines · 1m ago)</Text>
+            </Text>,
+            'The handover just written, linked.',
+          )}
+          {NEXT_ACTIONS.map(a =>
+            helpRow(
+              a.key,
+              framed(a.color, <Text>{a.emoji} {a.label}</Text>),
+              a.isSent
+                ? 'Runs /clear, waits for the handover to load, then sends its resume prompt: the next session starts on its own.'
+                : 'The same, but leaves the prompt in the input for you to change before sending; alone when the reply gave no prompt.',
+            ),
+          )}
+          {helpRow(
+            'notes',
+            <Box flexDirection="column">
+              <Text dimColor>plans</Text>
+              <Text>  <Text underline>26-10-08-help-tab.md</Text></Text>
+            </Box>,
+            'Documents this session wrote under ~/Notes/claude, by kind; press one to open it.',
+          )}
+        </Box>
+
+        {section('MISC')}
+        <Box flexDirection="column">
+          {helpRow(
+            'steps',
+            <Box flexDirection="column">
+              <Text dimColor>
+                <Text color="#a6d189">✓ </Text>Read the panel
+              </Text>
+              <Text>
+                <Text color="#e5c890">● </Text>Write the help
+              </Text>
+              <Text dimColor italic>
+                {'  ∴ '}why it does it
+              </Text>
+            </Box>,
+            "The agent's steps, one per intent: ✓ done, ● under way with its reason. The four latest show; press \"▸ n earlier\" for the rest.",
+          )}
+          {helpRow(
+            'flags',
+            <Box flexDirection="column">
+              <Text>
+                <Text color="#e78284">✗ </Text>Push the branch
+              </Text>
+              <Text>
+                <Text color="#e5c890">↻ </Text>Run the tests<Text color="#e5c890"> ×3</Text>
+              </Text>
+            </Box>,
+            '✗ a call refused or failed, with why beneath; ↻ the same call repeated, a sign the agent may be looping.',
+          )}
+          {helpRow(
+            'agent',
+            <Box flexDirection="column">
+              <Text>▸ Find the hooks</Text>
+              <Text dimColor>  sub-agent · 2m · › Read register.tsx</Text>
+            </Box>,
+            'A sub-agent: its kind, time, and what it does now; greyed once done. Press to open its prompt and latest calls.',
+          )}
+          {helpRow(
+            'diff',
+            <Box flexDirection="column">
+              <Text dimColor>
+                claude-plugins <Text color="#8caaee">⎇ main</Text> <Text color="#a6d189">+12</Text> <Text color="#e78284">−3</Text>
+              </Text>
+              <Text>
+                <Text color={SIGN_COLOR.modified}>{SIGN.modified} </Text>register.tsx <Text color="#a6d189">+12</Text>
+              </Text>
+            </Box>,
+            'Uncommitted changes in each repo the session touched, as a tree: + added, ~ modified, − deleted.',
+          )}
+          {helpRow(
+            'commits',
+            <Box flexDirection="column">
+              <Text>
+                <Text color="#a6d189">● </Text>
+                <Text dimColor>Add the help tab</Text>
+              </Text>
+              <Text>
+                <Text color="#e5c890">○ </Text>Fix the quota pill
+              </Text>
+            </Box>,
+            "This session's commits: ● pushed, ○ local only. Press one to read its message.",
+          )}
+        </Box>
+      </Box>
+    )
+
     const pane = (
       <Box flexDirection="column" paddingX={1}>
         {header}
-        {shownTab === 'misc' ? miscBody : mainBody}
+        {shownTab === 'help' ? helpBody : shownTab === 'misc' ? miscBody : mainBody}
       </Box>
     )
     return recolor(pane, scheme)

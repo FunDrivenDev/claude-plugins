@@ -113,8 +113,8 @@ export type Handover = {
   resume: string | null
 }
 
-/** The pane's tabs: the session at a glance, and the rest (steps, sub-agents, git). */
-export type Tab = 'main' | 'misc'
+/** The pane's tabs: the session at a glance, the rest (steps, sub-agents, git), and what each item means. */
+export type Tab = 'main' | 'misc' | 'help'
 
 /** `$HOME`, and the folder `~/Notes` links to (null where it is no link or is missing). */
 export type NotesRoot = { home: string; real: string | null }
