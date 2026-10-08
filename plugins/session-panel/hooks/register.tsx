@@ -930,7 +930,8 @@ export const register: Register = (on, options) => {
     if (!title) return { deny: 'An empty title: give the overall topic in 3 to 7 words.' }
     await update($, topic, () => title)
     renaming = title
-    return { result: { title } as never, text: `Session title set: ${title}` }
+    const said = `Session title set: ${title}`
+    return { result: said as never, text: said }
   })
 
   on('turn.complete', async ($, e, next) => {
