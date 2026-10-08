@@ -88,10 +88,14 @@ export type TrackedPr = {
 
 export type Tracker = {
   issue: TrackedIssue | null
-  pr: TrackedPr | null
+  /** One pull request per repository, `owner/repo`. */
+  prs: TrackedPr[]
   /** Bare `KEY-N` identifiers the prompts named, matched once a Linear tool shows one. */
   mentioned: string[]
 }
+
+/** A repository the session worked on: its git common dir, `owner/repo` from its origin, its name, and the linked worktree it last edited in. */
+export type Repo = { common: string; slug: string | null; name: string; worktree: string | null }
 
 /** A handover file, with its length and last change (epoch ms) as read, null when unread. */
 export type HandoverFile = { path: string; title: string | null; lines: number | null; modifiedAt: number | null }
@@ -157,7 +161,7 @@ declare module 'claude-code' {
       tracker: Tracker
       home: string | null
       handover: Handover | null
-      worktree: string | null
+      repos: Repo[]
       documents: Doc[]
       config: Config
       tab: Tab

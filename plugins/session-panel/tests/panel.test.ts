@@ -85,7 +85,8 @@ test('the pane shows the first prompt and moves a finished sub-agent to the done
     expect(await ui.find({ text: /and another prompt/ })).toBeDefined()
     expect(await ui.find({ text: /Build a calm side panel/ })).toBeUndefined()
     expect((await ui.find({ key: 'prompts' }))?.props.label).toBe('(1 previous prompt)')
-    expect(await ui.find({ text: /no pull request/ })).toBeDefined()
+    expect(await ui.find({ text: /no repository yet/ })).toBeDefined()
+    expect(await ui.find({ text: /no issue/ })).toBeDefined()
     await ui.press({ key: 'tab:misc' })
     expect(await ui.find({ text: /1 running · 0 done/ })).toBeDefined()
     expect((await ui.find({ key: 'agent:a1' }))?.props.label).toContain('Find hooks')
@@ -228,7 +229,8 @@ test('the corner shows the prompted pull request in its GitHub colour, linked', 
 
   await $.prompt.submit(typed('push it to FunDrivenDev/claude-plugins#7'))
   const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
-  expect(await ui.find({ text: /claude-plugins #7/ })).toBeDefined()
+  expect(await ui.find({ text: /⎇ claude-plugins/ })).toBeDefined()
+  expect(await ui.find({ text: /#7 Publish/ })).toBeDefined()
   expect(await ui.find({ text: /draft/ })).toBeDefined()
   await ui.unmount()
 })
@@ -259,8 +261,8 @@ test('a bare #N numbering a list yields to the pull request the session works on
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
 
   const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
-  expect(await ui.find({ text: /claude-plugins #21/ })).toBeDefined()
-  expect(await ui.find({ text: /claude-plugins #1$/ })).toBeUndefined()
+  expect(await ui.find({ text: /#21 PR 21/ })).toBeDefined()
+  expect(await ui.find({ text: /#1 PR 1/ })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -278,7 +280,7 @@ test('a new session selects its model and saved effort, and lists only the commi
   const logs: string[][] = []
   on('process.run', ($, e) => {
     const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
-    if (e.argv.includes('--show-toplevel')) return ok('/repo\n')
+    if (e.argv.includes('--show-toplevel')) return ok('/repo\n/main/.git/worktrees/repo\n/main/.git\n')
     if (e.argv.includes('--git-common-dir')) return ok('/main/.git/worktrees/repo\n/main/.git\n')
     if (e.argv.includes('log')) {
       logs.push([...e.argv])

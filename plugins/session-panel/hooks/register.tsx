@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement, ToolCallInput, ToolCallResult, UiCopyArgs } from 'claude-code'
 
-import type { Agent, Config, Doc, Entry, FileChange, Handover, HandoverFile, Info, Picker, Prompt, Quota, RepoChanges, Step, Tab, TrackedIssue, TrackedPr, Ttl } from '../types'
+import type { Agent, Config, Doc, Entry, FileChange, Handover, HandoverFile, Info, Picker, Prompt, Quota, Repo, RepoChanges, Step, Tab, TrackedIssue, TrackedPr, Ttl } from '../types'
 
 import { LOG_FORMAT, parseLog, parseNumstat, parseStatus, treeRows } from './files'
 import { ARTIFACTS, HANDOVER_DIR, PLANS_DIR, artifactOf, type DocContext, docGroups, docOf, docPaths, tilde } from './documents'
@@ -39,12 +39,14 @@ const COMMITS_SHOWN = 8
 const EDITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Bash'])
 const prompts = atom({ plugin: 'session-panel', key: 'prompts' } as const, [] as (Prompt | string)[])
 const view = atom({ plugin: 'session-panel', key: 'view' } as const, 'overview' as 'overview' | 'prompts')
-/** The linked worktree the session last edited in, by its folder's name; null in a main checkout. */
-const worktree = atom({ plugin: 'session-panel', key: 'worktree' } as const, null as string | null)
+/** The repositories the session worked on, in the order it first touched them. */
+const workedRepos = atom({ plugin: 'session-panel', key: 'repos' } as const, [] as Repo[])
+/** A repository as the Git section draws it; `isLocal` false for one known only by a pull request. */
+type RepoBlock = { key: string; name: string; pr: TrackedPr | null; worktree: string | null; isLocal: boolean }
 const picking = atom({ plugin: 'session-panel', key: 'picking' } as const, null as Picker)
-const tracker = atom({ plugin: 'session-panel', key: 'tracker' } as const, { issue: null, pr: null, mentioned: [] } as {
+const tracker = atom({ plugin: 'session-panel', key: 'tracker' } as const, { issue: null, prs: [], mentioned: [] } as {
   issue: TrackedIssue | null
-  pr: TrackedPr | null
+  prs: TrackedPr[]
   mentioned: string[]
 })
 const handover = atom({ plugin: 'session-panel', key: 'handover' } as const, null as Handover | null)
@@ -514,23 +516,30 @@ async function flagStep($: EngineInterface, toolUseId: string, ran: ToolCallResu
   await update($, steps, list => list.map((s): Step => (s.toolIds?.includes(toolUseId) ? { ...s, flag, note } : s)))
 }
 
-/** Adds the repository holding `dir` to those the Files section shows. */
+/** Adds the repository holding `dir` to those the Files and Git sections show, noting the linked worktree it lies in. */
 async function trackRepo($: EngineInterface, dir: string) {
-  const top = await $.process.run(['git', '-C', dir, 'rev-parse', '--show-toplevel'])
-  const root = top.stdout.trim()
-  if (top.exitCode !== 0 || !root) return
+  const out = await $.process.run(['git', '-C', dir, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-dir', '--git-common-dir'])
+  const [root = '', gitDir = '', commonDir = ''] = out.stdout.trim().split('\n')
+  if (out.exitCode !== 0 || !root) return
   await update($, roots, list => (list.includes(root) ? list : [...list, root]))
+  const common = commonDir || root
+  const worktree = gitDir && commonDir && gitDir !== commonDir ? (root.split('/').pop() ?? root) : null
+  const known = (await read($, workedRepos)).find(r => r.common === common)
+  if (known) {
+    if (known.worktree !== worktree) await update($, workedRepos, list => list.map(r => (r.common === common ? { ...r, worktree } : r)))
+    return
+  }
+  const remote = await $.process.run(['git', '-C', root, 'remote', 'get-url', 'origin'])
+  const slug = remote.exitCode === 0 ? repoOfRemote(remote.stdout) : null
+  const name = slug?.split('/').pop() ?? (common.replace(/\/\.git\/?$/, '').split('/').pop() || root)
+  await update($, workedRepos, list => (list.some(r => r.common === common) ? list : [...list, { common, slug, name, worktree }]))
 }
 
 /** Reads each tracked repository's changes against HEAD, untracked files included. */
 async function refreshFiles($: EngineInterface) {
   const next: RepoChanges[] = []
   const since = Math.floor((await $.session.usage()).startedAt / 1000)
-  let tree: string | null = null
   for (const root of await read($, roots)) {
-    const dirs = await $.process.run(['git', '-C', root, 'rev-parse', '--git-dir', '--git-common-dir'])
-    const [gitDir, commonDir] = dirs.stdout.trim().split('\n')
-    if (dirs.exitCode === 0 && gitDir !== commonDir) tree = root.split('/').pop() ?? root
     const status = await $.process.run(['git', '-C', root, 'status', '--porcelain=v1', '-z', '--untracked-files=all'])
     if (status.exitCode !== 0) continue
     const kinds = parseStatus(status.stdout)
@@ -553,7 +562,6 @@ async function refreshFiles($: EngineInterface) {
     if (files.length || commits.length) next.push({ root, branch, files, commits })
   }
   await update($, changes, () => next)
-  await update($, worktree, () => tree)
 }
 
 /**
@@ -574,14 +582,25 @@ async function markReturned($: EngineInterface, toolUseId: string) {
   )
 }
 
-/** Keeps the issue or pull request seen with the best rank, the first one on a tie. */
-async function keep($: EngineInterface, slot: 'issue' | 'pr', next: TrackedIssue | TrackedPr) {
+/** Keeps the issue seen with the best rank, the first one on a tie. */
+async function keep($: EngineInterface, next: TrackedIssue) {
   await update($, tracker, t => {
-    const cur = t[slot]
-    const same = cur && ('key' in cur ? cur.key : `${cur.repo}#${cur.number}`) === ('key' in next ? next.key : `${next.repo}#${next.number}`)
-    if (same) return { ...t, [slot]: { ...next, rank: Math.min(cur.rank, next.rank) } }
+    const cur = t.issue
+    if (cur?.key === next.key) return { ...t, issue: { ...next, rank: Math.min(cur.rank, next.rank) } }
     if (cur && cur.rank <= next.rank) return t
-    return { ...t, [slot]: next }
+    return { ...t, issue: next }
+  })
+}
+
+/** Keeps, per repository, the pull request seen with the best rank, the first one on a tie. */
+async function keepPr($: EngineInterface, next: TrackedPr) {
+  await update($, tracker, t => {
+    const prs = t.prs ?? []
+    const cur = prs.find(p => p.repo.toLowerCase() === next.repo.toLowerCase())
+    if (!cur) return { ...t, prs: [...prs, next] }
+    if (cur.number !== next.number && cur.rank <= next.rank) return t
+    const kept = cur.number === next.number ? { ...next, rank: Math.min(cur.rank, next.rank) } : next
+    return { ...t, prs: prs.map(p => (p === cur ? kept : p)) }
   })
 }
 
@@ -602,16 +621,16 @@ async function noteGithub($: EngineInterface, ref: GithubRef, rank: number, seen
   const url = data?.url ?? `https://github.com/${ref.repo}/${isPr ? 'pull' : 'issues'}/${ref.number}`
   if (isPr) {
     const state = data ? prState(data) : null
-    await keep($, 'pr', { repo: ref.repo, number: ref.number, title: data?.title ?? null, url, state, rank })
+    await keepPr($, { repo: ref.repo, number: ref.number, title: data?.title ?? null, url, state, rank })
   } else {
-    await keep($, 'issue', { platform: 'github', key: `${ref.repo}#${ref.number}`, title: data?.title ?? null, url, appUrl: null, rank })
+    await keep($, { platform: 'github', key: `${ref.repo}#${ref.number}`, title: data?.title ?? null, url, appUrl: null, rank })
   }
 }
 
 async function noteLinear($: EngineInterface, ref: LinearRef, title: string | null, rank: number) {
   const mentioned = (await read($, tracker)).mentioned.includes(ref.id)
   const base = ref.workspace ? `linear.app/${ref.workspace}/issue/${ref.id}` : null
-  await keep($, 'issue', {
+  await keep($, {
     platform: 'linear',
     key: ref.id,
     title: title ?? titleOfSlug(ref.slug),
@@ -652,20 +671,27 @@ async function scanCall($: EngineInterface, tool: string, input: Record<string, 
  */
 async function rescanTracker($: EngineInterface) {
   const messages = await $.session.messages()
-  await update($, tracker, t => ({ ...t, issue: null, pr: null }))
+  await update($, tracker, t => ({ ...t, issue: null, prs: [] }))
   const seen = new Set<string>()
+  let lastDir: string | null = null
   for (const m of messages) {
     const text = m.role === 'user' && !m.toolResults?.length ? promptText(m.text) : null
     if (text) await scanPrompt($, text, seen)
-    for (const call of m.toolUses)
+    for (const call of m.toolUses) {
       if (call.text !== undefined) await scanCall($, call.tool, call.input, { text: call.text, isError: call.isError } as ToolCallResult, seen)
+      const path = call.input.file_path
+      const dir = typeof path === 'string' && path.startsWith('/') ? path.slice(0, path.lastIndexOf('/')) || '/' : null
+      if (dir && dir !== lastDir && !call.isError) {
+        lastDir = dir
+        await trackRepo($, dir)
+      }
+    }
   }
 }
 
 /** Reads the shown pull request's state again: it moves on GitHub. */
 async function refreshPr($: EngineInterface) {
-  const pr = (await read($, tracker)).pr
-  if (pr) await noteGithub($, { platform: 'github', repo: pr.repo, number: pr.number, type: 'pull' }, pr.rank)
+  for (const pr of (await read($, tracker)).prs ?? []) await noteGithub($, { platform: 'github', repo: pr.repo, number: pr.number, type: 'pull' }, pr.rank)
 }
 
 /** `$HOME`, the project's git folder, then the real paths of the temporary folders and of each folder named. */
@@ -1139,7 +1165,7 @@ export const register: Register = (on, options) => {
     ])
     const typed = stored.map(promptOf)
     const lastPrompt = typed.at(-1)
-    const tree = await read($, worktree)
+    const repoList = await read($, workedRepos)
     const written = await read($, documents)
     const conf = await read($, config)
     const usage = await $.session.usage()
@@ -1310,32 +1336,68 @@ export const register: Register = (on, options) => {
       .join('')
 
     const issueHref = t.issue && (e.surface === 'terminal' && hasLinearApp && t.issue.appUrl ? t.issue.appUrl : t.issue.url)
-    const prColor = t.pr?.state ? PR_COLOR[t.pr.state] : '#a5adce'
-    const corner = (
-      <Box flexDirection="column" alignItems="flex-end" flexShrink={1}>
-        {!t.issue && <Text dimColor>no issue</Text>}
-        {!t.pr && <Text dimColor>no pull request</Text>}
-        {t.issue && (
+    const prs = t.prs ?? []
+    const sameRepo = (slug: string | null, pr: TrackedPr) => slug !== null && pr.repo.toLowerCase() === slug.toLowerCase()
+    /** One block per repository worked on, then one per pull request worked on in a repository not checked out here. */
+    const blocks: RepoBlock[] = [
+      ...repoList.map(r => ({ key: r.common, name: r.name, pr: prs.find(p => sameRepo(r.slug, p)) ?? null, worktree: r.worktree, isLocal: true })),
+      ...prs
+        .filter(p => !repoList.some(r => sameRepo(r.slug, p)))
+        .map(p => ({ key: p.repo, name: p.repo.split('/').pop() ?? p.repo, pr: p, worktree: null, isLocal: false })),
+    ]
+    /** A repository: its pull request, linked in its state's colour, the state kept whatever the width; beneath, its worktree. */
+    const repoBlock = (b: RepoBlock) => {
+      const color = b.pr?.state ? PR_COLOR[b.pr.state] : '#a5adce'
+      return (
+        <Box key={`repo:${b.key}`} flexDirection="column" marginTop={1}>
           <Box flexDirection="row">
+            <Box flexShrink={0}>
+              <Text>⎇ {b.name} </Text>
+            </Box>
+            {b.pr ? link(`pr:${b.key}`, b.pr.url, `#${b.pr.number}${b.pr.title ? ` ${b.pr.title}` : ''}`, color) : <Text dimColor> no pull request yet</Text>}
+            {b.pr?.state && (
+              <Box flexShrink={0}>
+                <Text color={color}>  {b.pr.state}</Text>
+              </Box>
+            )}
+          </Box>
+          {b.isLocal &&
+            (b.worktree ? (
+              <Text color="#81c8be" wrap="truncate-end">
+                {'  '}▣ {b.worktree}
+              </Text>
+            ) : (
+              <Text dimColor>{'  '}main checkout</Text>
+            ))}
+        </Box>
+      )
+    }
+    const issueSection = (
+      <Box flexDirection="row" marginBottom={1}>
+        {section('Issue')}
+        <Text>  </Text>
+        {t.issue ? (
+          <Box flexDirection="row" flexShrink={1}>
             <Text color={ISSUE_ICON[t.issue.platform].color}>{ISSUE_ICON[t.issue.platform].glyph} </Text>
             {issueHref ? link('issue', issueHref, t.issue.title ?? t.issue.key) : <Text wrap="truncate-end">{t.issue.title ?? t.issue.key}</Text>}
           </Box>
-        )}
-        {t.pr && (
-          <Box flexDirection="row">
-            {link('pr', t.pr.url, `⎇ ${t.pr.repo.split('/').pop()} #${t.pr.number}`, prColor)}
-            {t.pr.state && <Text color={prColor}> {t.pr.state}</Text>}
-          </Box>
-        )}
-        {tree ? (
-          <Text wrap="truncate-end" color="#81c8be">
-            ▣ {tree}
-          </Text>
         ) : (
-          <Text dimColor>main checkout</Text>
+          <Text dimColor>no issue</Text>
         )}
       </Box>
     )
+    const gitSection =
+      blocks.length === 0 ? (
+        <Box flexDirection="row" marginBottom={1}>
+          {section('Git')}
+          <Text dimColor>  no repository yet</Text>
+        </Box>
+      ) : (
+        <Box flexDirection="column" marginBottom={1}>
+          {section('Git')}
+          {blocks.map(repoBlock)}
+        </Box>
+      )
 
     /** A handover file by its title, linked, then greyed its length and last change; `none` without one. */
     const handoverFile = (label: string, f: HandoverFile | null) => {
@@ -1532,23 +1594,22 @@ export const register: Register = (on, options) => {
 
     const mainBody = (
       <Box key="tab:main:body" flexDirection="column">
-        <Box flexDirection="row" justifyContent="space-between" columnGap={2} marginBottom={1}>
-          <Box flexDirection="column" flexShrink={0}>
-            <Text>
-              ⌛ <Text dimColor>running </Text>
-              {duration(now - usage.startedAt)}
-              {'   '}⏳ <Text dimColor>cache </Text>
-              <Text color={cache.color}>{cache.text}</Text>
-              {'   '}
-              <Text dimColor>context </Text>
-              <Text bold color={context.color} inverse={context.isCompacting}>
-                {context.text}
-              </Text>
+        <Box marginBottom={1}>
+          <Text wrap="truncate-end">
+            ⌛ <Text dimColor>running </Text>
+            {duration(now - usage.startedAt)}
+            {'   '}⏳ <Text dimColor>cache </Text>
+            <Text color={cache.color}>{cache.text}</Text>
+            {'   '}
+            <Text dimColor>context </Text>
+            <Text bold color={context.color} inverse={context.isCompacting}>
+              {context.text}
             </Text>
-          </Box>
-          {corner}
+          </Text>
         </Box>
 
+        {issueSection}
+        {gitSection}
 
         {section('Documents')}
         <Box flexDirection="column" marginBottom={1}>
@@ -1772,10 +1833,26 @@ export const register: Register = (on, options) => {
             '→ the use projected at the reset, or "out in" how long it lasts at this pace; 🔄 the time to the reset. ┃ marks where even spending would be by now: fill past it is spent ahead of pace, and blinks once tight.',
           )}
           {helpRow('close', framed('#51576d', <Text> ✕ </Text>), 'Closes the pane; /session-panel reopens it on Main.')}
+          {helpRow(
+            'hover',
+            <Text>
+              <Text color={ACTION}>▸ Find hooks</Text>
+              {'   '}
+              <Text underline>session-panel guide</Text>
+            </Text>,
+            'Under the pointer, an action (a tab, a pill, a fold, a sub-agent, a commit) lights in its colour, blue when it has none; a link (an issue, a pull request, a document, a handover) underlines.',
+          )}
         </Box>
 
         {section('Main')}
         <Box flexDirection="column">
+          {helpRow(
+            'running',
+            <Text>
+              ⌛ <Text dimColor>running </Text>1h12m
+            </Text>,
+            'How long the session has run.',
+          )}
           {helpRow(
             'cache',
             <Text>
@@ -1796,20 +1873,38 @@ export const register: Register = (on, options) => {
           )}
           {helpRow(
             'issue',
-            <Text wrap="truncate-end">
-              <Text color={ISSUE_ICON.linear.color}>{ISSUE_ICON.linear.glyph} </Text>Fix the login loop
-            </Text>,
-            'The issue the session works on, linked: ◐ Linear, ◉ GitHub.',
+            <Box flexDirection="row">
+              {section('Issue')}
+              <Text>  </Text>
+              <Text color={ISSUE_ICON.linear.color}>{ISSUE_ICON.linear.glyph} </Text>
+              {link('help:issue', 'https://linear.app', 'Fix the login loop')}
+            </Box>,
+            'The issue the session works on, linked (◐ Linear, ◉ GitHub): the one a prompt names, else the one it opened, else one it worked on; "no issue" until then.',
           )}
           {helpRow(
-            'pr',
-            <Text>
-              <Text color={PR_COLOR.draft}>⎇ claude-plugins #21</Text>
-              <Text color={PR_COLOR.draft}> draft</Text>
-            </Text>,
-            'Its pull request, linked, in the colour of its state: draft, open, merged or closed.',
+            'git',
+            <Box flexDirection="row">
+              {section('Git')}
+              <Text dimColor>  no repository yet</Text>
+            </Box>,
+            'One block per repository the session worked on, in the order it first touched them, a blank line apart; "no repository yet" outside any.',
           )}
-          {helpRow('worktree', <Text color="#81c8be">▣ session-panel-tabs</Text>, 'The worktree the session works in; "main checkout" otherwise.')}
+          {helpRow(
+            'git:pr',
+            repoBlock({
+              key: 'help:pr',
+              name: 'claude-plugins',
+              pr: { repo: 'FunDrivenDev/claude-plugins', number: 21, title: 'session-panel 0.8.0', url: 'https://github.com/FunDrivenDev/claude-plugins/pull/21', state: 'draft', rank: 0 },
+              worktree: 'session-panel-tabs',
+              isLocal: true,
+            }),
+            "The repository, then its pull request, linked in its state's colour (draft, open, merged, closed); beneath, the linked worktree the session last edited in.",
+          )}
+          {helpRow(
+            'git:none',
+            repoBlock({ key: 'help:none', name: 'dotfiles', pr: null, worktree: null, isLocal: true }),
+            'No pull request named, opened or worked on yet in this repository; "main checkout" when the session edits outside a linked worktree.',
+          )}
           {helpRow('docs', section('Documents'), "What the session wrote that lasts, grouped by kind; 'None written yet.' until then.")}
           {helpRow(
             'docs:artifacts',
