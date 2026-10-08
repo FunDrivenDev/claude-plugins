@@ -486,7 +486,7 @@ test('the handover section lists its pills, and Hand over now starts the wind-do
   expect(await ui.find({ text: /^Handover states$/ })).toBeDefined()
   for (const label of ['Winding down', 'Writing the handover', 'Ready for the next session'])
     expect(await ui.find({ text: new RegExp(`${label}$`) })).toBeDefined()
-  for (const label of ['Start next session', 'Hand over now'])
+  for (const label of ['Start with this prompt', 'Edit the prompt first', 'Start next session', 'Hand over now'])
     expect(await ui.find({ text: new RegExp(`^${label}$`) })).toBeDefined()
   await ui.press({ key: 'handover:trigger' })
   expect(sent).toEqual(['/handover:trigger'])
@@ -494,7 +494,10 @@ test('the handover section lists its pills, and Hand over now starts the wind-do
   await ui.unmount()
 })
 
-test('a written handover opens its prompt to edit, one press starts the next session with it, titled from its handover', async ($, on) => {
+const RESUME = 'Resume the session-panel work: open the PR.'
+const RESUME_REPLY = 'Done.\n\nRun `/clear`, then send:\n\n```\nResume the session-panel work:\n  open the PR.\n```\n'
+
+test('a written handover starts the next session with its resume message in one press, titled from its handover', async ($, on) => {
   const clock = mock.clock(on, { now: 1_000 })
   let sid = 's1'
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 50_000 } as never, rateLimits: [] } }))
@@ -511,7 +514,7 @@ test('a written handover opens its prompt to edit, one press starts the next ses
   on('session.model', () => ({ value: 'opus' }))
   on('command.register', () => ({ value: undefined }) as never)
   on('command.list', () => ({ value: [{ name: 'rename' }] }) as never)
-  on('session.messages', () => ({ value: [] }))
+  on('session.messages', () => ({ value: [{ role: 'assistant', text: RESUME_REPLY }] }) as never)
   on('ui.open', () => ({ value: undefined }) as never)
   on('ui.copy', () => ({ value: undefined }) as never)
   on('env.get', () => ({ value: undefined }))
@@ -537,12 +540,11 @@ test('a written handover opens its prompt to edit, one press starts the next ses
 
   const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
   expect(await ui.find({ text: /^Ship the session panel$/ })).toBeDefined()
-  await ui.input({ key: 'handover:prompt', text: 'Carry on with the pills', kind: 'change' })
   await ui.press({ key: 'handover:run' })
   expect(ran).toContain('/clear')
   await clock.advance(5_000)
-  expect(filled).toEqual(['Carry on with the pills', ''])
-  expect(sent).toEqual(['Carry on with the pills'])
+  expect(filled).toEqual([RESUME, ''])
+  expect(sent).toEqual([RESUME])
   await ui.press({ key: 'handover:run' })
   expect(ran.filter(c => c === '/clear')).toHaveLength(1)
   await ui.unmount()

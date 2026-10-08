@@ -410,8 +410,13 @@ export const handoverStatus = (h: Handover, tokens: number): { text: string; col
   }
 }
 
-/** Starts the next session from a written handover with the prompt as edited (or as given), in its Catppuccin Frappé colour. */
-const START_NEXT = { key: 'handover:run', emoji: '🚀', label: 'Start next session', color: '#a6d189' } as const
+/** The two ways to start the next session from a written handover, each in its Catppuccin Frappé colour. */
+const NEXT_ACTIONS = [
+  { key: 'handover:run', emoji: '🚀', label: 'Start with this prompt', color: '#a6d189', isSent: true },
+  { key: 'handover:edit', emoji: '✏️', label: 'Edit the prompt first', color: '#8caaee', isSent: false },
+] as const
+/** In place of both when the closing reply gave no resume message. */
+const START_EMPTY = { key: 'handover:run', emoji: '🚀', label: 'Start next session', color: '#a6d189', isSent: false } as const
 
 export type HandoverPhase = 'winding' | 'writing' | 'ready'
 
@@ -457,7 +462,9 @@ const TRIGGER_NOW = { key: 'handover:trigger', emoji: '✋', label: 'Hand over n
 
 /** Every call-to-action pill of the Handover section, with what it does, listed at the section's foot. */
 const HANDOVER_PILLS = [
-  { ...START_NEXT, does: 'Once the handover is written and the session stopped: runs /clear, waits for the new session to load the handover, then enters the prompt above, edited or not, and sends it.' },
+  { ...NEXT_ACTIONS[0], does: 'Once the handover is written and the session stopped: runs /clear, waits for the new session to load the handover, then enters the resume message in the prompt box and sends it.' },
+  { ...NEXT_ACTIONS[1], does: 'The same, but leaves the resume message in the prompt box, to edit and send yourself.' },
+  { ...START_EMPTY, does: 'In place of both when the closing reply gave no resume message: runs /clear, the handover loading in the new session.' },
   { ...TRIGGER_NOW, does: 'While no handover is under way, wherever the context stands: starts the wind-down now (/handover:trigger); the work in progress and its sub-agents finish, then the handover is written.' },
 ] as const
 
@@ -735,25 +742,24 @@ async function waitForLoad($: EngineInterface, cleared: string): Promise<boolean
 }
 
 /**
- * Starts the next session from the handover: copies the prompt, runs `/clear`
- * (the handover plugin loads the handover into the new session), waits for
- * the handover to load, then enters the prompt and sends it; left in the
- * prompt box when the handover does not load.
+ * Starts the next session from the handover: copies the resume message, runs
+ * `/clear` (the handover plugin loads the handover into the new session),
+ * waits for the handover to load, then enters the message in the prompt box
+ * and, when `isSent`, sends it; left in the box when the handover does not load.
  */
-async function startNext($: EngineInterface, prompt: string, surface: UiCopyArgs['surface']) {
-  const text = prompt.trim()
+async function startNext($: EngineInterface, resume: string | null, surface: UiCopyArgs['surface'], isSent: boolean) {
+  const text = resume?.trim()
   if (text) await $.ui.copy({ text, surface })
   const cleared = await $.session.id()
   await $.command.run({ command: 'clear' })
   if (!text) return
-  if (await waitForLoad($, cleared)) {
-    await $.prompt.fill({ text })
+  const isLoaded = await waitForLoad($, cleared)
+  await $.prompt.fill({ text })
+  if (!isLoaded) $.ui.toast('The handover did not load: the resume message waits in the prompt box.')
+  else if (isSent) {
     await $.prompt.submit({ text })
     await $.prompt.fill({ text: '' })
-    return
   }
-  await $.prompt.fill({ text })
-  $.ui.toast('The handover did not load: the prompt waits in the prompt box.')
 }
 
 /** The session whose title is set, by the agent or from the handover it loaded: one handover title per session. */
@@ -969,8 +975,6 @@ export const register: Register = (on, options) => {
   let renaming: string | null = null
   /** Hand over now was pressed: hidden until the handover is under way. */
   let triggered = false
-  /** The next session's prompt as edited in the Handover section, for the handover it was written for. */
-  let draft: { for: string; text: string } | null = null
   /** Start next session was pressed: one launch per handover. */
   let launched: string | null = null
 
@@ -1025,7 +1029,7 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button, Link, Input } = $.ui.resolve(e)
+    const { Box, Text, Button, Link } = $.ui.resolve(e)
     const [now, i, all, done, open, isStepsOpen, picker, repos, typed, shown, t, ho] = await Promise.all([
       $.clock.now(),
       read($, info),
@@ -1253,14 +1257,11 @@ export const register: Register = (on, options) => {
       const isStopped = ho.written !== null && current === null
       if (ho.written || ho.isWriting) triggered = false
       const isTriggerable = !ho.written && !ho.isWriting && !triggered && !(ho.trigger && (usage.context.tokens ?? 0) >= ho.trigger)
-      /** The prompt as it stands at the press, not as last drawn: typing does not redraw the pane. */
-      const promptNow = () => (ho.written && draft?.for === ho.written.path ? draft.text : (ho.resume ?? ''))
-      const prompt = promptNow()
-      const launch = async (text: string, surface: UiCopyArgs['surface']) => {
+      const launch = async (isSent: boolean, surface: UiCopyArgs['surface']) => {
         if (!ho.written || launched === ho.written.path) return
         launched = ho.written.path
         $.ui.invalidate('ui.render')
-        await startNext($, text, surface)
+        await startNext($, ho.resume, surface, isSent)
       }
       const pillShape = (a: { key: string; emoji: string; color: string }, label: RenderElement) => (
         <Box key={`${a.key}:box`} borderStyle="round" borderColor={a.color} paddingX={1} flexShrink={0}>
@@ -1275,35 +1276,26 @@ export const register: Register = (on, options) => {
         ...(isStopped
           ? [
               <Box key="handover:next" flexDirection="column" marginTop={1}>
-                <Text dimColor>Next session: edit the prompt if you like, then start it (Enter in the field starts it too)</Text>
-                <Box borderStyle="round" borderColor="#8caaee" paddingX={1}>
-                  <Input
-                    key="handover:prompt"
-                    value={prompt}
-                    placeholder="No resume message: type the next session's prompt, or start it empty"
-                    submitLabel="start next session"
-                    onInput={value => {
-                      draft = { for: ho.written!.path, text: value }
-                    }}
-                    onSubmit={(value, input) => {
-                      draft = { for: ho.written!.path, text: value }
-                      return launch(value, input.surface)
-                    }}
-                  />
-                </Box>
-                <Box flexDirection="row" marginTop={1}>
-                  {pillShape(
-                    START_NEXT,
-                    <Button
-                      key={START_NEXT.key}
-                      label={launched === ho.written!.path ? 'Starting…' : START_NEXT.label}
-                      plain
-                      autoFocus
-                      hover={{ color: START_NEXT.color }}
-                      onPress={press => launch(promptNow(), press.surface)}
-                    />,
+                <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
+                  {(ho.resume ? NEXT_ACTIONS : [START_EMPTY]).map(a =>
+                    pillShape(
+                      a,
+                      <Button
+                        key={a.key}
+                        label={launched === ho.written!.path ? 'Starting…' : a.label}
+                        plain
+                        autoFocus={a.isSent ? true : undefined}
+                        hover={{ color: a.color }}
+                        onPress={press => launch(a.isSent, press.surface)}
+                      />,
+                    ),
                   )}
                 </Box>
+                {ho.resume && (
+                  <Text dimColor italic wrap="wrap">
+                    {ho.resume}
+                  </Text>
+                )}
               </Box>,
             ]
           : []),
