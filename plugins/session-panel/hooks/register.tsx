@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement, ToolCallInput, ToolCallResult, UiCopyArgs } from 'claude-code'
 
-import type { Agent, Entry, FileChange, Handover, HandoverFile, Info, Note, NotesRoot, Picker, Quota, QuotaLayout, RepoChanges, Step, Tab, TrackedIssue, TrackedPr, Ttl } from '../types'
+import type { Agent, Entry, FileChange, Handover, HandoverFile, Info, Note, NotesRoot, Picker, Quota, RepoChanges, Step, Tab, TrackedIssue, TrackedPr, Ttl } from '../types'
 
 import { LOG_FORMAT, parseLog, parseNumstat, parseStatus, treeRows } from './files'
 import { noteGroups, noteOf, notePaths } from './notes'
@@ -39,7 +39,6 @@ const prompts = atom({ plugin: 'session-panel', key: 'prompts' } as const, [] as
 const view = atom({ plugin: 'session-panel', key: 'view' } as const, 'overview' as 'overview' | 'prompts')
 /** The linked worktree the session last edited in, by its folder's name; null in a main checkout. */
 const worktree = atom({ plugin: 'session-panel', key: 'worktree' } as const, null as string | null)
-const quotaLayout = atom({ plugin: 'session-panel', key: 'quotaLayout' } as const, 'side' as QuotaLayout)
 const picking = atom({ plugin: 'session-panel', key: 'picking' } as const, null as Picker)
 const tracker = atom({ plugin: 'session-panel', key: 'tracker' } as const, { issue: null, pr: null, mentioned: [] } as {
   issue: TrackedIssue | null
@@ -984,7 +983,6 @@ export const register: Register = (on, options) => {
     const tree = await read($, worktree)
     const written = await read($, notes)
     const usage = await $.session.usage()
-    const layout = await read($, quotaLayout)
     const shownTab = await read($, tab)
     const title = await read($, topic)
     const quotas = usage.rateLimits
@@ -1366,18 +1364,9 @@ export const register: Register = (on, options) => {
 
         {quotas.length > 0 && (
           <Box flexDirection="column" marginBottom={1}>
-            <Box flexDirection="row">
-              {section('Quotas ')}
-              <Button
-                key="quotas:layout"
-                label={layout === 'side' ? '⇄ one per line' : '⇄ side by side'}
-                plain
-                dimColor
-                onPress={() => update($, quotaLayout, cur => (cur === 'side' ? 'stacked' : 'side'))}
-              />
-            </Box>
-            <Box flexDirection={layout === 'side' ? 'row' : 'column'} columnGap={3}>
-              {quotas.map(q => quotaBar(q, layout === 'side' ? Math.floor((columns - 3 * (quotas.length - 1)) / quotas.length) : columns))}
+            {section('Quotas')}
+            <Box flexDirection="row" columnGap={3}>
+              {quotas.map(q => quotaBar(q, Math.floor((columns - 3 * (quotas.length - 1)) / quotas.length)))}
             </Box>
           </Box>
         )}

@@ -323,7 +323,7 @@ describe('quotas', () => {
   })
 })
 
-test('the quota bars sit side by side or one per line', async ($, on) => {
+test('the quota bars sit side by side', async ($, on) => {
   const now = Date.parse('2026-10-06T12:00:00Z')
   mock.clock(on, { now })
   const rateLimits = [
@@ -335,9 +335,7 @@ test('the quota bars sit side by side or one per line', async ($, on) => {
   const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
   expect(await ui.find({ text: /→60%/ })).toBeDefined()
   expect(await ui.find({ text: /out in/ })).toBeDefined()
-  expect((await ui.find({ key: 'quotas:layout' }))?.props.label).toBe('⇄ one per line')
-  await ui.press({ key: 'quotas:layout' })
-  expect((await ui.find({ key: 'quotas:layout' }))?.props.label).toBe('⇄ side by side')
+  expect(await ui.find({ key: 'quotas:layout' })).toBeUndefined()
   await ui.unmount()
 })
 

@@ -36,9 +36,6 @@ export type RepoChanges = { root: string; branch: string; files: FileChange[]; c
 
 export type Picker = 'model' | 'effort' | null
 
-/** The quota bars side by side, half the width each, or one per line. */
-export type QuotaLayout = 'side' | 'stacked'
-
 export type Quota = {
   label: string
   used: number
@@ -147,7 +144,6 @@ declare module 'claude-code' {
       tracker: Tracker
       home: string | null
       handover: Handover | null
-      quotaLayout: QuotaLayout
       worktree: string | null
       notes: Note[]
       tab: Tab
