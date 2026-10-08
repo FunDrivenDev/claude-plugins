@@ -147,6 +147,7 @@ declare module 'claude-code' {
       worktree: string | null
       notes: Note[]
       tab: Tab
+      quotasOpen: boolean
       topic: string | null
     }
   }

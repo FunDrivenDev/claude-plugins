@@ -47,6 +47,8 @@ const tracker = atom({ plugin: 'session-panel', key: 'tracker' } as const, { iss
 })
 const handover = atom({ plugin: 'session-panel', key: 'handover' } as const, null as Handover | null)
 const notes = atom({ plugin: 'session-panel', key: 'notes' } as const, [] as Note[])
+/** The quota bars unfolded beneath the top lines, from the quota pill. */
+const quotasOpen = atom({ plugin: 'session-panel', key: 'quotasOpen' } as const, false)
 const tab = atom({ plugin: 'session-panel', key: 'tab' } as const, 'main' as Tab)
 /** The session's overall topic, as the main agent names it with the session_title tool. */
 const topic = atom({ plugin: 'session-panel', key: 'topic' } as const, null as string | null)
@@ -984,6 +986,7 @@ export const register: Register = (on, options) => {
     const written = await read($, notes)
     const usage = await $.session.usage()
     const shownTab = await read($, tab)
+    const isQuotasOpen = await read($, quotasOpen)
     const title = await read($, topic)
     const quotas = usage.rateLimits
       .map(l => quotaOf(l.kind, l.percentUsed, l.resetsAt, now))
@@ -1276,6 +1279,21 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
+    const toggleQuotas = () => update($, quotasOpen, cur => !cur)
+    /** Each window's use in one pill, in its verdict's colour; a press unfolds the bars beneath the top lines. */
+    const quotaPill = quotas.length > 0 && (
+      <Box key="quotas:box" borderStyle="round" borderColor="#51576d" paddingX={1} flexShrink={0}>
+        {quotas.map((q, k) => (
+          <Box key={`quotas:${q.label}:row`} flexDirection="row">
+            {k > 0 && <Text dimColor> │ </Text>}
+            <Text color={TONE[q.verdict?.tone ?? 'ok']}>● </Text>
+            <Button key={`quotas:${q.label}`} label={`${q.label} ${q.used}%`} plain hover={{ color: TONE[q.verdict?.tone ?? 'ok'] }} onPress={toggleQuotas} />
+          </Box>
+        ))}
+        <Text dimColor> {isQuotasOpen ? '▴' : '▾'}</Text>
+      </Box>
+    )
+
     /** The session's title on a line of its own; beneath, the model and effort, the tabs, and a close mark wide enough to click. */
     const header = (
       <Box flexDirection="column" marginBottom={1}>
@@ -1288,6 +1306,7 @@ export const register: Register = (on, options) => {
         {tabPill('main', 'Main')}
         {tabPill('misc', 'MISC')}
         <Box flexGrow={1} />
+        {quotaPill}
         <Box key="close:box" borderStyle="round" borderColor="#51576d" paddingX={1} flexShrink={0}>
           <Button
             key="close"
@@ -1301,6 +1320,11 @@ export const register: Register = (on, options) => {
         {options && (
           <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
             {options}
+          </Box>
+        )}
+        {isQuotasOpen && quotas.length > 0 && (
+          <Box flexDirection="row" columnGap={3} marginTop={1}>
+            {quotas.map(q => quotaBar(q, Math.floor((columns - 3 * (quotas.length - 1)) / quotas.length)))}
           </Box>
         )}
       </Box>
@@ -1362,14 +1386,6 @@ export const register: Register = (on, options) => {
           {corner}
         </Box>
 
-        {quotas.length > 0 && (
-          <Box flexDirection="column" marginBottom={1}>
-            {section('Quotas')}
-            <Box flexDirection="row" columnGap={3}>
-              {quotas.map(q => quotaBar(q, Math.floor((columns - 3 * (quotas.length - 1)) / quotas.length)))}
-            </Box>
-          </Box>
-        )}
 
         <Box flexDirection="row">
           {section('Last prompt ')}

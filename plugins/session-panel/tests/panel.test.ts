@@ -323,7 +323,7 @@ describe('quotas', () => {
   })
 })
 
-test('the quota bars sit side by side', async ($, on) => {
+test('the quota pill shows both windows and unfolds their bars side by side', async ($, on) => {
   const now = Date.parse('2026-10-06T12:00:00Z')
   mock.clock(on, { now })
   const rateLimits = [
@@ -333,9 +333,14 @@ test('the quota bars sit side by side', async ($, on) => {
   on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits } }))
 
   const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  expect((await ui.find({ key: 'quotas:5h' }))?.props.label).toBe('5h 30%')
+  expect((await ui.find({ key: 'quotas:7d' }))?.props.label).toBe('7d 71%')
+  expect(await ui.find({ text: /→60%/ })).toBeUndefined()
+  await ui.press({ key: 'quotas:7d' })
   expect(await ui.find({ text: /→60%/ })).toBeDefined()
   expect(await ui.find({ text: /out in/ })).toBeDefined()
-  expect(await ui.find({ key: 'quotas:layout' })).toBeUndefined()
+  await ui.press({ key: 'quotas:5h' })
+  expect(await ui.find({ text: /→60%/ })).toBeUndefined()
   await ui.unmount()
 })
 
