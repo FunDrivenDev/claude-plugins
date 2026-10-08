@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { ago, barRuns, cacheColor, cleanTitle, handoverPhase, phaseLine, contextOf, describeCall, duration, effortColor, fileMeta, handoverStatus, handoverTitle, headline, kfmt, lastSentence, minutesLeft, modelColor, modelId, prettyModel, promptText, quotaOf, recolor, resumeMessage, span } from '../hooks/register'
+import { ago, barRuns, cacheColor, cleanTitle, handoverPhase, phaseLine, contextOf, describeCall, duration, effortColor, fileMeta, handoverStatus, handoverTitle, headline, kfmt, lastSentence, minutesLeft, modelColor, modelId, prettyModel, previousPrompts, promptText, quotaOf, recolor, resumeMessage, span } from '../hooks/register'
 
 const PANE = {
   component: 'Pane',
@@ -39,6 +39,9 @@ describe('helpers', () => {
     expect(handoverTitle('# Handover: session-panel tracker\n')).toBe('session-panel tracker')
     expect(fileMeta(142, new Date(2026, 9, 7, 9, 32).getTime())).toBe('142 lines · 2026-10-07 09:32')
     expect(fileMeta(1, null)).toBe('1 line')
+    expect(previousPrompts(11)).toBe('11 previous prompts')
+    expect(previousPrompts(1)).toBe('1 previous prompt')
+    expect(previousPrompts(0)).toBe('no previous prompt')
     expect(fileMeta(null, null)).toBeNull()
     const ho = { isOn: true, loaded: null, written: null, suggest: 150_000, trigger: 185_000, warn: 20_000, isWriting: false, isWindingDown: false, error: null, resume: null }
     expect(handoverStatus(ho, 92_000).text).toBe('triggers at 185k · now 92k')
@@ -80,7 +83,7 @@ test('the pane shows the first prompt and moves a finished sub-agent to the done
     const ui = await $.ui.mount({ plugin: 'session-panel', surface, ...PANE })
     expect(await ui.find({ text: /and another prompt/ })).toBeDefined()
     expect(await ui.find({ text: /Build a calm side panel/ })).toBeUndefined()
-    expect((await ui.find({ key: 'prompts' }))?.props.label).toBe('(2)')
+    expect((await ui.find({ key: 'prompts' }))?.props.label).toBe('(1 previous prompt)')
     expect(await ui.find({ text: /no pull request/ })).toBeDefined()
     await ui.press({ key: 'tab:misc' })
     expect(await ui.find({ text: /1 running · 0 done/ })).toBeDefined()
@@ -101,7 +104,7 @@ test('the pane shows the first prompt and moves a finished sub-agent to the done
   expect(await ui.find({ text: /Build a calm side panel/ })).toBeDefined()
   expect(await ui.find({ text: /and another prompt/ })).toBeDefined()
   await ui.press({ key: 'prompts:back' })
-  expect(await ui.find({ key: 'prompts' })).toBeDefined()
+  expect((await ui.find({ key: 'prompts' }))?.props.label).toBe('(1 previous prompt)')
   await ui.unmount()
 })
 
@@ -479,7 +482,7 @@ test('the top line shows the title the main agent sets, switches tabs and closes
   await ui.unmount()
 })
 
-test('the handover section lists its states, and Hand over now starts the wind-down once', async ($, on) => {
+test('the handover section leaves its states to Help, and Hand over now starts the wind-down once', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 50_000 } as never, rateLimits: [] } }))
   on('process.run', ($, e) => {
@@ -502,9 +505,8 @@ test('the handover section lists its states, and Hand over now starts the wind-d
   await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
 
   const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
-  expect(await ui.find({ text: /^Handover states$/ })).toBeDefined()
-  for (const label of ['Winding down', 'Writing the handover', 'Ready for the next session'])
-    expect(await ui.find({ text: new RegExp(`${label}$`) })).toBeDefined()
+  expect(await ui.find({ text: /^Handover states$/ })).toBeUndefined()
+  expect(await ui.find({ text: /Writing the handover$/ })).toBeUndefined()
   expect(await ui.find({ text: /^Call-to-action pills$/ })).toBeUndefined()
   expect((await ui.find({ key: 'handover:trigger' }))?.props.label).toBe('Hand over now')
   await ui.press({ key: 'handover:trigger' })
@@ -600,8 +602,9 @@ test('the Help tab explains each item beside an example of it, in place of the r
   expect(await ui.find({ text: /Hand over now/ })).toBeDefined()
   expect(await ui.find({ text: /● pushed, ○ local only/ })).toBeDefined()
   expect(await ui.find({ text: /Last prompt/ })).toBeDefined()
+  for (const title of [/^Documents$/, /^Handover$/]) expect(await ui.find({ text: title })).toBeDefined()
   expect(await ui.find({ key: 'prompts' })).toBeUndefined()
   await ui.press({ key: 'tab:main' })
-  expect(await ui.find({ key: 'prompts' })).toBeDefined()
+  expect((await ui.find({ key: 'prompts' }))?.props.label).toBe('(no previous prompt)')
   await ui.unmount()
 })

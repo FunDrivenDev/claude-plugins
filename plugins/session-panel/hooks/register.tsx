@@ -396,6 +396,10 @@ export const handoverTitle = (text: string): string | null => {
   return summary || /^#\s*Hand(?:over|off):\s*(.+)$/m.exec(text)?.[1]?.trim() || null
 }
 
+/** The hint beside Last prompt, `11 previous prompts`: how many came before it. */
+export const previousPrompts = (n: number): string =>
+  n <= 0 ? 'no previous prompt' : `${n} previous ${n === 1 ? 'prompt' : 'prompts'}`
+
 /** A handover file's length and last change, `142 lines · 2026-10-07 09:32` in local time; null when neither is known. */
 export const fileMeta = (lines: number | null, modifiedAt: number | null): string | null => {
   const pad = (n: number) => String(n).padStart(2, '0')
@@ -1383,19 +1387,6 @@ export const register: Register = (on, options) => {
               </Box>,
             ]
           : []),
-        <Box key="handover:phases" flexDirection="column" marginTop={1}>
-          <Text dimColor>Handover states</Text>
-          {(Object.keys(PHASES) as HandoverPhase[]).map(key => (
-            <Box key={`phases:${key}`} flexDirection="row" columnGap={1}>
-              <Box flexShrink={0} width={30}>
-                <Text color={PHASES[key].color}>{phaseLine(key, now)}</Text>
-              </Box>
-              <Text dimColor wrap="wrap">
-                {PHASES[key].does}
-              </Text>
-            </Box>
-          ))}
-        </Box>,
       ]
     })()
 
@@ -1524,28 +1515,6 @@ export const register: Register = (on, options) => {
         </Box>
 
 
-        <Box flexDirection="row">
-          {section('Last prompt ')}
-          <Button
-            key="prompts"
-            label={`(${typed.length})`}
-            plain
-            dimColor
-            onPress={() => update($, view, () => 'prompts')}
-          />
-        </Box>
-        <Box marginBottom={1}>
-          <Text wrap="wrap">{typed.length ? oneLine(typed[typed.length - 1]!, 360) : '—'}</Text>
-        </Box>
-
-        <Box flexDirection="row" columnGap={2}>
-          {section('Handover')}
-          {ho?.isOn && handoverFile('loaded', ho.loaded)}
-        </Box>
-        <Box flexDirection="column" marginBottom={1}>
-          {handoverRows}
-        </Box>
-
         {section('Documents')}
         <Box flexDirection="column" marginBottom={1}>
           {written.length === 0 && <Text dimColor>None written yet.</Text>}
@@ -1567,6 +1536,24 @@ export const register: Register = (on, options) => {
             </Box>
           ))}
         </Box>
+
+        {section('Handover')}
+        <Box flexDirection="column" marginTop={1} marginBottom={1}>
+          {ho?.isOn && <Box marginBottom={1}>{handoverFile('loaded', ho.loaded)}</Box>}
+          {handoverRows}
+        </Box>
+
+        <Box flexDirection="row">
+          {section('Last prompt ')}
+          <Button
+            key="prompts"
+            label={`(${previousPrompts(typed.length - 1)})`}
+            plain
+            dimColor
+            onPress={() => update($, view, () => 'prompts')}
+          />
+        </Box>
+        <Text wrap="wrap">{typed.length ? oneLine(typed[typed.length - 1]!, 360) : '—'}</Text>
       </Box>
     )
 
@@ -1785,24 +1772,58 @@ export const register: Register = (on, options) => {
             'Its pull request, linked, in the colour of its state: draft, open, merged or closed.',
           )}
           {helpRow('worktree', <Text color="#81c8be">▣ session-panel-tabs</Text>, 'The worktree the session works in; "main checkout" otherwise.')}
+          {helpRow('docs', section('Documents'), "What the session wrote that lasts, grouped by kind; 'None written yet.' until then.")}
           {helpRow(
-            'prompts',
-            <Text>
-              <Text bold color="claude">
-                Last prompt{' '}
+            'docs:artifacts',
+            <Box flexDirection="column">
+              <Text dimColor>{ARTIFACTS}</Text>
+              <Text>
+                {'  '}
+                <Text underline>Session panel guide</Text>
               </Text>
-              <Text dimColor>(12)</Text>
-            </Text>,
-            'Your last typed prompt; press the count to read them all.',
+            </Box>,
+            'First the artifacts it published, linked to claude.ai; press a document to open it.',
           )}
+          {helpRow(
+            'docs:handovers',
+            <Box flexDirection="column">
+              <Text dimColor>Agent handovers</Text>
+              <Text>
+                {'  '}
+                <Text underline>21h57-session-panel</Text>
+              </Text>
+            </Box>,
+            `The handovers written for the next session, in the handover plugin's handover_dir: ${tilde(conf.handoverDir ?? HANDOVER_DIR, docHome)}.`,
+          )}
+          {helpRow(
+            'docs:plans',
+            <Box flexDirection="column">
+              <Text dimColor>Plans</Text>
+              <Text>
+                {'  '}
+                <Text underline>quiet-river</Text>
+              </Text>
+            </Box>,
+            `The plans, in Claude Code's plansDirectory setting: ${tilde(conf.plansDirectory ?? PLANS_DIR, docHome)}.`,
+          )}
+          {helpRow(
+            'docs:other',
+            <Box flexDirection="column">
+              <Text dimColor>Reports</Text>
+              <Text>
+                {'  '}
+                <Text underline>26-10-08-help-tab</Text>
+              </Text>
+            </Box>,
+            "Any other Markdown file the agent wrote outside this project's repository, temporary and hidden folders, under its folder's name.",
+          )}
+          {helpRow('handover', section('Handover'), 'What the handover plugin does in this session: the handover it loaded, where it stands, and the one it wrote.')}
           {helpRow(
             'loaded',
             <Text>
-              <Text bold color="claude">
-                Handover
-              </Text>
-              <Text dimColor>  loaded </Text>
+              <Text dimColor>loaded </Text>
               <Text underline>Ship the panel</Text>
+              <Text dimColor> (142 lines · 2026-10-07 09:32)</Text>
             </Text>,
             'The handover this session started from, linked; "none" for a fresh start.',
           )}
@@ -1838,48 +1859,14 @@ export const register: Register = (on, options) => {
             ),
           )}
           {helpRow(
-            'docs:artifacts',
-            <Box flexDirection="column">
-              <Text dimColor>{ARTIFACTS}</Text>
-              <Text>
-                {'  '}
-                <Text underline>Session panel guide</Text>
+            'prompts',
+            <Text>
+              <Text bold color="claude">
+                Last prompt{' '}
               </Text>
-            </Box>,
-            'Documents: what the session wrote that lasts, press one to open it. First the artifacts it published, linked to claude.ai.',
-          )}
-          {helpRow(
-            'docs:handovers',
-            <Box flexDirection="column">
-              <Text dimColor>Agent handovers</Text>
-              <Text>
-                {'  '}
-                <Text underline>21h57-session-panel</Text>
-              </Text>
-            </Box>,
-            `The handovers written for the next session, in the handover plugin's handover_dir: ${tilde(conf.handoverDir ?? HANDOVER_DIR, docHome)}.`,
-          )}
-          {helpRow(
-            'docs:plans',
-            <Box flexDirection="column">
-              <Text dimColor>Plans</Text>
-              <Text>
-                {'  '}
-                <Text underline>quiet-river</Text>
-              </Text>
-            </Box>,
-            `The plans, in Claude Code's plansDirectory setting: ${tilde(conf.plansDirectory ?? PLANS_DIR, docHome)}.`,
-          )}
-          {helpRow(
-            'docs:other',
-            <Box flexDirection="column">
-              <Text dimColor>Reports</Text>
-              <Text>
-                {'  '}
-                <Text underline>26-10-08-help-tab</Text>
-              </Text>
-            </Box>,
-            "Any other Markdown file the agent wrote outside this project's repository, temporary and hidden folders, under its folder's name.",
+              <Text dimColor>(11 previous prompts)</Text>
+            </Text>,
+            'Your last typed prompt; press the count beside it to read every prompt of the session.',
           )}
         </Box>
 
