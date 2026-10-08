@@ -415,8 +415,6 @@ const NEXT_ACTIONS = [
   { key: 'handover:run', emoji: '🚀', label: 'Start with this prompt', color: '#a6d189', isSent: true },
   { key: 'handover:edit', emoji: '✏️', label: 'Edit the prompt first', color: '#8caaee', isSent: false },
 ] as const
-/** In place of both when the closing reply gave no resume message. */
-const START_EMPTY = { key: 'handover:run', emoji: '🚀', label: 'Start next session', color: '#a6d189', isSent: false } as const
 
 export type HandoverPhase = 'winding' | 'writing' | 'ready'
 
@@ -459,14 +457,6 @@ export const phaseLine = (phase: HandoverPhase, now: number): string => {
 
 /** Starts the handover's wind-down at once, as `/handover:trigger` does. */
 const TRIGGER_NOW = { key: 'handover:trigger', emoji: '✋', label: 'Hand over now', color: '#e5c890' } as const
-
-/** Every call-to-action pill of the Handover section, with what it does, listed at the section's foot. */
-const HANDOVER_PILLS = [
-  { ...NEXT_ACTIONS[0], does: 'Once the handover is written and the session stopped: runs /clear, waits for the new session to load the handover, then enters the resume message in the prompt box and sends it.' },
-  { ...NEXT_ACTIONS[1], does: 'The same, but leaves the resume message in the prompt box, to edit and send yourself.' },
-  { ...START_EMPTY, does: 'In place of both when the closing reply gave no resume message: runs /clear, the handover loading in the new session.' },
-  { ...TRIGGER_NOW, does: 'While no handover is under way, wherever the context stands: starts the wind-down now (/handover:trigger); the work in progress and its sub-agents finish, then the handover is written.' },
-] as const
 
 const ttlMs = (ttl: Ttl): number => (ttl === '1h' ? 3_600_000 : 300_000)
 
@@ -1277,7 +1267,7 @@ export const register: Register = (on, options) => {
           ? [
               <Box key="handover:next" flexDirection="column" marginTop={1}>
                 <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
-                  {(ho.resume ? NEXT_ACTIONS : [START_EMPTY]).map(a =>
+                  {(ho.resume ? NEXT_ACTIONS : NEXT_ACTIONS.filter(a => !a.isSent)).map(a =>
                     pillShape(
                       a,
                       <Button
@@ -1319,17 +1309,6 @@ export const register: Register = (on, options) => {
               </Box>,
             ]
           : []),
-        <Box key="handover:pills" flexDirection="column" marginTop={1}>
-          <Text dimColor>Call-to-action pills</Text>
-          {HANDOVER_PILLS.map(a => (
-            <Box key={`pills:${a.key}:${a.label}`} flexDirection="row" columnGap={1} alignItems="center">
-              {pillShape({ ...a, key: `pills:${a.key}:${a.label}` }, <Text color={a.color}>{a.label}</Text>)}
-              <Text dimColor wrap="wrap">
-                {a.does}
-              </Text>
-            </Box>
-          ))}
-        </Box>,
         <Box key="handover:phases" flexDirection="column" marginTop={1}>
           <Text dimColor>Handover states</Text>
           {(Object.keys(PHASES) as HandoverPhase[]).map(key => (

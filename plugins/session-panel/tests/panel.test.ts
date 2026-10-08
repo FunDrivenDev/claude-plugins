@@ -459,7 +459,7 @@ test('the top line shows the title the main agent sets, switches tabs and closes
   await ui.unmount()
 })
 
-test('the handover section lists its pills, and Hand over now starts the wind-down once', async ($, on) => {
+test('the handover section lists its states, and Hand over now starts the wind-down once', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 50_000 } as never, rateLimits: [] } }))
   on('process.run', ($, e) => {
@@ -482,12 +482,11 @@ test('the handover section lists its pills, and Hand over now starts the wind-do
   await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
 
   const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
-  expect(await ui.find({ text: /^Call-to-action pills$/ })).toBeDefined()
   expect(await ui.find({ text: /^Handover states$/ })).toBeDefined()
   for (const label of ['Winding down', 'Writing the handover', 'Ready for the next session'])
     expect(await ui.find({ text: new RegExp(`${label}$`) })).toBeDefined()
-  for (const label of ['Start with this prompt', 'Edit the prompt first', 'Start next session', 'Hand over now'])
-    expect(await ui.find({ text: new RegExp(`^${label}$`) })).toBeDefined()
+  expect(await ui.find({ text: /^Call-to-action pills$/ })).toBeUndefined()
+  expect((await ui.find({ key: 'handover:trigger' }))?.props.label).toBe('Hand over now')
   await ui.press({ key: 'handover:trigger' })
   expect(sent).toEqual(['/handover:trigger'])
   expect(await ui.find({ key: 'handover:trigger' })).toBeUndefined()
