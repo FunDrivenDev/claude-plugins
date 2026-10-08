@@ -114,6 +114,9 @@ export type Handover = {
   resume: string | null
 }
 
+/** The pane's tabs: the session at a glance, and the rest (steps, sub-agents, git). */
+export type Tab = 'main' | 'misc'
+
 /** `$HOME`, and the folder `~/Notes` links to (null where it is no link or is missing). */
 export type NotesRoot = { home: string; real: string | null }
 
@@ -147,6 +150,8 @@ declare module 'claude-code' {
       quotaLayout: QuotaLayout
       worktree: string | null
       notes: Note[]
+      tab: Tab
+      topic: string | null
     }
   }
 }

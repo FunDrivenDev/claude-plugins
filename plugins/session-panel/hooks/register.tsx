@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, ToolCallInput, ToolCallResult, UiCopyArgs } from 'claude-code'
 
-import type { Agent, Entry, FileChange, Handover, HandoverFile, Info, Note, NotesRoot, Picker, Quota, QuotaLayout, RepoChanges, Step, TrackedIssue, TrackedPr, Ttl } from '../types'
+import type { Agent, Entry, FileChange, Handover, HandoverFile, Info, Note, NotesRoot, Picker, Quota, QuotaLayout, RepoChanges, Step, Tab, TrackedIssue, TrackedPr, Ttl } from '../types'
 
 import { LOG_FORMAT, parseLog, parseNumstat, parseStatus, treeRows } from './files'
 import { noteGroups, noteOf, notePaths } from './notes'
@@ -48,6 +48,9 @@ const tracker = atom({ plugin: 'session-panel', key: 'tracker' } as const, { iss
 })
 const handover = atom({ plugin: 'session-panel', key: 'handover' } as const, null as Handover | null)
 const notes = atom({ plugin: 'session-panel', key: 'notes' } as const, [] as Note[])
+const tab = atom({ plugin: 'session-panel', key: 'tab' } as const, 'main' as Tab)
+/** The session's overall topic, as a small model names it from the prompts and answers. */
+const topic = atom({ plugin: 'session-panel', key: 'topic' } as const, null as string | null)
 const WRITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
 let notesRoot: NotesRoot | null = null
 /** Main-loop calls that returned, possibly before the step that made them ended. */
@@ -703,6 +706,42 @@ async function startNext($: EngineInterface, resume: string | null, surface: UiC
   if (isSent) $.ui.toast('The handover did not load: the resume message waits in the prompt box.')
 }
 
+const TOPIC_SYSTEM = `You keep the title of a coding session: 3 to 7 words naming its overall topic, in the language of the prompts, no quotes, no final period.
+Keep the current title word for word unless the session's overall topic has changed significantly, or the title is missing or vague.
+Answer with the title alone.`
+
+/** A model's reply read as a title: its first line, without a label, quotes or a final period; null when empty. */
+export const cleanTitle = (reply: string): string | null => {
+  const line = reply.split('\n').map(l => l.trim()).find(Boolean)
+  const title = line?.replace(/^title:\s*/i, '').replace(/^["'“«*`]+|["'”»*`.]+$/g, '').trim()
+  return title ? oneLine(title, 80) : null
+}
+
+/** Asks a small model whether the session's topic moved since its title, and keeps the title it names. */
+async function nameTopic($: EngineInterface, answer?: string) {
+  const typed = await read($, prompts)
+  if (!typed.length) return
+  const current = await read($, topic)
+  const asked = typed.slice(-6).map((p, k) => `${k + 1}. ${oneLine(p, 400)}`).join('\n')
+  const said = answer ? `\n\nThe latest answer:\n${oneLine(answer, 1200)}` : ''
+  const reply = await $.model.complete({
+    model: 'haiku',
+    system: TOPIC_SYSTEM,
+    prompt: `Current title: ${current ?? '(none)'}\n\nThe person's latest prompts, oldest first:\n${asked}${said}`,
+    maxTokens: 40,
+    effort: 'low',
+    timeoutMs: 30_000,
+  })
+  const next = reply.isAnswered ? cleanTitle(reply.text) : null
+  if (next && next !== current) await update($, topic, () => next)
+}
+
+/** One topic request at a time, each after the last, none failing the hook that asked. */
+let naming: Promise<void> = Promise.resolve()
+const retitle = ($: EngineInterface, answer?: string) => {
+  naming = naming.then(() => nameTopic($, answer)).catch(() => undefined)
+}
+
 async function finish($: EngineInterface, agentId: string, answer?: string) {
   const now = await $.clock.now()
   await update($, agents, list =>
@@ -753,6 +792,7 @@ export const register: Register = (on, options) => {
       if (typed.length) await update($, prompts, () => typed)
       for (const text of typed) await scanPrompt($, text)
     }
+    if ((await read($, topic)) === null) retitle($)
 
     return next(e)
   })
@@ -760,6 +800,7 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'session-panel' }, async $ => {
     await update($, expanded, () => null)
     await update($, view, () => 'overview')
+    await update($, tab, () => 'main')
     await $.ui.open({ id: PANE, title: TITLE, focus: true, columns: DOCK_COLUMNS })
     void $.ui.scroll({ in: PANE, to: 'start' }).catch(() => undefined)
     return { text: 'Session panel opened.' }
@@ -770,6 +811,7 @@ export const register: Register = (on, options) => {
     if (text) {
       await update($, prompts, list => [...list, text])
       await scanPrompt($, text)
+      retitle($)
     }
     return next(e)
   })
@@ -899,6 +941,7 @@ export const register: Register = (on, options) => {
     if (e.agentId && !(await read($, agents)).find(a => a.id === e.agentId)?.isTeammate) {
       await finish($, e.agentId, e.answer)
     }
+    if (!e.agentId && e.answer) retitle($, e.answer)
     return next(e)
   })
 
@@ -927,6 +970,8 @@ export const register: Register = (on, options) => {
     const written = await read($, notes)
     const usage = await $.session.usage()
     const layout = await read($, quotaLayout)
+    const shownTab = await read($, tab)
+    const title = await read($, topic)
     const quotas = usage.rateLimits
       .map(l => quotaOf(l.kind, l.percentUsed, l.resetsAt, now))
       .filter((q): q is Quota => q !== null)
@@ -1164,9 +1209,48 @@ export const register: Register = (on, options) => {
       ]
     })()
 
+    const tabPill = (key: Tab, label: string) => (
+      <Box key={`tab:${key}:box`} borderStyle="round" borderColor={shownTab === key ? '#8caaee' : '#51576d'} paddingX={1}>
+        <Button
+          key={`tab:${key}`}
+          label={label}
+          plain
+          dimColor={shownTab !== key}
+          onPress={async () => {
+            await update($, view, () => 'overview')
+            await update($, tab, () => key)
+          }}
+        />
+      </Box>
+    )
+
+    /** The session's title, the tabs, and a close mark wide enough to click. */
+    const header = (
+      <Box flexDirection="row" alignItems="center" columnGap={1} marginBottom={1}>
+        <Box flexShrink={1}>
+          <Text bold color="claude" wrap="truncate-end">
+            {title ?? TITLE}
+          </Text>
+        </Box>
+        {tabPill('main', 'Main')}
+        {tabPill('misc', 'MISC')}
+        <Box flexGrow={1} />
+        <Box key="close:box" borderStyle="round" borderColor="#51576d" paddingX={1} flexShrink={0}>
+          <Button
+            key="close"
+            label=" ✕ "
+            plain
+            hover={{ color: '#e78284' }}
+            onPress={() => $.ui.close({ id: PANE }).catch(() => undefined)}
+          />
+        </Box>
+      </Box>
+    )
+
     if (shown === 'prompts') {
       return (
         <Box flexDirection="column" paddingX={1}>
+          {header}
           <Button key="prompts:back" label="← Overview" plain onPress={() => update($, view, () => 'overview')} />
           {section(`Prompts · ${typed.length}`)}
           {typed.map((text, index) => (
@@ -1199,8 +1283,8 @@ export const register: Register = (on, options) => {
       )
     }
 
-    const pane = (
-      <Box flexDirection="column" paddingX={1}>
+    const mainBody = (
+      <Box key="tab:main:body" flexDirection="column">
         <Box flexDirection="row" justifyContent="space-between" columnGap={2} marginBottom={1}>
           <Box flexDirection="column" flexShrink={0}>
             <Box flexDirection="row" columnGap={1}>
@@ -1290,7 +1374,11 @@ export const register: Register = (on, options) => {
             </Box>
           ))}
         </Box>
+      </Box>
+    )
 
+    const miscBody = (
+      <Box key="tab:misc:body" flexDirection="column">
         <Box flexDirection="row">
           {section('Steps ')}
           {folded > 0 || isStepsOpen ? (
@@ -1408,6 +1496,13 @@ export const register: Register = (on, options) => {
             </Box>
           ))}
         </Box>
+      </Box>
+    )
+
+    const pane = (
+      <Box flexDirection="column" paddingX={1}>
+        {header}
+        {shownTab === 'misc' ? miscBody : mainBody}
       </Box>
     )
     return recolor(pane, scheme)

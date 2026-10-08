@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { ago, barRuns, cacheColor, contextOf, describeCall, duration, effortColor, fileMeta, handoverStatus, handoverTitle, headline, kfmt, lastSentence, minutesLeft, modelColor, modelId, prettyModel, promptText, quotaOf, recolor, resumeMessage, span } from '../hooks/register'
+import { ago, barRuns, cacheColor, cleanTitle, contextOf, describeCall, duration, effortColor, fileMeta, handoverStatus, handoverTitle, headline, kfmt, lastSentence, minutesLeft, modelColor, modelId, prettyModel, promptText, quotaOf, recolor, resumeMessage, span } from '../hooks/register'
 
 const PANE = {
   component: 'Pane',
@@ -43,6 +43,8 @@ describe('helpers', () => {
     const ho = { isOn: true, loaded: null, written: null, suggest: 150_000, trigger: 185_000, warn: 20_000, isWriting: false, error: null, resume: null }
     expect(handoverStatus(ho, 92_000).text).toBe('triggers at 185k · now 92k')
     expect(handoverStatus(ho, 170_000).color).toBe('#e5c890')
+    expect(cleanTitle('Title: "Session panel tabs."\nmore')).toBe('Session panel tabs')
+    expect(cleanTitle('  \n')).toBeNull()
     expect(promptText('<command-name>/login</command-name>')).toBeNull()
     expect(promptText('<system-reminder>x</system-reminder>\n<pasted_content id="1">Build a mod</pasted_content id="1">')).toBe('Build a mod')
   })
@@ -73,18 +75,22 @@ test('the pane shows the first prompt and moves a finished sub-agent to the done
     expect(await ui.find({ text: /and another prompt/ })).toBeDefined()
     expect(await ui.find({ text: /Build a calm side panel/ })).toBeUndefined()
     expect((await ui.find({ key: 'prompts' }))?.props.label).toBe('(2)')
-    expect(await ui.find({ text: /1 running · 0 done/ })).toBeDefined()
     expect(await ui.find({ text: /no pull request/ })).toBeDefined()
+    await ui.press({ key: 'tab:misc' })
+    expect(await ui.find({ text: /1 running · 0 done/ })).toBeDefined()
     expect((await ui.find({ key: 'agent:a1' }))?.props.label).toContain('Find hooks')
+    await ui.press({ key: 'tab:main' })
     await ui.unmount()
   }
 
   await $.turn.complete({ answer: 'Found them', durationMs: 5, isAborted: false, turnId: 't', agentId: 'a1', reason: 'answer' })
 
   const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'tab:misc' })
   expect(await ui.find({ text: /0 running · 1 done/ })).toBeDefined()
   await ui.press({ key: 'agent:a1' })
   expect(await ui.find({ text: /Found them/ })).toBeDefined()
+  await ui.press({ key: 'tab:main' })
   await ui.press({ key: 'prompts' })
   expect(await ui.find({ text: /Build a calm side panel/ })).toBeDefined()
   expect(await ui.find({ text: /and another prompt/ })).toBeDefined()
@@ -114,6 +120,7 @@ test('an open sub-agent shows its latest entries only and collapses from its foo
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'session-panel', surface, ...PANE })
+    await ui.press({ key: 'tab:misc' })
     await ui.press({ key: 'agent:a1' })
     expect(await ui.find({ text: /echo step-199/ })).toBeDefined()
     expect(await ui.find({ text: /echo step-150/ })).toBeUndefined()
@@ -126,6 +133,7 @@ test('an open sub-agent shows its latest entries only and collapses from its foo
   }
 
   const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'tab:misc' })
   await ui.press({ key: 'agent:a1' })
   expect(await ui.find({ key: 'agent:a1:close' })).toBeDefined()
   await $.command.run({ command: 'session-panel' } as never)
@@ -155,12 +163,14 @@ test('a step shows the command it ran, and only the four latest stay unfolded', 
   }
 
   const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  expect(await ui.find({ text: /Opus 5\.5/ })).toBeDefined()
+  expect(await ui.find({ text: /Say echo 5/ })).toBeUndefined()
+  await ui.press({ key: 'tab:misc' })
   expect(await ui.find({ text: /Say echo 5 ×2/ })).toBeDefined()
   expect(await ui.find({ text: /^\s*echo 5$/ })).toBeUndefined()
   expect(await ui.find({ text: /Say echo 3/ })).toBeDefined()
   expect(await ui.find({ text: /Say echo 2/ })).toBeUndefined()
   expect((await ui.find({ key: 'steps' }))?.props.label).toContain('3 earlier')
-  expect(await ui.find({ text: /Opus 5\.5/ })).toBeDefined()
   await ui.press({ key: 'steps' })
   expect(await ui.find({ text: /Say echo 0/ })).toBeDefined()
   await ui.unmount()
@@ -390,5 +400,39 @@ test('the context counter shows the engine trigger and its reckoning, in light c
   const pane = JSON.stringify(await ui.find({ text: /context/ }))
   expect(pane).toContain('"color":"#9a6700","inverse":false},"children":["120.0k/217k (250k − 33k) 55%"]')
   expect(pane).toContain('"borderColor":"#fe640b"')
+  await ui.unmount()
+})
+
+test('the top line titles the session by its topic, switches tabs and closes the pane', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
+  on('prompt.submit', ($, e) => ({ text: e.text }))
+  const asked: string[] = []
+  on('model.complete', ($, e) => {
+    asked.push(String(e.prompt))
+    return { value: { isAnswered: true, text: 'Session panel tabs', usage: {} } } as never
+  })
+  let closed = ''
+  on('ui.close', ($, e) => {
+    closed = e.id
+    return { value: undefined } as never
+  })
+
+  await $.prompt.submit(typed('Add tabs to the session panel'))
+  let ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  for (let k = 0; k < 50 && !(await ui.find({ text: /^Session panel tabs$/ })); k++) {
+    await ui.unmount()
+    ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  }
+  expect(await ui.find({ text: /^Session panel tabs$/ })).toBeDefined()
+  expect(asked[0]).toContain('Add tabs to the session panel')
+  expect(await ui.find({ text: /^Handover$/ })).toBeDefined()
+  expect(await ui.find({ text: /^Git diff$/ })).toBeUndefined()
+  await ui.press({ key: 'tab:misc' })
+  expect(await ui.find({ text: /^Git diff$/ })).toBeDefined()
+  expect(await ui.find({ text: /^Handover$/ })).toBeUndefined()
+  expect((await ui.find({ key: 'close' }))?.props.label).toBe(' ✕ ')
+  await ui.press({ key: 'close' })
+  expect(closed).toBe('session-panel')
   await ui.unmount()
 })
