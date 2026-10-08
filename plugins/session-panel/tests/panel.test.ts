@@ -458,7 +458,7 @@ test('the top line shows the title the main agent sets, switches tabs and closes
   await ui.unmount()
 })
 
-test('the handover section lists its pills, and Trigger now starts the wind-down once', async ($, on) => {
+test('the handover section lists its pills, and Hand over now starts the wind-down once', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 50_000 } as never, rateLimits: [] } }))
   on('process.run', ($, e) => {
@@ -485,7 +485,7 @@ test('the handover section lists its pills, and Trigger now starts the wind-down
   expect(await ui.find({ text: /^Handover states$/ })).toBeDefined()
   for (const label of ['Winding down', 'Writing the handover', 'Ready for the next session'])
     expect(await ui.find({ text: new RegExp(`${label}$`) })).toBeDefined()
-  for (const label of ['Run right away', 'Clear and paste', 'Clear and start the next session', 'Trigger now'])
+  for (const label of ['Start next session', 'Review, then start', 'Hand over now'])
     expect(await ui.find({ text: new RegExp(`^${label}$`) })).toBeDefined()
   await ui.press({ key: 'handover:trigger' })
   expect(sent).toEqual(['/handover:trigger'])

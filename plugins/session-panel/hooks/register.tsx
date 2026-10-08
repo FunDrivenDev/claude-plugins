@@ -412,8 +412,8 @@ export const handoverStatus = (h: Handover, tokens: number): { text: string; col
 
 /** The two ways to start the next session from a written handover, each in its Catppuccin Frappé colour. */
 const NEXT_ACTIONS = [
-  { key: 'handover:run', emoji: '🚀', label: 'Run right away', color: '#a6d189', isSent: true },
-  { key: 'handover:paste', emoji: '📋', label: 'Clear and paste', color: '#8caaee', isSent: false },
+  { key: 'handover:run', emoji: '🚀', label: 'Start next session', color: '#a6d189', isSent: true },
+  { key: 'handover:paste', emoji: '✏️', label: 'Review, then start', color: '#8caaee', isSent: false },
 ] as const
 
 export type HandoverPhase = 'winding' | 'writing' | 'ready'
@@ -456,13 +456,13 @@ export const phaseLine = (phase: HandoverPhase, now: number): string => {
 }
 
 /** Starts the handover's wind-down at once, as `/handover:trigger` does. */
-const TRIGGER_NOW = { key: 'handover:trigger', emoji: '⚡', label: 'Trigger now', color: '#e5c890' } as const
+const TRIGGER_NOW = { key: 'handover:trigger', emoji: '✋', label: 'Hand over now', color: '#e5c890' } as const
 
 /** Every call-to-action pill of the Handover section, with what it does, listed at the section's foot. */
 const HANDOVER_PILLS = [
   { ...NEXT_ACTIONS[0], does: 'Once the handover is written and the session stopped: copies the resume message, runs /clear, waits for the new session to load the handover, then sends the message.' },
   { ...NEXT_ACTIONS[1], does: 'Once the handover is written and the session stopped: copies the resume message, runs /clear, and leaves the message in the prompt box to edit or send.' },
-  { ...NEXT_ACTIONS[1], label: 'Clear and start the next session', does: 'In place of both when the closing reply gave no resume message: runs /clear, the handover loading in the new session.' },
+  { ...NEXT_ACTIONS[1], emoji: NEXT_ACTIONS[0].emoji, label: NEXT_ACTIONS[0].label, does: 'In place of both when the closing reply gave no resume message: runs /clear, the handover loading in the new session.' },
   { ...TRIGGER_NOW, does: 'While no handover is under way, wherever the context stands: starts the wind-down now (/handover:trigger); the work in progress and its sub-agents finish, then the handover is written.' },
 ] as const
 
@@ -954,7 +954,7 @@ export const register: Register = (on, options) => {
   let refresh: { cancel: () => void } | null = null
   /** The title the agent set, given to `/rename` once its turn ends: a command run from a tool call would wait on that turn. */
   let renaming: string | null = null
-  /** Trigger now was pressed: hidden until the handover is under way. */
+  /** Hand over now was pressed: hidden until the handover is under way. */
   let triggered = false
 
   on('tool.call', async ($, e, next) => {
@@ -1251,10 +1251,10 @@ export const register: Register = (on, options) => {
                 <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
                   {(ho.resume ? NEXT_ACTIONS : NEXT_ACTIONS.filter(a => !a.isSent)).map(a => (
                     <Box key={`${a.key}:box`} borderStyle="round" borderColor={a.color} paddingX={1}>
-                      <Text>{a.emoji} </Text>
+                      <Text>{ho.resume ? a.emoji : NEXT_ACTIONS[0].emoji} </Text>
                       <Button
                         key={a.key}
-                        label={ho.resume ? a.label : 'Clear and start the next session'}
+                        label={ho.resume ? a.label : NEXT_ACTIONS[0].label}
                         plain
                         autoFocus={a.isSent ? true : undefined}
                         hover={{ color: a.color }}
@@ -1344,7 +1344,7 @@ export const register: Register = (on, options) => {
             <Button key={`quotas:${q.label}`} label={`${q.label} ${q.used}%`} plain hover={{ color: TONE[q.verdict?.tone ?? 'ok'] }} onPress={toggleQuotas} />
           </Box>
         ))}
-        <Button key="quotas:fold" label={isQuotasOpen ? ' ▴' : ' ▾'} plain dimColor onPress={toggleQuotas} />
+        <Button key="quotas:fold" label={isQuotasOpen ? ' 🔼 ' : ' 🔽 '} plain onPress={toggleQuotas} />
       </Box>
     )
 
