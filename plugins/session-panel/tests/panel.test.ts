@@ -350,16 +350,20 @@ test('the quota pill shows both windows and unfolds their bars side by side', as
   await ui.unmount()
 })
 
-test('the notes the session writes list under their kind, linked, by name', async ($, on) => {
+test('the documents the session writes list under their kind, linked, by name, artifacts first', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
-  on('tool.call', () => ({ result: {} as never }))
+  on('tool.call', ($, e) => ({ result: (e.tool === 'Artifact' ? { url: 'https://claude.ai/artifact/9', path: '/w/guide.html', title: 'Panel guide' } : {}) as never }))
   const opened: string[] = []
+  const real = (p: string) => p.replace('/Users/me/Notes/', '/Users/me/Code/notes/')
   on('process.run', ($, e) => {
     const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     if (e.argv[0] === 'open') opened.push(e.argv[1]!)
-    if (e.argv[2]?.includes('pwd -P')) return ok('/Users/me\n/Users/me/Code/notes/personal\n')
-    if (e.argv[2]?.includes('date -r')) return ok(`${e.argv.slice(5).join('\n')}\n`)
+    if (e.argv[2]?.includes('TMPDIR')) return ok('/Users/me\n/Users/me/Code/repo/.git\n/private/tmp\n/private/tmp\n/Users/me/Code/notes/claude/agent-handovers\n/Users/me/.claude/plans\n')
+    if (e.argv[2]?.includes('start=$1')) {
+      const files = e.argv.slice(5)
+      return ok(files.map(f => `${f}\n${real(f)}\n${f.startsWith('/Users/me/Code/repo/') ? '/Users/me/Code/repo/.git' : '/Users/me/Code/notes/.git'}\n`).join(''))
+    }
     return ok('')
   })
 
@@ -368,19 +372,23 @@ test('the notes the session writes list under their kind, linked, by name', asyn
   await ui.unmount()
 
   await $.tool.call({ tool: 'Write', file_path: '/Users/me/Notes/claude/reports/26-10-06-ci-ok-wrap-up.md', content: 'x' })
-  await $.tool.call({ tool: 'Bash', command: 'cat > ~/Notes/claude/plans/26-10-06-ci-ok-open-questions.md <<EOF\nx\nEOF' })
+  await $.tool.call({ tool: 'Bash', command: 'cat > ~/Notes/claude/questions/26-10-06-ci-ok-open-questions.md <<EOF\nx\nEOF' })
   await $.tool.call({ tool: 'Write', file_path: '/Users/me/Code/repo/README.md', content: 'x' })
+  await $.tool.call({ tool: 'Artifact', file_path: '/w/guide.html' } as never)
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'session-panel', surface, ...PANE })
     expect(await ui.find({ text: /None written yet/ })).toBeUndefined()
+    expect(await ui.find({ text: /^Documents$/ })).toBeDefined()
+    expect(await ui.find({ text: /^Artifacts$/ })).toBeDefined()
     expect(await ui.find({ text: /^Reports$/ })).toBeDefined()
-    expect(await ui.find({ text: /^Plans$/ })).toBeDefined()
+    expect(await ui.find({ text: /^Questions$/ })).toBeDefined()
     if (surface === 'terminal') {
       const link = await ui.find({ type: 'Link', text: /26-10-06-ci-ok-wrap-up/ })
       expect(link?.props.href).toBe('file:///Users/me/Notes/claude/reports/26-10-06-ci-ok-wrap-up.md')
+      expect((await ui.find({ type: 'Link', text: /Panel guide/ }))?.props.href).toBe('https://claude.ai/artifact/9')
     } else {
-      await ui.press({ key: 'note:claude/reports/26-10-06-ci-ok-wrap-up.md' })
+      await ui.press({ key: 'doc:/Users/me/Code/notes/claude/reports/26-10-06-ci-ok-wrap-up.md' })
       expect(opened).toEqual(['/Users/me/Notes/claude/reports/26-10-06-ci-ok-wrap-up.md'])
     }
     expect(await ui.find({ text: /26-10-06-ci-ok-open-questions/ })).toBeDefined()
@@ -388,6 +396,18 @@ test('the notes the session writes list under their kind, linked, by name', asyn
     expect(await ui.find({ text: /\.md/ })).toBeUndefined()
     await ui.unmount()
   }
+})
+
+test('the Config tab lists each value the pane reads, as in effect, with its default', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
+  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'tab:config' })
+  expect(await ui.find({ text: /^autoCompactWindow$/ })).toBeDefined()
+  expect(await ui.find({ text: /200k \(default\)/ })).toBeDefined()
+  expect(await ui.find({ text: /~\/Notes\/claude\/agent-handovers \(default\)/ })).toBeDefined()
+  expect(await ui.find({ text: /^CC_TOKEN_RESERVE$/ })).toBeDefined()
+  await ui.unmount()
 })
 
 test('the context counter shows the engine trigger and its reckoning, in light colours on a light macOS', async ($, on) => {

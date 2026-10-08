@@ -113,21 +113,29 @@ export type Handover = {
   resume: string | null
 }
 
-/** The pane's tabs: the session at a glance, the rest (steps, sub-agents, git), and what each item means. */
-export type Tab = 'main' | 'misc' | 'help'
+/** The pane's tabs: the session at a glance, the rest (steps, sub-agents, git), the values it reads from configuration, and what each item means. */
+export type Tab = 'main' | 'misc' | 'config' | 'help'
 
-/** `$HOME`, and the folder `~/Notes` links to (null where it is no link or is missing). */
-export type NotesRoot = { home: string; real: string | null }
-
-/** A file the session wrote under `~/Notes`. */
-export type Note = {
+/** Something tangible the session wrote: an artifact it published, or a Markdown file outside the project. */
+export type Doc = {
+  /** Its real path, or the artifact's link: one entry each. */
+  id: string
+  /** The path as written, or the artifact's link. */
   path: string
-  /** Its path under the notes folder, the same through the link or not. */
-  rel: string
-  /** Its inbox (`Reports`, `Agent handovers`), else its top folder. */
+  /** `Artifacts`, `Agent handovers`, `Plans`, else its folder's name. */
   kind: string
-  /** Its file name without `.md`. */
+  /** Its file name without `.md`, or the artifact's title. */
   name: string
+}
+
+/** The values the pane reads from configuration, as set; null where unset and the default applies. */
+export type Config = {
+  cacheTtl: Ttl
+  autoCompactWindow: number | null
+  tokenLimit: number | null
+  tokenReserve: number | null
+  plansDirectory: string | null
+  handoverDir: string | null
 }
 
 declare module 'claude-code' {
@@ -147,7 +155,8 @@ declare module 'claude-code' {
       home: string | null
       handover: Handover | null
       worktree: string | null
-      notes: Note[]
+      documents: Doc[]
+      config: Config
       tab: Tab
       quotasOpen: boolean
       topic: string | null

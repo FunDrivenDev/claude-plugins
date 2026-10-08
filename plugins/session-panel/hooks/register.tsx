@@ -1,10 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement, ToolCallInput, ToolCallResult, UiCopyArgs } from 'claude-code'
 
-import type { Agent, Entry, FileChange, Handover, HandoverFile, Info, Note, NotesRoot, Picker, Quota, RepoChanges, Step, Tab, TrackedIssue, TrackedPr, Ttl } from '../types'
+import type { Agent, Config, Doc, Entry, FileChange, Handover, HandoverFile, Info, Picker, Quota, RepoChanges, Step, Tab, TrackedIssue, TrackedPr, Ttl } from '../types'
 
 import { LOG_FORMAT, parseLog, parseNumstat, parseStatus, treeRows } from './files'
-import { noteGroups, noteOf, notePaths } from './notes'
+import { ARTIFACTS, HANDOVER_DIR, PLANS_DIR, artifactOf, type DocContext, docGroups, docOf, docPaths, tilde } from './documents'
 import { PR_COLOR, RANK, findRefs, linearOfResult, prState, refsOfGh, repoOfRemote, titleOfSlug } from './tracker'
 import type { GithubRef, LinearRef } from './tracker'
 
@@ -46,7 +46,15 @@ const tracker = atom({ plugin: 'session-panel', key: 'tracker' } as const, { iss
   mentioned: string[]
 })
 const handover = atom({ plugin: 'session-panel', key: 'handover' } as const, null as Handover | null)
-const notes = atom({ plugin: 'session-panel', key: 'notes' } as const, [] as Note[])
+const documents = atom({ plugin: 'session-panel', key: 'documents' } as const, [] as Doc[])
+const config = atom({ plugin: 'session-panel', key: 'config' } as const, {
+  cacheTtl: '1h',
+  autoCompactWindow: null,
+  tokenLimit: null,
+  tokenReserve: null,
+  plansDirectory: null,
+  handoverDir: null,
+} as Config)
 /** The quota bars unfolded beneath the top lines, from the quota pill. */
 const quotasOpen = atom({ plugin: 'session-panel', key: 'quotasOpen' } as const, false)
 const tab = atom({ plugin: 'session-panel', key: 'tab' } as const, 'main' as Tab)
@@ -55,7 +63,8 @@ const topic = atom({ plugin: 'session-panel', key: 'topic' } as const, null as s
 /** The session whose title is set, and the one reminded to set it: a title carried over through /clear or a reload belongs to another. */
 const titled = atom({ plugin: 'session-panel', key: 'titled' } as const, { set: null, reminded: null } as { set: string | null; reminded: string | null })
 const WRITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
-let notesRoot: NotesRoot | null = null
+/** Where documents are told apart, for the handover and plans folders it was read with. */
+let docContext: { key: string; ctx: DocContext } | null = null
 /** Main-loop calls that returned, possibly before the step that made them ended. */
 const returned = new Set<string>()
 let hasLinearApp = false
@@ -210,6 +219,12 @@ export const contextOf = (tokens: number | undefined, { limit, window }: Limit):
   return { text, color: ['#5fff00', '#ffff00', '#ffaf00'][stage] ?? '#ff0000', isCompacting: false }
 }
 
+/** A whole positive number, from a number or its digits; null otherwise. */
+const whole = (value: unknown): number | null => {
+  const n = typeof value === 'string' && /^\d{1,12}$/.test(value) ? Number(value) : value
+  return typeof n === 'number' && Number.isInteger(n) && n > 0 ? n : null
+}
+
 /**
  * The auto-compact trigger as the engine sets it (/context's figures); where
  * the engine gives none, as the status line reckons it: CC_TOKEN_LIMIT, else
@@ -220,10 +235,6 @@ async function readLimit($: EngineInterface): Promise<Limit> {
   if (b?.autoCompactThreshold && b.autoCompactThreshold > 0)
     return { limit: b.autoCompactThreshold, window: Math.max(b.rawMaxTokens, b.autoCompactThreshold) }
   if (b && !b.isAutoCompactEnabled && b.rawMaxTokens > 0) return { limit: b.rawMaxTokens, window: b.rawMaxTokens }
-  const whole = (value: unknown) => {
-    const n = typeof value === 'string' && /^\d{1,12}$/.test(value) ? Number(value) : value
-    return typeof n === 'number' && Number.isInteger(n) && n > 0 ? n : null
-  }
   const window = whole(await $.env.get('CC_TOKEN_LIMIT')) ?? whole((await $.settings.read()).autoCompactWindow) ?? WINDOW
   const limit = window - (whole(await $.env.get('CC_TOKEN_RESERVE')) ?? RESERVE)
   return { limit: limit > 0 ? limit : window, window }
@@ -627,37 +638,82 @@ async function refreshPr($: EngineInterface) {
   if (pr) await noteGithub($, { platform: 'github', repo: pr.repo, number: pr.number, type: 'pull' }, pr.rank)
 }
 
-/** `$HOME` and the folder `~/Notes` links to, read once. */
-async function rootOfNotes($: EngineInterface): Promise<NotesRoot> {
-  if (notesRoot) return notesRoot
-  const out = await $.process.run(['sh', '-c', 'printf "%s\\n" "$HOME"; cd "$HOME/Notes" 2>/dev/null && pwd -P'])
-  const [home = '', real = ''] = out.stdout.split('\n')
-  const root = { home, real: real && real !== `${home}/Notes` ? real : null }
-  if (home) notesRoot = root
-  return root
+/** `$HOME`, the project's git folder, then the real paths of the temporary folders and of each folder named. */
+const DOC_CONTEXT = `printf '%s\\n' "$HOME"
+git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo
+for d in /tmp "\${TMPDIR:-/tmp}" "$@"; do
+  case $d in "~/"*) d="$HOME/$(printf %s "$d" | cut -c3-)";; esac
+  (cd "$d" 2>/dev/null && pwd -P) || echo "$d"
+done`
+
+/** Each file changed since `$1` (epoch seconds): its path as named, its real path, and the git folder of its repository. */
+const WRITTEN_SINCE = `start=$1; shift
+for f; do
+  [ -f "$f" ] || continue
+  [ "$(date -r "$f" +%s)" -ge "$start" ] || continue
+  d=$(cd "$(dirname "$f")" && pwd -P) || continue
+  printf '%s\\n%s/%s\\n%s\\n' "$f" "$d" "$(basename "$f")" "$(cd "$d" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+done`
+
+/** Where documents are told apart, read again once the handover or plans folder changes. */
+async function contextOfDocs($: EngineInterface): Promise<DocContext> {
+  const c = await read($, config)
+  const dirs = [c.handoverDir ?? HANDOVER_DIR, c.plansDirectory ?? PLANS_DIR]
+  const key = dirs.join('\n')
+  if (docContext?.key === key) return docContext.ctx
+  const out = await $.process.run(['sh', '-c', DOC_CONTEXT, 'sh', ...dirs])
+  const [home = '', project = '', tmp = '', tmpdir = '', handovers = '', plans = ''] = out.stdout.split('\n')
+  const ctx = { home, project: project || null, tmp: [...new Set([tmp, tmpdir].filter(Boolean))], handovers, plans }
+  if (home) docContext = { key, ctx }
+  return ctx
 }
 
-/** Adds the files under `~/Notes` among `paths` to the session's notes, once each. */
-async function keepNotes($: EngineInterface, paths: string[]) {
-  const root = await rootOfNotes($)
-  if (!root.home) return
-  const found = paths.map(path => noteOf(path, root)).filter((n): n is Note => n !== null)
-  if (found.length) await update($, notes, list => [...list, ...found.filter(n => !list.some(o => o.rel === n.rel))])
-}
-
-const WRITTEN_SINCE = 'start=$1; shift; for f; do [ -f "$f" ] && [ "$(date -r "$f" +%s)" -ge "$start" ] && echo "$f"; done'
-
-/** The notes a call wrote: an editing tool's file, or a file under `~/Notes` a command names and that changed since the session began. */
-async function scanNotes($: EngineInterface, tool: string, input: Record<string, unknown>, ran: ToolCallResult) {
-  if (ran.deny !== undefined || ran.isError) return
-  const path = input.file_path ?? input.notebook_path
-  if (WRITING_TOOLS.has(tool) && typeof path === 'string') return keepNotes($, [path])
-  if (tool !== 'Bash' || typeof input.command !== 'string') return
-  const named = notePaths(input.command, await rootOfNotes($))
+/** Adds the Markdown files among `paths` changed since `since` (epoch seconds) that are documents, once each. */
+async function keepDocs($: EngineInterface, paths: string[], since = 0) {
+  const named = paths.filter(path => /\.md$/i.test(path))
   if (!named.length) return
-  const since = String(Math.floor((await $.session.usage()).startedAt / 1000))
-  const written = await $.process.run(['sh', '-c', WRITTEN_SINCE, 'sh', since, ...named])
-  await keepNotes($, written.stdout.split('\n').filter(Boolean))
+  const ctx = await contextOfDocs($)
+  const out = await $.process.run(['sh', '-c', WRITTEN_SINCE, 'sh', String(since), ...named])
+  const lines = out.stdout.split('\n')
+  const found: Doc[] = []
+  for (let k = 0; k + 2 < lines.length; k += 3) {
+    const doc = docOf({ path: lines[k]!, real: lines[k + 1]!, repo: lines[k + 2] || null }, ctx)
+    if (doc) found.push(doc)
+  }
+  if (found.length) await addDocs($, found)
+}
+
+/** Adds documents, once each; one already listed takes the newer name (an artifact retitled). */
+const addDocs = ($: EngineInterface, found: Doc[]) =>
+  update($, documents, list => [...list.map(d => found.find(f => f.id === d.id) ?? d), ...found.filter(f => !list.some(d => d.id === f.id))])
+
+/** The documents a call wrote: an artifact it published, an editing tool's Markdown file, or one a command names that changed since the session began. */
+async function scanDocs($: EngineInterface, tool: string, input: Record<string, unknown>, ran: ToolCallResult) {
+  if (ran.deny !== undefined || ran.isError) return
+  if (tool === 'Artifact') {
+    const art = artifactOf(input, ran.result)
+    return art ? addDocs($, [art]) : undefined
+  }
+  const path = input.file_path ?? input.notebook_path
+  if (WRITING_TOOLS.has(tool) && typeof path === 'string') return keepDocs($, [path])
+  if (tool !== 'Bash' || typeof input.command !== 'string' || !/\.md\b/i.test(input.command)) return
+  const named = docPaths(input.command, (await contextOfDocs($)).home)
+  if (!named.length) return
+  await keepDocs($, named, Math.floor((await $.session.usage()).startedAt / 1000))
+}
+
+/** The values the pane reads from Claude Code's settings and the environment, as set. */
+async function readConfig($: EngineInterface, cacheTtl: Ttl) {
+  const settings = await $.settings.read().catch(() => ({}) as Record<string, unknown>)
+  const plans = (settings as Record<string, unknown>).plansDirectory
+  const next = {
+    cacheTtl,
+    autoCompactWindow: whole((settings as Record<string, unknown>).autoCompactWindow),
+    tokenLimit: whole(await $.env.get('CC_TOKEN_LIMIT').catch(() => undefined)),
+    tokenReserve: whole(await $.env.get('CC_TOKEN_RESERVE').catch(() => undefined)),
+    plansDirectory: typeof plans === 'string' && plans.trim() ? plans.trim() : null,
+  }
+  await update($, config, c => ({ ...c, ...next }))
 }
 
 const HANDOVER_READ = `d="$HOME/.claude/plugins/data/handover-fundrivendev"
@@ -712,7 +768,9 @@ async function readHandover($: EngineInterface) {
     resume: said ? resumeMessage(said) : null,
   }
   await update($, handover, () => next)
-  if (next.written) await keepNotes($, [next.written.path])
+  const dir = typeof opt.handover_dir === 'string' && opt.handover_dir.trim() ? opt.handover_dir.trim() : null
+  if ((await read($, config)).handoverDir !== dir) await update($, config, c => ({ ...c, handoverDir: dir }))
+  if (next.written) await keepDocs($, [next.written.path])
 }
 
 /** How long the handover plugin's SessionStart hook may take to load the handover (its timeout, plus a margin). */
@@ -824,6 +882,7 @@ export const register: Register = (on, options) => {
       if (ticks % 5 === 0) void readHandover($).then(() => titleFromHandover($))
       if (ticks % 5 === 0) void readScheme($).then(s => (scheme = s))
       if (ticks % 30 === 0) void readLimit($).then(n => (limit = n))
+      if (ticks % 30 === 0) void readConfig($, defaultTtl)
       if (ticks % 60 === 0) void refreshPr($)
       $.ui.invalidate('ui.render')
     })
@@ -833,6 +892,7 @@ export const register: Register = (on, options) => {
     await readHandover($)
     await titleFromHandover($)
     limit = await readLimit($)
+    await readConfig($, defaultTtl)
     scheme = await readScheme($)
     await trackRepo($, e.cwd)
     await refreshFiles($)
@@ -997,7 +1057,7 @@ export const register: Register = (on, options) => {
       await markReturned($, e.tool_use_id)
     }
     await scanCall($, tool, input, ran)
-    await scanNotes($, tool, input, ran)
+    await scanDocs($, tool, input, ran)
     return ran
   })
 
@@ -1047,7 +1107,8 @@ export const register: Register = (on, options) => {
       read($, handover),
     ])
     const tree = await read($, worktree)
-    const written = await read($, notes)
+    const written = await read($, documents)
+    const conf = await read($, config)
     const usage = await $.session.usage()
     const shownTab = await read($, tab)
     const isQuotasOpen = await read($, quotasOpen)
@@ -1375,12 +1436,13 @@ export const register: Register = (on, options) => {
           {title ?? TITLE}
         </Text>
       <Box flexDirection="row" alignItems="center" columnGap={1}>
-        {pill('pick:model', i.model ? prettyModel(i.model) : 'model…', modelColor(i.model), picker === 'model', () => toggle('model'))}
-        {pill('pick:effort', effortLabel(i.effort), effortColor(i.effort), picker === 'effort', () => toggle('effort'))}
         {tabPill('main', 'Main')}
         {tabPill('misc', 'MISC')}
+        {tabPill('config', 'Config')}
         {tabPill('help', 'Help')}
         <Box flexGrow={1} />
+        {pill('pick:model', i.model ? prettyModel(i.model) : 'model…', modelColor(i.model), picker === 'model', () => toggle('model'))}
+        {pill('pick:effort', effortLabel(i.effort), effortColor(i.effort), picker === 'effort', () => toggle('effort'))}
         {quotaPill}
         <Box key="close:box" borderStyle="round" borderColor="#51576d" paddingX={1} flexShrink={0}>
           <Button
@@ -1484,21 +1546,21 @@ export const register: Register = (on, options) => {
           {handoverRows}
         </Box>
 
-        {section('Notes')}
+        {section('Documents')}
         <Box flexDirection="column" marginBottom={1}>
           {written.length === 0 && <Text dimColor>None written yet.</Text>}
-          {noteGroups(written).map(group => (
-            <Box key={`notes:${group.kind}`} flexDirection="column">
+          {docGroups(written).map(group => (
+            <Box key={`docs:${group.kind}`} flexDirection="column">
               <Text dimColor>{group.kind}</Text>
-              {group.notes.map(n =>
+              {group.docs.map(d =>
                 e.surface === 'terminal' ? (
                   <Text wrap="truncate-end">
                     {'  '}
-                    <Link href={`file://${n.path}`} label={n.name} />
+                    <Link href={d.kind === ARTIFACTS ? d.path : `file://${d.path}`} label={d.name} />
                   </Text>
                 ) : (
-                  <Box key={`note:${n.rel}:row`} paddingLeft={2}>
-                    <Button key={`note:${n.rel}`} label={n.name} plain onPress={() => $.process.run(['open', n.path])} />
+                  <Box key={`doc:${d.id}:row`} paddingLeft={2}>
+                    <Button key={`doc:${d.id}`} label={d.name} plain onPress={() => $.process.run(['open', d.path])} />
                   </Box>
                 ),
               )}
@@ -1631,6 +1693,7 @@ export const register: Register = (on, options) => {
     )
 
 
+    const docHome = docContext?.ctx.home ?? ''
     /** An item as the pane draws it, in a fixed column, then greyed what it shows or does. */
     const helpRow = (key: string, example: RenderElement, does: string) => (
       <Box key={`help:${key}`} flexDirection="row" columnGap={1} alignItems="center" marginBottom={1}>
@@ -1775,12 +1838,48 @@ export const register: Register = (on, options) => {
             ),
           )}
           {helpRow(
-            'notes',
+            'docs:artifacts',
             <Box flexDirection="column">
-              <Text dimColor>plans</Text>
-              <Text>  <Text underline>26-10-08-help-tab.md</Text></Text>
+              <Text dimColor>{ARTIFACTS}</Text>
+              <Text>
+                {'  '}
+                <Text underline>Session panel guide</Text>
+              </Text>
             </Box>,
-            'Documents this session wrote under ~/Notes/claude, by kind; press one to open it.',
+            'Documents: what the session wrote that lasts, press one to open it. First the artifacts it published, linked to claude.ai.',
+          )}
+          {helpRow(
+            'docs:handovers',
+            <Box flexDirection="column">
+              <Text dimColor>Agent handovers</Text>
+              <Text>
+                {'  '}
+                <Text underline>21h57-session-panel</Text>
+              </Text>
+            </Box>,
+            `The handovers written for the next session, in the handover plugin's handover_dir: ${tilde(conf.handoverDir ?? HANDOVER_DIR, docHome)}.`,
+          )}
+          {helpRow(
+            'docs:plans',
+            <Box flexDirection="column">
+              <Text dimColor>Plans</Text>
+              <Text>
+                {'  '}
+                <Text underline>quiet-river</Text>
+              </Text>
+            </Box>,
+            `The plans, in Claude Code's plansDirectory setting: ${tilde(conf.plansDirectory ?? PLANS_DIR, docHome)}.`,
+          )}
+          {helpRow(
+            'docs:other',
+            <Box flexDirection="column">
+              <Text dimColor>Reports</Text>
+              <Text>
+                {'  '}
+                <Text underline>26-10-08-help-tab</Text>
+              </Text>
+            </Box>,
+            "Any other Markdown file the agent wrote outside this project's repository, temporary and hidden folders, under its folder's name.",
           )}
         </Box>
 
@@ -1850,10 +1949,66 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
+    /** A value the pane reads: its name and value as in effect, then greyed what it does and its default. */
+    const configRow = (key: string, name: string, value: string | null, fallback: string, does: string) =>
+      helpRow(
+        `config:${key}`,
+        <Box flexDirection="column">
+          <Text bold>{name}</Text>
+          <Text wrap="truncate-end" color={value === null ? undefined : '#8caaee'} dimColor={value === null}>
+            {value ?? `${fallback} (default)`}
+          </Text>
+        </Box>,
+        `${does} Default: ${fallback}.`,
+      )
+    const whereSet = (text: string) => (
+      <Box marginBottom={1}>
+        <Text dimColor italic wrap="wrap">
+          {text}
+        </Text>
+      </Box>
+    )
+    const configBody = (
+      <Box key="tab:config:body" flexDirection="column">
+        {section('session-panel')}
+        {whereSet('A plugin option: pluginConfigs["session-panel@fundrivendev"].options in settings.json.')}
+        {configRow('ttl', 'cacheTtl', conf.cacheTtl === '1h' ? null : conf.cacheTtl, '1h', 'The prompt-cache lifetime the cache countdown starts from, 1h or 5m, until a model switch reports the real one.')}
+
+        {section('Claude Code')}
+        {whereSet('Settings: settings.json, or /config.')}
+        {configRow(
+          'window',
+          'autoCompactWindow',
+          conf.autoCompactWindow === null ? null : cap(conf.autoCompactWindow),
+          '200k',
+          'The auto-compact window, 100k to 1M tokens: the context counter measures against it, less the margin below.',
+        )}
+        {configRow('plans', 'plansDirectory', conf.plansDirectory && tilde(conf.plansDirectory, docHome), PLANS_DIR, 'Where Claude Code writes its plans: listed under Plans in Documents.')}
+
+        {section('Environment')}
+        {whereSet('Shell variables, or env in settings.json; the statusline plugin reads them too.')}
+        {configRow('limit', 'CC_TOKEN_LIMIT', conf.tokenLimit === null ? null : cap(conf.tokenLimit), 'autoCompactWindow', 'Overrides the auto-compact window, where Claude Code gives no trigger of its own.')}
+        {configRow(
+          'reserve',
+          'CC_TOKEN_RESERVE',
+          conf.tokenReserve === null ? null : cap(conf.tokenReserve),
+          '33k',
+          'The auto-compaction margin: how far below the window Claude Code compacts.',
+        )}
+
+        {section('handover plugin')}
+        {whereSet('Its options: pluginConfigs["handover@fundrivendev"].options in settings.json.')}
+        {configRow('handover-dir', 'handover_dir', conf.handoverDir && tilde(conf.handoverDir, docHome), HANDOVER_DIR, 'Where handovers are written: listed under Agent handovers in Documents.')}
+        {configRow('suggest', 'suggest_tokens', ho && ho.suggest !== 150_000 ? kilo(ho.suggest) : null, '150k', 'Context size from which a handover is suggested at the next boundary.')}
+        {configRow('trigger', 'trigger_tokens', ho && ho.trigger !== 185_000 ? kilo(ho.trigger) : null, '185k', 'Context size at which the session winds down and hands over; 0 turns it off.')}
+        {configRow('warn', 'warn_tokens', ho && ho.warn !== 20_000 ? kilo(ho.warn) : null, '20k', 'How far before the trigger the Handover line turns yellow.')}
+      </Box>
+    )
+
     const pane = (
       <Box flexDirection="column" paddingX={1}>
         {header}
-        {shownTab === 'help' ? helpBody : shownTab === 'misc' ? miscBody : mainBody}
+        {shownTab === 'help' ? helpBody : shownTab === 'config' ? configBody : shownTab === 'misc' ? miscBody : mainBody}
       </Box>
     )
     return recolor(pane, scheme)
