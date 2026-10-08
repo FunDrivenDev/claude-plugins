@@ -7,8 +7,8 @@ Session panel tabs and topic title
 ╭──────╮ ╭──────╮ ╭────────╮ ╭──────╮  ╭────────────╮ ╭────────────╮ ╭─────╮
 │ Main │ │ Misc │ │ Config │ │ Help │  │ ○ Opus 5.5 │ │ ○ high │ │  ✕  │
 ╰──────╯ ╰──────╯ ╰────────╯ ╰──────╯  ╰────────────╯ ╰────────────╯ ╰─────╯
-⌛ running 1h12m   ⏳ cache 54m          ◉ Publish the session-panel mod
-context 78.2k/217k (250k − 33k) 36%       ⎇ claude-plugins #7 draft
+⌛ running 1h12m   ⏳ cache 54m   context 78.2k/217k (250k − 33k) 36%   ◉ Publish the session-panel mod
+                                                                     ⎇ claude-plugins #7 draft
                                             ▣ session-panel-fixes
 
 5h 30% →60%       🔄 2h30m   7d 71% out in 1d21h  🔄 2d07h

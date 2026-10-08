@@ -1539,8 +1539,7 @@ export const register: Register = (on, options) => {
               {duration(now - usage.startedAt)}
               {'   '}⏳ <Text dimColor>cache </Text>
               <Text color={cache.color}>{cache.text}</Text>
-            </Text>
-            <Text>
+              {'   '}
               <Text dimColor>context </Text>
               <Text bold color={context.color} inverse={context.isCompacting}>
                 {context.text}
