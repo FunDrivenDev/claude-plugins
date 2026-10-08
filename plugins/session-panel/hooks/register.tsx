@@ -5,7 +5,7 @@ import type { Agent, Config, Doc, Entry, FileChange, Handover, HandoverFile, Inf
 
 import { LOG_FORMAT, parseLog, parseNumstat, parseStatus, treeRows } from './files'
 import { ARTIFACTS, HANDOVER_DIR, PLANS_DIR, artifactOf, type DocContext, docGroups, docOf, docPaths, tilde } from './documents'
-import { PR_COLOR, RANK, findRefs, linearOfResult, prState, refsOfGh, repoOfRemote, titleOfSlug } from './tracker'
+import { PR_COLOR, RANK, findRefs, linearOfResult, prState, refKey, refsOfGh, repoOfRemote, titleOfSlug } from './tracker'
 import type { GithubRef, LinearRef } from './tracker'
 
 const PANE = 'session-panel'
@@ -583,8 +583,10 @@ async function keep($: EngineInterface, slot: 'issue' | 'pr', next: TrackedIssue
   })
 }
 
-/** Reads a GitHub issue or pull request and keeps it in its slot. */
-async function noteGithub($: EngineInterface, ref: GithubRef, rank: number) {
+/** Reads a GitHub issue or pull request and keeps it in its slot; `seen` skips one already read at that rank. */
+async function noteGithub($: EngineInterface, ref: GithubRef, rank: number, seen?: Set<string>) {
+  if (seen?.has(`${refKey(ref)}@${rank}`)) return
+  seen?.add(`${refKey(ref)}@${rank}`)
   const jq = '{title,state,url:.html_url,isPr:(.pull_request!=null),merged:(.pull_request.merged_at!=null),draft:(.draft // false)}'
   const got = await $.process.run(['gh', 'api', `repos/${ref.repo}/issues/${ref.number}`, '--jq', jq])
   let data: { title?: string; state?: string; url?: string; isPr?: boolean; merged?: boolean; draft?: boolean } | null = null
@@ -618,27 +620,43 @@ async function noteLinear($: EngineInterface, ref: LinearRef, title: string | nu
 }
 
 /** Looks for the issues and pull requests a prompt names. */
-async function scanPrompt($: EngineInterface, text: string) {
+async function scanPrompt($: EngineInterface, text: string, seen?: Set<string>) {
   const ids = text.match(LINEAR_ID) ?? []
   if (ids.length) await update($, tracker, t => ({ ...t, mentioned: [...new Set([...t.mentioned, ...ids])] }))
   for (const ref of findRefs(text, await read($, home))) {
-    if (ref.platform === 'github') await noteGithub($, ref, RANK.prompt)
+    if (ref.platform === 'github') await noteGithub($, ref, ref.isBare ? RANK.mentioned : RANK.prompt, seen)
     else await noteLinear($, ref, null, RANK.prompt)
   }
 }
 
 /** Looks for an issue or pull request a `gh` command or a Linear tool worked on. */
-async function scanCall($: EngineInterface, tool: string, input: Record<string, unknown>, ran: ToolCallResult) {
+async function scanCall($: EngineInterface, tool: string, input: Record<string, unknown>, ran: ToolCallResult, seen?: Set<string>) {
   if (ran.deny !== undefined || ran.isError) return
   if (tool === 'Bash' && typeof input.command === 'string') {
     const found = refsOfGh(input.command, ran.text ?? '', await read($, home))
     for (const ref of found?.refs ?? []) {
-      if (ref.platform === 'github') await noteGithub($, ref, found!.rank)
+      if (ref.platform === 'github') await noteGithub($, ref, found!.rank, seen)
       else await noteLinear($, ref, null, found!.rank)
     }
   } else if (/linear/i.test(tool) && ran.text) {
     const issue = linearOfResult(ran.text)
     if (issue) await noteLinear($, issue.ref, issue.title, /create/i.test(tool) ? RANK.created : RANK.worked)
+  }
+}
+
+/**
+ * Finds the session's issue and pull request again from its whole transcript,
+ * its prompts and calls in order: a plugin loaded mid-session missed the earlier ones.
+ */
+async function rescanTracker($: EngineInterface) {
+  const messages = await $.session.messages()
+  await update($, tracker, t => ({ ...t, issue: null, pr: null }))
+  const seen = new Set<string>()
+  for (const m of messages) {
+    const text = m.role === 'user' && !m.toolResults?.length ? promptText(m.text) : null
+    if (text) await scanPrompt($, text, seen)
+    for (const call of m.toolUses)
+      if (call.text !== undefined) await scanCall($, call.tool, call.input, { text: call.text, isError: call.isError } as ToolCallResult, seen)
   }
 }
 
@@ -914,8 +932,8 @@ export const register: Register = (on, options) => {
         .map(m => promptText(m.text))
         .filter((text): text is string => text !== null)
       if (typed.length) await update($, prompts, () => typed.map(text => ({ text, at: null })))
-      for (const text of typed) await scanPrompt($, text)
     }
+    await rescanTracker($)
 
     return next(e)
   })
@@ -1286,7 +1304,7 @@ export const register: Register = (on, options) => {
         {!t.issue && <Text dimColor>no issue</Text>}
         {!t.pr && <Text dimColor>no pull request</Text>}
         {t.issue && (
-          <Text wrap="truncate-end">
+          <Text wrap="truncate-end" hover={issueHref ? { scope: 'corner:issue', underline: true } : undefined}>
             <Text color={ISSUE_ICON[t.issue.platform].color}>{ISSUE_ICON[t.issue.platform].glyph} </Text>
             {issueHref ? (
               <Link href={issueHref} label={t.issue.title ?? t.issue.key} />
@@ -1296,7 +1314,7 @@ export const register: Register = (on, options) => {
           </Text>
         )}
         {t.pr && (
-          <Text wrap="truncate-end">
+          <Text wrap="truncate-end" hover={{ scope: 'corner:pr', underline: true }}>
             <Link href={t.pr.url}>
               <Text color={prColor}>
                 ⎇ {t.pr.repo.split('/').pop()} #{t.pr.number}

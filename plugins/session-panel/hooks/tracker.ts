@@ -3,10 +3,14 @@
  * prompts it was given and the commands it ran.
  */
 
-/** Where a reference was seen: the lower, the more it is the session's own. */
-export const RANK = { prompt: 0, created: 1, worked: 2 } as const
+/**
+ * Where a reference was seen: the lower, the more it is the session's own. A
+ * bare `#N` in a prompt (`#1, #2, #3` numbering a list) counts least.
+ */
+export const RANK = { prompt: 0, created: 1, worked: 2, mentioned: 3 } as const
 
-export type GithubRef = { platform: 'github'; repo: string; number: number; type: 'issue' | 'pull' | null }
+/** `isBare` marks a `#N` written without its repository. */
+export type GithubRef = { platform: 'github'; repo: string; number: number; type: 'issue' | 'pull' | null; isBare?: true }
 export type LinearRef = { platform: 'linear'; id: string; workspace: string | null; slug: string | null }
 export type Ref = GithubRef | LinearRef
 
@@ -36,7 +40,7 @@ export const findRefs = (text: string, home: string | null): Ref[] => {
     const [, owner, name, n] = m
     const homeOwner = home?.split('/')[0]
     const repo = owner && name ? `${owner}/${name}` : name ? (homeOwner ? `${homeOwner}/${name}` : null) : home
-    if (repo) add({ platform: 'github', repo, number: Number(n), type: null })
+    if (repo) add({ platform: 'github', repo, number: Number(n), type: null, ...(name ? {} : { isBare: true as const }) })
   }
   for (const m of text.matchAll(LINEAR_URL)) add({ platform: 'linear', workspace: m[1]!, id: m[2]!, slug: m[3] ?? null })
   return refs

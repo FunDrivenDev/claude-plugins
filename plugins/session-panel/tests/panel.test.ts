@@ -233,6 +233,37 @@ test('the corner shows the prompted pull request in its GitHub colour, linked', 
   await ui.unmount()
 })
 
+test('a bare #N numbering a list yields to the pull request the session works on, read again from the transcript', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.model', () => ({ value: 'opus' }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('command.register', () => ({ value: undefined }))
+  on('session.id', () => ({ value: 's1' }))
+  on('ui.open', () => ({ value: undefined }))
+  on('env.get', () => ({ value: undefined }))
+  on('settings.read', () => ({ value: {} }))
+  on('session.messages', () => ({
+    value: [
+      { role: 'user', text: 'number them #1, #2, #3', toolUses: [] },
+      { role: 'assistant', text: '', toolUses: [{ tool_use_id: 'b1', tool: 'Bash', input: { command: 'gh pr edit 21 --body-file b.md' }, text: '' }] },
+    ],
+  }))
+  on('process.run', ($, e) => {
+    const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    if (e.argv.includes('get-url')) return ok('git@github.com:FunDrivenDev/claude-plugins.git\n')
+    const n = e.argv[0] === 'gh' ? /issues\/(\d+)$/.exec(e.argv[2] ?? '')?.[1] : undefined
+    if (n) return ok(JSON.stringify({ title: `PR ${n}`, state: n === '1' ? 'closed' : 'open', url: `https://github.com/FunDrivenDev/claude-plugins/pull/${n}`, isPr: true, merged: n === '1', draft: n !== '1' }))
+    return ok('')
+  })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  expect(await ui.find({ text: /claude-plugins #21/ })).toBeDefined()
+  expect(await ui.find({ text: /claude-plugins #1$/ })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('a new session selects its model and saved effort, and lists only the commits made since it began', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: { startedAt: 1_700_000_000_000, context: {} as never, rateLimits: [] } }))
