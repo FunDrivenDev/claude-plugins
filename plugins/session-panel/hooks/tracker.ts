@@ -17,6 +17,8 @@ export type Ref = GithubRef | LinearRef
 const GITHUB_URL = /https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/(issues|pull)\/(\d+)/g
 const GITHUB_SHORT = /(?<![\w/#])(?:([\w.-]+)\/)?([A-Za-z][\w.-]*)?#(\d+)\b/g
 const LINEAR_URL = /https:\/\/linear\.app\/([\w-]+)\/issue\/([A-Z][A-Z0-9]+-\d+)(?:\/([\w-]+))?/g
+/** The same, for the first match alone: `exec` on a non-global pattern keeps no state between calls. */
+const LINEAR_URL_FIRST = new RegExp(LINEAR_URL.source)
 
 /** `owner/repo` from a remote URL, ssh or https. */
 export const repoOfRemote = (remote: string): string | null =>
@@ -31,9 +33,8 @@ export const findRefs = (text: string, home: string | null): Ref[] => {
   const add = (ref: Ref) => {
     if (!refs.some(r => refKey(r) === refKey(ref))) refs.push(ref)
   }
-  const bare = text.replace(GITHUB_URL, m => {
-    const [, repo, kind, n] = new RegExp(GITHUB_URL.source).exec(m)!
-    add({ platform: 'github', repo: repo!, number: Number(n), type: kind === 'pull' ? 'pull' : 'issue' })
+  const bare = text.replace(GITHUB_URL, (_, repo: string, kind: string, n: string) => {
+    add({ platform: 'github', repo, number: Number(n), type: kind === 'pull' ? 'pull' : 'issue' })
     return ' '
   })
   for (const m of bare.matchAll(GITHUB_SHORT)) {
@@ -75,7 +76,7 @@ export const refsOfGh = (
 
 /** A Linear issue an MCP result describes: its identifier, title and URL. */
 export const linearOfResult = (text: string): { ref: LinearRef; title: string | null } | null => {
-  const url = new RegExp(LINEAR_URL.source).exec(text)
+  const url = LINEAR_URL_FIRST.exec(text)
   if (!url) return null
   let title: string | null = null
   try {

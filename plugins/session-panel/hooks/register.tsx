@@ -381,10 +381,24 @@ export const promptText = (raw: string): string | null => {
   return text || null
 }
 
-/** The last whole sentence of a text being streamed, once there is one. */
+const isStop = (c: string | undefined) => c === '.' || c === '!' || c === '?'
+
+/**
+ * The last whole sentence of a text being streamed, once there is one: the
+ * last run of `.!?` followed by a space or the end, with the words before it
+ * back to the previous `.!?`. Read from the end: it is asked again for each
+ * streamed piece, and a scan of the whole text each time grows quadratic.
+ */
 export const lastSentence = (text: string): string | null => {
-  const sentences = text.replace(/\s+/g, ' ').match(/[^.!?]+[.!?]+(?=\s|$)/g)
-  return sentences?.length ? sentences[sentences.length - 1]!.trim() : null
+  for (let end = text.length; end > 0; end--) {
+    if (!isStop(text[end - 1]) || (end < text.length && !/\s/.test(text[end]!))) continue
+    let stop = end - 1
+    while (stop > 0 && isStop(text[stop - 1])) stop--
+    let start = stop
+    while (start > 0 && !isStop(text[start - 1])) start--
+    return start < stop ? text.slice(start, end).replace(/\s+/g, ' ').trim() : null
+  }
+  return null
 }
 
 /** A step is current while its answer streams or a call it made has not returned. */
@@ -535,32 +549,42 @@ async function trackRepo($: EngineInterface, dir: string) {
   await update($, workedRepos, list => (list.some(r => r.common === common) ? list : [...list, { common, slug, name, worktree }]))
 }
 
-/** Reads each tracked repository's changes against HEAD, untracked files included. */
-async function refreshFiles($: EngineInterface) {
-  const next: RepoChanges[] = []
-  const since = Math.floor((await $.session.usage()).startedAt / 1000)
-  for (const root of await read($, roots)) {
-    const status = await $.process.run(['git', '-C', root, 'status', '--porcelain=v1', '-z', '--untracked-files=all'])
-    if (status.exitCode !== 0) continue
-    const kinds = parseStatus(status.stdout)
-    const counts = parseNumstat((await $.process.run(['git', '-C', root, 'diff', '--numstat', 'HEAD'])).stdout)
-    let untracked = 0
-    const files: FileChange[] = []
-    for (const [path, kind] of kinds) {
+/** One repository's changes against HEAD, untracked files included; null when git cannot read it or it has none. */
+async function changesOf($: EngineInterface, root: string, since: number): Promise<RepoChanges | null> {
+  const git = (...args: string[]) => $.process.run(['git', '-C', root, ...args])
+  const status = await git('status', '--porcelain=v1', '-z', '--untracked-files=all')
+  if (status.exitCode !== 0) return null
+  const kinds = parseStatus(status.stdout)
+  // Independent reads, run side by side rather than one after another.
+  const [numstat, log, ahead, current] = await Promise.all([
+    git('diff', '--numstat', 'HEAD'),
+    git('log', `-n${COMMITS_SHOWN}`, `--since=@${since}`, `--format=${LOG_FORMAT}`),
+    git('rev-list', '@{u}..HEAD'),
+    git('branch', '--show-current'),
+  ])
+  const counts = parseNumstat(numstat.stdout)
+  let untracked = 0
+  const files = await Promise.all(
+    [...kinds].map(async ([path, kind]): Promise<FileChange> => {
       let count = counts.get(path)
       if (!count && kind === 'added' && untracked++ < UNTRACKED_COUNTED) {
-        const diff = await $.process.run(['git', '-C', root, 'diff', '--no-index', '--numstat', '/dev/null', path])
+        const diff = await git('diff', '--no-index', '--numstat', '/dev/null', path)
         count = [...parseNumstat(diff.stdout).values()][0]
       }
-      files.push({ path, status: kind, added: count?.added ?? 0, removed: count?.removed ?? 0 })
-    }
-    const log = await $.process.run(['git', '-C', root, 'log', `-n${COMMITS_SHOWN}`, `--since=@${since}`, `--format=${LOG_FORMAT}`])
-    const ahead = await $.process.run(['git', '-C', root, 'rev-list', '@{u}..HEAD'])
-    const unpushed = ahead.exitCode === 0 ? new Set(ahead.stdout.split('\n').filter(Boolean)) : ('all' as const)
-    const commits = log.exitCode === 0 ? parseLog(log.stdout, unpushed) : []
-    const branch = (await $.process.run(['git', '-C', root, 'branch', '--show-current'])).stdout.trim() || 'detached'
-    if (files.length || commits.length) next.push({ root, branch, files, commits })
-  }
+      return { path, status: kind, added: count?.added ?? 0, removed: count?.removed ?? 0 }
+    }),
+  )
+  const unpushed = ahead.exitCode === 0 ? new Set(ahead.stdout.split('\n').filter(Boolean)) : ('all' as const)
+  const commits = log.exitCode === 0 ? parseLog(log.stdout, unpushed) : []
+  const branch = current.stdout.trim() || 'detached'
+  return files.length || commits.length ? { root, branch, files, commits } : null
+}
+
+/** Reads each tracked repository's changes, the repositories side by side, kept in their order. */
+async function refreshFiles($: EngineInterface) {
+  const since = Math.floor((await $.session.usage()).startedAt / 1000)
+  const found = await Promise.all((await read($, roots)).map(root => changesOf($, root, since)))
+  const next = found.filter((repo): repo is RepoChanges => repo !== null)
   await update($, changes, () => next)
 }
 
@@ -1149,7 +1173,7 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Link } = $.ui.resolve(e)
-    const [now, i, all, done, open, isStepsOpen, picker, repos, stored, shown, t, ho] = await Promise.all([
+    const [now, i, all, done, open, isStepsOpen, picker, repos, stored, shown, t, ho, repoList, written, conf, usage, shownTab, isQuotasOpen, title] = await Promise.all([
       $.clock.now(),
       read($, info),
       read($, agents),
@@ -1162,16 +1186,16 @@ export const register: Register = (on, options) => {
       read($, view),
       read($, tracker),
       read($, handover),
+      read($, workedRepos),
+      read($, documents),
+      read($, config),
+      $.session.usage(),
+      read($, tab),
+      read($, quotasOpen),
+      read($, topic),
     ])
     const typed = stored.map(promptOf)
     const lastPrompt = typed.at(-1)
-    const repoList = await read($, workedRepos)
-    const written = await read($, documents)
-    const conf = await read($, config)
-    const usage = await $.session.usage()
-    const shownTab = await read($, tab)
-    const isQuotasOpen = await read($, quotasOpen)
-    const title = await read($, topic)
     const quotas = usage.rateLimits
       .map(l => quotaOf(l.kind, l.percentUsed, l.resetsAt, now))
       .filter((q): q is Quota => q !== null)
@@ -1192,7 +1216,7 @@ export const register: Register = (on, options) => {
     const finished = all.filter(a => a.endedAt !== null)
     /** What a sub-agent is doing now: its last call, else its last thought or words. */
     const currentTask = (a: Agent) => {
-      const last = [...a.history].reverse().find(entry => entry.kind !== 'result')
+      const last = a.history.findLast(entry => entry.kind !== 'result')
       return last ? last.text : 'starting…'
     }
     const kindOf = (a: Agent) => (a.isTeammate ? 'teammate' : a.isBackground ? 'background' : 'sub-agent')
@@ -1339,7 +1363,7 @@ export const register: Register = (on, options) => {
     const prs = t.prs ?? []
     const sameRepo = (slug: string | null, pr: TrackedPr) => slug !== null && pr.repo.toLowerCase() === slug.toLowerCase()
     /** One block per repository worked on, then one per pull request worked on in a repository not checked out here. */
-    const blocks: RepoBlock[] = [
+    const repoBlocks = (): RepoBlock[] => [
       ...repoList.map(r => ({ key: r.common, name: r.name, pr: prs.find(p => sameRepo(r.slug, p)) ?? null, worktree: r.worktree, isLocal: true })),
       ...prs
         .filter(p => !repoList.some(r => sameRepo(r.slug, p)))
@@ -1372,7 +1396,7 @@ export const register: Register = (on, options) => {
         </Box>
       )
     }
-    const issueSection = (
+    const issueSection = () => (
       <Box flexDirection="row" marginBottom={1}>
         {section('Issue')}
         <Text>  </Text>
@@ -1386,7 +1410,7 @@ export const register: Register = (on, options) => {
         )}
       </Box>
     )
-    const gitSection =
+    const gitSection = (blocks: RepoBlock[]) =>
       blocks.length === 0 ? (
         <Box flexDirection="row" marginBottom={1}>
           {section('Git')}
@@ -1592,7 +1616,8 @@ export const register: Register = (on, options) => {
       )
     }
 
-    const mainBody = (
+    /** Each tab's body, drawn only for the tab shown: the ticker redraws the pane every second. */
+    const mainBody = () => (
       <Box key="tab:main:body" flexDirection="column">
         <Box marginBottom={1}>
           <Text wrap="truncate-end">
@@ -1608,8 +1633,8 @@ export const register: Register = (on, options) => {
           </Text>
         </Box>
 
-        {issueSection}
-        {gitSection}
+        {issueSection()}
+        {gitSection(repoBlocks())}
 
         {section('Documents')}
         <Box flexDirection="column" marginBottom={1}>
@@ -1654,7 +1679,7 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
-    const miscBody = (
+    const miscBody = () => (
       <Box key="tab:misc:body" flexDirection="column">
         <Box flexDirection="row">
           {section('Steps ')}
@@ -1798,7 +1823,7 @@ export const register: Register = (on, options) => {
       </Box>
     )
     const sample: Quota = { label: '5h', used: 62, elapsed: 0.5, verdict: { text: '→124%', tone: 'out' }, resetsIn: 9_000_000 }
-    const helpBody = (
+    const helpBody = () => (
       <Box key="tab:help:body" flexDirection="column">
         {section('Top lines')}
         <Box flexDirection="column">
@@ -2088,7 +2113,7 @@ export const register: Register = (on, options) => {
         </Text>
       </Box>
     )
-    const configBody = (
+    const configBody = () => (
       <Box key="tab:config:body" flexDirection="column">
         {section('session-panel')}
         {whereSet('A plugin option: pluginConfigs["session-panel@fundrivendev"].options in settings.json.')}
@@ -2128,7 +2153,7 @@ export const register: Register = (on, options) => {
     const pane = (
       <Box flexDirection="column" paddingX={1}>
         {header}
-        {shownTab === 'help' ? helpBody : shownTab === 'config' ? configBody : shownTab === 'misc' ? miscBody : mainBody}
+        {shownTab === 'help' ? helpBody() : shownTab === 'config' ? configBody() : shownTab === 'misc' ? miscBody() : mainBody()}
       </Box>
     )
     return recolor(pane, scheme)
