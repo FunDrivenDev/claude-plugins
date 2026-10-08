@@ -106,6 +106,8 @@ export type Handover = {
   trigger: number
   warn: number
   isWriting: boolean
+  /** The wind-down has started (the trigger, a request or /handover:trigger): no new task, those in progress finish. */
+  isWindingDown: boolean
   error: string | null
   /** The message the closing reply gives the next session to start on, once the handover is written. */
   resume: string | null

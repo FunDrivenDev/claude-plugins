@@ -416,6 +416,45 @@ const NEXT_ACTIONS = [
   { key: 'handover:paste', emoji: '📋', label: 'Clear and paste', color: '#8caaee', isSent: false },
 ] as const
 
+export type HandoverPhase = 'winding' | 'writing' | 'ready'
+
+/** Where a handover under way stands: winding down, being written, or written; null before it starts or once it failed. */
+export const handoverPhase = (h: Handover, tokens: number): HandoverPhase | null => {
+  if (h.error) return null
+  if (h.written) return 'ready'
+  if (h.isWriting) return 'writing'
+  if (h.isWindingDown || (h.trigger > 0 && tokens >= h.trigger)) return 'winding'
+  return null
+}
+
+/** Each phase of a handover under way, animated once a second by the pane's ticker. */
+const PHASES: Record<HandoverPhase, { frames: readonly string[]; label: string; color: string; does: string }> = {
+  winding: {
+    frames: ['◐', '◓', '◑', '◒'],
+    label: 'Winding down',
+    color: '#e5c890',
+    does: 'The handover has triggered: the tasks in progress and their sub-agents finish, nothing new starts.',
+  },
+  writing: {
+    frames: ['✎   ', '✎·  ', '✎·· ', '✎···'],
+    label: 'Writing the handover',
+    color: '#ef9f76',
+    does: 'A separate model writes the handover from the transcript; the session then writes its closing reply.',
+  },
+  ready: {
+    frames: ['●', '◉'],
+    label: 'Ready for the next session',
+    color: '#a6d189',
+    does: 'The handover is written and the session stopped: pick a next action.',
+  },
+}
+
+/** A phase as drawn at `now`: its frame for this second, then its label. */
+export const phaseLine = (phase: HandoverPhase, now: number): string => {
+  const p = PHASES[phase]
+  return `${p.frames[Math.floor(now / 1000) % p.frames.length]} ${p.label}`
+}
+
 /** Starts the handover's wind-down at once, as `/handover:trigger` does. */
 const TRIGGER_NOW = { key: 'handover:trigger', emoji: '⚡', label: 'Trigger now', color: '#e5c890' } as const
 
@@ -671,6 +710,7 @@ async function readHandover($: EngineInterface) {
     trigger: num('trigger_tokens', 185_000),
     warn: num('warn_tokens', 20_000),
     isWriting: typeof writer?.since === 'number' && now - writer.since < 660,
+    isWindingDown: Boolean(st.wind_down),
     error: typeof st.error === 'string' ? st.error : null,
     resume: said ? resumeMessage(said) : null,
   }
@@ -1181,6 +1221,7 @@ export const register: Register = (on, options) => {
       if (!ho) return [<Text dimColor>Not read yet.</Text>]
       if (!ho.isOn) return [<Text dimColor>The handover plugin is off in this session.</Text>]
       const status = handoverStatus(ho, usage.context.tokens ?? 0)
+      const phase = handoverPhase(ho, usage.context.tokens ?? 0)
       const file = (label: string, f: HandoverFile | null) => {
         const meta = f && fileMeta(f.lines, f.modifiedAt)
         return (
@@ -1201,7 +1242,7 @@ export const register: Register = (on, options) => {
         </Box>
       )
       return [
-        <Text color={status.color}>✋ {status.text}</Text>,
+        phase ? <Text color={PHASES[phase].color}>{phaseLine(phase, now)}</Text> : <Text color={status.color}>✋ {status.text}</Text>,
         file('loaded', ho.loaded),
         ...(ho.written ? [file('written', ho.written)] : []),
         ...(isStopped
@@ -1261,6 +1302,19 @@ export const register: Register = (on, options) => {
             </Box>
           ))}
         </Box>,
+        <Box key="handover:phases" flexDirection="column" marginTop={1}>
+          <Text dimColor>Handover states</Text>
+          {(Object.keys(PHASES) as HandoverPhase[]).map(key => (
+            <Box key={`phases:${key}`} flexDirection="row" columnGap={1}>
+              <Box flexShrink={0} width={30}>
+                <Text color={PHASES[key].color}>{phaseLine(key, now)}</Text>
+              </Box>
+              <Text dimColor wrap="wrap">
+                {PHASES[key].does}
+              </Text>
+            </Box>
+          ))}
+        </Box>,
       ]
     })()
 
@@ -1280,17 +1334,17 @@ export const register: Register = (on, options) => {
     )
 
     const toggleQuotas = () => update($, quotasOpen, cur => !cur)
-    /** Each window's use in one pill, in its verdict's colour; a press unfolds the bars beneath the top lines. */
+    /** Each window's use in one pill, in its verdict's colour; a press anywhere but the coloured dots unfolds the bars beneath the top lines. */
     const quotaPill = quotas.length > 0 && (
       <Box key="quotas:box" borderStyle="round" borderColor="#51576d" paddingX={1} flexShrink={0}>
         {quotas.map((q, k) => (
           <Box key={`quotas:${q.label}:row`} flexDirection="row">
-            {k > 0 && <Text dimColor> │ </Text>}
+            {k > 0 && <Button key={`quotas:${q.label}:divider`} label=" │ " plain dimColor onPress={toggleQuotas} />}
             <Text color={TONE[q.verdict?.tone ?? 'ok']}>● </Text>
             <Button key={`quotas:${q.label}`} label={`${q.label} ${q.used}%`} plain hover={{ color: TONE[q.verdict?.tone ?? 'ok'] }} onPress={toggleQuotas} />
           </Box>
         ))}
-        <Text dimColor> {isQuotasOpen ? '▴' : '▾'}</Text>
+        <Button key="quotas:fold" label={isQuotasOpen ? ' ▴' : ' ▾'} plain dimColor onPress={toggleQuotas} />
       </Box>
     )
 

@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { ago, barRuns, cacheColor, cleanTitle, contextOf, describeCall, duration, effortColor, fileMeta, handoverStatus, handoverTitle, headline, kfmt, lastSentence, minutesLeft, modelColor, modelId, prettyModel, promptText, quotaOf, recolor, resumeMessage, span } from '../hooks/register'
+import { ago, barRuns, cacheColor, cleanTitle, handoverPhase, phaseLine, contextOf, describeCall, duration, effortColor, fileMeta, handoverStatus, handoverTitle, headline, kfmt, lastSentence, minutesLeft, modelColor, modelId, prettyModel, promptText, quotaOf, recolor, resumeMessage, span } from '../hooks/register'
 
 const PANE = {
   component: 'Pane',
@@ -40,9 +40,15 @@ describe('helpers', () => {
     expect(fileMeta(142, new Date(2026, 9, 7, 9, 32).getTime())).toBe('142 lines · 2026-10-07 09:32')
     expect(fileMeta(1, null)).toBe('1 line')
     expect(fileMeta(null, null)).toBeNull()
-    const ho = { isOn: true, loaded: null, written: null, suggest: 150_000, trigger: 185_000, warn: 20_000, isWriting: false, error: null, resume: null }
+    const ho = { isOn: true, loaded: null, written: null, suggest: 150_000, trigger: 185_000, warn: 20_000, isWriting: false, isWindingDown: false, error: null, resume: null }
     expect(handoverStatus(ho, 92_000).text).toBe('triggers at 185k · now 92k')
     expect(handoverStatus(ho, 170_000).color).toBe('#e5c890')
+    expect(handoverPhase(ho, 92_000)).toBeNull()
+    expect(handoverPhase({ ...ho, isWindingDown: true }, 92_000)).toBe('winding')
+    expect(handoverPhase(ho, 190_000)).toBe('winding')
+    expect(handoverPhase({ ...ho, isWriting: true }, 190_000)).toBe('writing')
+    expect(phaseLine('winding', 1_000)).toBe('◓ Winding down')
+    expect(phaseLine('winding', 2_000)).toBe('◑ Winding down')
     expect(cleanTitle('Title: "Session panel tabs."\nmore')).toBe('Session panel tabs')
     expect(cleanTitle('  \n')).toBeNull()
     expect(promptText('<command-name>/login</command-name>')).toBeNull()
@@ -476,6 +482,9 @@ test('the handover section lists its pills, and Trigger now starts the wind-down
 
   const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
   expect(await ui.find({ text: /^Call-to-action pills$/ })).toBeDefined()
+  expect(await ui.find({ text: /^Handover states$/ })).toBeDefined()
+  for (const label of ['Winding down', 'Writing the handover', 'Ready for the next session'])
+    expect(await ui.find({ text: new RegExp(`${label}$`) })).toBeDefined()
   for (const label of ['Run right away', 'Clear and paste', 'Clear and start the next session', 'Trigger now'])
     expect(await ui.find({ text: new RegExp(`^${label}$`) })).toBeDefined()
   await ui.press({ key: 'handover:trigger' })
