@@ -548,3 +548,25 @@ test('a written handover starts the next session with its resume message in one 
   expect(ran.filter(c => c === '/clear')).toHaveLength(1)
   await ui.unmount()
 })
+
+test('a session without a title of its own reminds the agent once, and no more once titled', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  let sid = 's1'
+  on('session.id', () => ({ value: sid }) as never)
+  on('command.list', () => ({ value: [] }) as never)
+  const contexts: (readonly string[] | undefined)[] = []
+  on('prompt.submit', ($, e) => {
+    contexts.push(e.context)
+    return { text: e.text }
+  })
+  const reminded = () => contexts.map(c => (c ?? []).some(line => line.includes('session_title')))
+
+  await $.prompt.submit(typed('Fix the panel'))
+  await $.prompt.submit(typed('and the tests'))
+  expect(reminded()).toEqual([true, false])
+
+  sid = 's2'
+  await $.tool.call({ tool: 'mcp__session-panel__session_title', title: 'Panel title fix' } as never)
+  await $.prompt.submit(typed('carry on'))
+  expect(reminded()).toEqual([true, false, false])
+})

@@ -52,6 +52,8 @@ const quotasOpen = atom({ plugin: 'session-panel', key: 'quotasOpen' } as const,
 const tab = atom({ plugin: 'session-panel', key: 'tab' } as const, 'main' as Tab)
 /** The session's overall topic, as the main agent names it with the session_title tool. */
 const topic = atom({ plugin: 'session-panel', key: 'topic' } as const, null as string | null)
+/** The session whose title is set, and the one reminded to set it: a title carried over through /clear or a reload belongs to another. */
+const titled = atom({ plugin: 'session-panel', key: 'titled' } as const, { set: null, reminded: null } as { set: string | null; reminded: string | null })
 const WRITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
 let notesRoot: NotesRoot | null = null
 /** Main-loop calls that returned, possibly before the step that made them ended. */
@@ -752,15 +754,12 @@ async function startNext($: EngineInterface, resume: string | null, surface: UiC
   }
 }
 
-/** The session whose title is set, by the agent or from the handover it loaded: one handover title per session. */
-let titledIn: string | null = null
-
 /** A session started from a handover takes the handover's title at once, until the agent names it. */
 async function titleFromHandover($: EngineInterface) {
   const sid = await $.session.id()
-  const title = titledIn === sid ? null : cleanTitle((await read($, handover))?.loaded?.title ?? '')
+  const title = (await read($, titled)).set === sid ? null : cleanTitle((await read($, handover))?.loaded?.title ?? '')
   if (!title) return
-  titledIn = sid
+  await update($, titled, t => ({ ...t, set: sid }))
   await update($, topic, () => title)
   const canRename = (await $.command.list()).some(c => c.name === 'rename')
   if (canRename) void $.command.run({ command: 'rename', args: title }).catch(() => undefined)
@@ -770,6 +769,9 @@ const TITLE_TOOL = 'session_title'
 const TITLE_TOOL_ID = `mcp__session-panel__${TITLE_TOOL}`
 const TITLE_TOOL_DESCRIPTION = `Sets this session's title: its overall topic in 3 to 7 words, in the language of the person's prompts. It heads the session panel and names the session (/resume, the terminal tab), so the person can tell sessions apart at a glance.
 Call it once the first task is clear, then only when what the session is about changes significantly (a new task, not a new step of the same one). Never call it every turn.`
+
+/** Added once to a session's first typed prompt while it has no title of its own: the name the terminal tab shows may be the previous session's. */
+const TITLE_REMINDER = `This session has no title of its own yet (the terminal tab may still show the previous session's). Call ${TITLE_TOOL} once the task is clear.`
 
 /** A title as given: its first line, without a label, quotes or a final period; null when empty. */
 export const cleanTitle = (text: string): string | null => {
@@ -859,6 +861,12 @@ export const register: Register = (on, options) => {
     if (text) {
       await update($, prompts, list => [...list, text])
       await scanPrompt($, text)
+      const sid = await $.session.id()
+      const t = await read($, titled)
+      if (t.set !== sid && t.reminded !== sid) {
+        await update($, titled, cur => ({ ...cur, reminded: sid }))
+        return next({ ...e, context: [...(e.context ?? []), TITLE_REMINDER] })
+      }
     }
     return next(e)
   })
@@ -994,7 +1002,8 @@ export const register: Register = (on, options) => {
     const title = cleanTitle(String((e as unknown as Record<string, unknown>).title ?? ''))
     if (!title) return { deny: 'An empty title: give the overall topic in 3 to 7 words.' }
     await update($, topic, () => title)
-    titledIn = await $.session.id()
+    const sid = await $.session.id()
+    await update($, titled, t => ({ ...t, set: sid }))
     renaming = title
     const said = `Session title set: ${title}`
     return { result: said as never, text: said }

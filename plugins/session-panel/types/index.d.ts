@@ -151,6 +151,8 @@ declare module 'claude-code' {
       tab: Tab
       quotasOpen: boolean
       topic: string | null
+      /** The session whose title is set (by the agent or from its handover), and the one already reminded to set it. */
+      titled: { set: string | null; reminded: string | null }
     }
   }
 }
