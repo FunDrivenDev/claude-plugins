@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { ago, barRuns, cacheColor, cleanTitle, handoverPhase, phaseLine, contextOf, describeCall, duration, effortColor, fileMeta, handoverStatus, handoverTitle, headline, kfmt, lastSentence, minutesLeft, modelColor, modelId, prettyModel, previousPrompts, promptText, quotaOf, recolor, resumeMessage, span } from '../hooks/register'
+import { ago, barRuns, cacheColor, cleanTitle, clockTime, handoverPhase, phaseLine, contextOf, describeCall, duration, effortColor, fileMeta, handoverStatus, handoverTitle, headline, kfmt, lastSentence, minutesLeft, modelColor, modelId, prettyModel, previousPrompts, promptText, quotaOf, recolor, resumeMessage, span } from '../hooks/register'
 
 const PANE = {
   component: 'Pane',
@@ -42,6 +42,7 @@ describe('helpers', () => {
     expect(previousPrompts(11)).toBe('11 previous prompts')
     expect(previousPrompts(1)).toBe('1 previous prompt')
     expect(previousPrompts(0)).toBe('no previous prompt')
+    expect(clockTime(new Date(2026, 9, 8, 9, 5).getTime())).toBe('09:05')
     expect(fileMeta(null, null)).toBeNull()
     const ho = { isOn: true, loaded: null, written: null, suggest: 150_000, trigger: 185_000, warn: 20_000, isWriting: false, isWindingDown: false, error: null, resume: null }
     expect(handoverStatus(ho, 92_000).text).toBe('triggers at 185k · now 92k')
@@ -103,6 +104,7 @@ test('the pane shows the first prompt and moves a finished sub-agent to the done
   await ui.press({ key: 'prompts' })
   expect(await ui.find({ text: /Build a calm side panel/ })).toBeDefined()
   expect(await ui.find({ text: /and another prompt/ })).toBeDefined()
+  expect(await ui.find({ text: new RegExp(`^#2 · ${clockTime(1_000)}$`) })).toBeDefined()
   await ui.press({ key: 'prompts:back' })
   expect((await ui.find({ key: 'prompts' }))?.props.label).toBe('(1 previous prompt)')
   await ui.unmount()

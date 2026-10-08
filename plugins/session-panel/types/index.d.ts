@@ -114,6 +114,9 @@ export type Handover = {
 }
 
 /** The pane's tabs: the session at a glance, the rest (steps, sub-agents, git), the values it reads from configuration, and what each item means. */
+/** A typed prompt and when it was submitted (epoch ms); `at` null for one read back from the transcript. */
+export type Prompt = { text: string; at: number | null }
+
 export type Tab = 'main' | 'misc' | 'config' | 'help'
 
 /** Something tangible the session wrote: an artifact it published, or a Markdown file outside the project. */
@@ -147,7 +150,7 @@ declare module 'claude-code' {
       expanded: string | null
       stepsOpen: boolean
       picking: Picker
-      prompts: string[]
+      prompts: (Prompt | string)[]
       view: 'overview' | 'prompts'
       roots: string[]
       changes: RepoChanges[]

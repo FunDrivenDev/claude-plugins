@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement, ToolCallInput, ToolCallResult, UiCopyArgs } from 'claude-code'
 
-import type { Agent, Config, Doc, Entry, FileChange, Handover, HandoverFile, Info, Picker, Quota, RepoChanges, Step, Tab, TrackedIssue, TrackedPr, Ttl } from '../types'
+import type { Agent, Config, Doc, Entry, FileChange, Handover, HandoverFile, Info, Picker, Prompt, Quota, RepoChanges, Step, Tab, TrackedIssue, TrackedPr, Ttl } from '../types'
 
 import { LOG_FORMAT, parseLog, parseNumstat, parseStatus, treeRows } from './files'
 import { ARTIFACTS, HANDOVER_DIR, PLANS_DIR, artifactOf, type DocContext, docGroups, docOf, docPaths, tilde } from './documents'
@@ -35,7 +35,7 @@ const changes = atom({ plugin: 'session-panel', key: 'changes' } as const, [] as
 const UNTRACKED_COUNTED = 30
 const COMMITS_SHOWN = 8
 const EDITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Bash'])
-const prompts = atom({ plugin: 'session-panel', key: 'prompts' } as const, [] as string[])
+const prompts = atom({ plugin: 'session-panel', key: 'prompts' } as const, [] as (Prompt | string)[])
 const view = atom({ plugin: 'session-panel', key: 'view' } as const, 'overview' as 'overview' | 'prompts')
 /** The linked worktree the session last edited in, by its folder's name; null in a main checkout. */
 const worktree = atom({ plugin: 'session-panel', key: 'worktree' } as const, null as string | null)
@@ -396,6 +396,15 @@ export const handoverTitle = (text: string): string | null => {
 /** The hint beside Last prompt, `11 previous prompts`: how many came before it. */
 export const previousPrompts = (n: number): string =>
   n <= 0 ? 'no previous prompt' : `${n} previous ${n === 1 ? 'prompt' : 'prompts'}`
+
+/** When a prompt was submitted, `09:05` in local 24-hour time. */
+export const clockTime = (at: number): string => {
+  const d = new Date(at)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+/** A stored prompt; one kept by an earlier version is bare text, without its time. */
+const promptOf = (p: Prompt | string): Prompt => (typeof p === 'string' ? { text: p, at: null } : p)
 
 /** A handover file's length and last change, `142 lines · 2026-10-07 09:32` in local time; null when neither is known. */
 export const fileMeta = (lines: number | null, modifiedAt: number | null): string | null => {
@@ -904,7 +913,7 @@ export const register: Register = (on, options) => {
         .filter(m => m.role === 'user' && !m.toolResults?.length)
         .map(m => promptText(m.text))
         .filter((text): text is string => text !== null)
-      if (typed.length) await update($, prompts, () => typed)
+      if (typed.length) await update($, prompts, () => typed.map(text => ({ text, at: null })))
       for (const text of typed) await scanPrompt($, text)
     }
 
@@ -923,7 +932,8 @@ export const register: Register = (on, options) => {
   on('prompt.submit', async ($, e, next) => {
     const text = e.origin.kind === 'composer' ? promptText(e.text) : null
     if (text) {
-      await update($, prompts, list => [...list, text])
+      const at = await $.clock.now()
+      await update($, prompts, list => [...list, { text, at }])
       await scanPrompt($, text)
       const sid = await $.session.id()
       const t = await read($, titled)
@@ -1093,7 +1103,7 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Link } = $.ui.resolve(e)
-    const [now, i, all, done, open, isStepsOpen, picker, repos, typed, shown, t, ho] = await Promise.all([
+    const [now, i, all, done, open, isStepsOpen, picker, repos, stored, shown, t, ho] = await Promise.all([
       $.clock.now(),
       read($, info),
       read($, agents),
@@ -1107,6 +1117,8 @@ export const register: Register = (on, options) => {
       read($, tracker),
       read($, handover),
     ])
+    const typed = stored.map(promptOf)
+    const lastPrompt = typed.at(-1)
     const tree = await read($, worktree)
     const written = await read($, documents)
     const conf = await read($, config)
@@ -1461,10 +1473,13 @@ export const register: Register = (on, options) => {
           {header}
           <Button key="prompts:back" label="← Overview" plain onPress={() => update($, view, () => 'overview')} />
           {section(`Prompts · ${typed.length}`)}
-          {typed.map((text, index) => (
+          {typed.map((p, index) => (
             <Box key={`prompt:${index}`} flexDirection="column" marginBottom={1}>
-              <Text dimColor>#{index + 1}</Text>
-              <Text wrap="wrap">{text}</Text>
+              <Text dimColor>
+                #{index + 1}
+                {p.at !== null ? ` · ${clockTime(p.at)}` : ''}
+              </Text>
+              <Text wrap="wrap">{p.text}</Text>
             </Box>
           ))}
         </Box>
@@ -1542,6 +1557,7 @@ export const register: Register = (on, options) => {
 
         <Box flexDirection="row">
           {section('Last prompt ')}
+          {lastPrompt?.at != null && <Text dimColor>{clockTime(lastPrompt.at)} </Text>}
           <Button
             key="prompts"
             label={`(${previousPrompts(typed.length - 1)})`}
@@ -1550,7 +1566,7 @@ export const register: Register = (on, options) => {
             onPress={() => update($, view, () => 'prompts')}
           />
         </Box>
-        <Text wrap="wrap">{typed.length ? oneLine(typed[typed.length - 1]!, 360) : '—'}</Text>
+        <Text wrap="wrap">{lastPrompt ? oneLine(lastPrompt.text, 360) : '—'}</Text>
       </Box>
     )
 
@@ -1861,9 +1877,9 @@ export const register: Register = (on, options) => {
               <Text bold color="claude">
                 Last prompt{' '}
               </Text>
-              <Text dimColor>(11 previous prompts)</Text>
+              <Text dimColor>14:32 (11 previous prompts)</Text>
             </Text>,
-            'Your last typed prompt; press the count beside it to read every prompt of the session.',
+            'Your last typed prompt and when you sent it; press the count beside it to read every prompt of the session, each numbered with its time.',
           )}
         </Box>
 
