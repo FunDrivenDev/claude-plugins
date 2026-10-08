@@ -154,10 +154,7 @@ async function readScheme($: EngineInterface): Promise<Scheme> {
   return /does not exist/.test(r.stderr) ? 'light' : 'dark'
 }
 
-const effortLabel = (level: string | null): string => {
-  const rank = EFFORTS.findIndex(e => e.level === level)
-  return rank < 0 ? (level ?? 'default') : `${level} ${rank + 1}/${EFFORTS.length}`
-}
+const effortLabel = (level: string | null): string => level ?? 'default'
 
 /** An alias `/model` takes (`opus`, `sonnet[1m]`) → the id the selector offers; an id as given. */
 export const modelId = (model: string): string => {
@@ -476,7 +473,7 @@ export const phaseLine = (phase: HandoverPhase, now: number): string => {
 const HELP_EXAMPLE = 34
 
 /** Starts the handover's wind-down at once, as `/handover:trigger` does. */
-const TRIGGER_NOW = { key: 'handover:trigger', emoji: '✋', label: 'Hand over now', color: '#e5c890' } as const
+const TRIGGER_NOW = { key: 'handover:trigger', emoji: '⚡', label: 'Hand over now', color: '#e5c890' } as const
 
 const ttlMs = (ttl: Ttl): number => (ttl === '1h' ? 3_600_000 : 300_000)
 
@@ -1428,7 +1425,7 @@ export const register: Register = (on, options) => {
         </Text>
       <Box flexDirection="row" alignItems="center" columnGap={1}>
         {tabPill('main', 'Main')}
-        {tabPill('misc', 'MISC')}
+        {tabPill('misc', 'Misc')}
         {tabPill('config', 'Config')}
         {tabPill('help', 'Help')}
         <Box flexGrow={1} />
@@ -1870,7 +1867,7 @@ export const register: Register = (on, options) => {
           )}
         </Box>
 
-        {section('MISC')}
+        {section('Misc')}
         <Box flexDirection="column">
           {helpRow(
             'steps',

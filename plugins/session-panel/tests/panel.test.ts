@@ -207,7 +207,7 @@ test('the model and effort pills open a coloured picker that switches them', asy
 
   await ui.press({ key: 'pick:effort' })
   await ui.press({ key: 'effort:xhigh' })
-  expect((await ui.find({ key: 'pick:effort' }))?.props.label).toBe('xhigh 4/5')
+  expect((await ui.find({ key: 'pick:effort' }))?.props.label).toBe('xhigh')
   expect(ran).toEqual(['/model claude-sonnet-5-5', '/effort xhigh'])
   await ui.unmount()
 })
@@ -259,7 +259,7 @@ test('a new session selects its model and saved effort, and lists only the commi
 
   const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
   expect((await ui.find({ key: 'pick:model' }))?.props.label).toBe('Opus 5.5')
-  expect((await ui.find({ key: 'pick:effort' }))?.props.label).toBe('medium 2/5')
+  expect((await ui.find({ key: 'pick:effort' }))?.props.label).toBe('medium')
   expect(await ui.find({ text: /▣ repo/ })).toBeDefined()
   expect(await ui.find({ text: /▣ repo/ })).toBeDefined()
   await ui.unmount()
