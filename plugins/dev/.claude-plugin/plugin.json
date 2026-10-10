@@ -1,0 +1,10 @@
+{
+  "name": "dev",
+  "description": "Understand a codebase: systematic exploration report and DDD ubiquitous-language glossary (discover, refresh)",
+  "version": "1.1.0",
+  "author": {
+    "name": "Raphaël Louvradoux",
+    "url": "https://github.com/rlvdx"
+  },
+  "repository": "https://github.com/FunDrivenDev/claude-plugins"
+}
