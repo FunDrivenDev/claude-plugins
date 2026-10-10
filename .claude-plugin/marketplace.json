@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "statusline",
-      "description": "Context-budget status line: tokens against the auto-compact trigger, prompt-cache countdown, quota pace, git branch and PR, plus plugin segments.",
+      "description": "Deprecated: no longer maintained. Context-budget status line: tokens against the auto-compact trigger, prompt-cache countdown, quota pace, git branch and PR, plus plugin segments.",
       "source": "./plugins/statusline",
       "category": "productivity"
     },
@@ -25,15 +25,9 @@
       "category": "productivity"
     },
     {
-      "name": "dev",
-      "description": "Understand a codebase: systematic exploration report and DDD ubiquitous-language glossary (discover, refresh)",
-      "source": "./plugins/dev",
-      "category": "development"
-    },
-    {
-      "name": "tool",
+      "name": "tools",
       "description": "Workflow tooling: wrap-up report (artifact, Bear, Slack), MCP server audit, Claude config audit, and local-LLM setup advice",
-      "source": "./plugins/tool",
+      "source": "./plugins/tools",
       "category": "productivity"
     }
   ]
