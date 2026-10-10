@@ -1,7 +1,7 @@
 {
-  "name": "tool",
+  "name": "tools",
   "description": "Workflow tooling: wrap-up report (artifact, Bear, Slack), MCP server audit, Claude config audit, and local-LLM setup advice",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "author": {
     "name": "Raphaël Louvradoux",
     "url": "https://github.com/rlvdx"

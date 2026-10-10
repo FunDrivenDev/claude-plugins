@@ -1,5 +1,7 @@
 # statusline
 
+> **Deprecated**: no longer maintained. It keeps working as installed, but gets no new features or fixes.
+
 A Claude Code status line built around what ends a session's memory (auto-compaction) and what makes it expensive (an expired prompt cache, the quotas).
 
 ```
