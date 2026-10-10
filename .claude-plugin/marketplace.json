@@ -23,6 +23,18 @@
       "description": "Hand a session over to a fresh one before its context fills up: a separate model writes the handover from the transcript, /clear loads it",
       "source": "./plugins/handover",
       "category": "productivity"
+    },
+    {
+      "name": "dev",
+      "description": "Understand a codebase: systematic exploration report and DDD ubiquitous-language glossary (discover, refresh)",
+      "source": "./plugins/dev",
+      "category": "development"
+    },
+    {
+      "name": "tool",
+      "description": "Workflow tooling: wrap-up report (artifact, Bear, Slack), MCP server audit, Claude config audit, and local-LLM setup advice",
+      "source": "./plugins/tool",
+      "category": "productivity"
     }
   ]
 }
