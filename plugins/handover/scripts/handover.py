@@ -2333,7 +2333,8 @@ def cmd_relay_drive(args):
 
 CLOSING_FORMAT = (
     "one line on where the work stands (what is done, what is left mid-step, the background commands you "
-    "stopped and how to restart each), then `Ready to hand over: run /clear.`, then, in a code block, the "
+    "stopped and how to restart each), then the handover's full path when given above, then `Ready to hand "
+    "over: run /clear.`, then, in a code block, the "
     "message the user should send after /clear to resume, naming the very next step"
 )
 
@@ -2368,8 +2369,8 @@ WIND_DOWN = (
     "`Ready to hand over` nor the resume message yet.\n"
     "5. As that turn ends, a separate model writes the handover from the complete transcript (do not write one "
     "yourself), and the hook tells you once it is written. Only then write your closing reply: one line on where "
-    "the work stands and the commands you stopped, with how to restart each; then `Ready to hand over: run "
-    "/clear.`; then, in a code block, the message the user should send after /clear to resume, naming the very "
+    "the work stands and the commands you stopped, with how to restart each; then the handover's full path, "
+    "as the hook gives it; then `Ready to hand over: run /clear.`; then, in a code block, the message the user should send after /clear to resume, naming the very "
     "next step.\n"
     "If a notice that the plugin stopped a command wakes you, answer it with one short line."
 )

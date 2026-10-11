@@ -17,7 +17,7 @@ Coming from `handover@fundriven` or `handoff`: see [Migrating from older version
 - **Trigger**: past 185k, the session starts no new task, finishes the ones in progress, then hands over.
 - **On demand**: `/handover:trigger [focus]` hands over at once, optionally naming what the next session should work on.
 - **Separate writer**: a `claude -p` on Sonnet writes the handover from the full transcript in about 20 s, for about $0.15, outside the session's context.
-- **Closing reply**: once the handover exists, the session ends on `Ready to hand over: run /clear.` and the message to resume with.
+- **Closing reply**: once the handover exists, the session ends on the handover's full path, `Ready to hand over: run /clear.` and the message to resume with.
 - **Load on `/clear`**: the next session starts with the handover already in its context.
 - **Background commands**: `[await]` and `[endless]` tags tell the wind-down which commands to wait for and which to stop.
 - **Compaction safety net**: an auto-compaction still gets a handover loaded next to its summary.
