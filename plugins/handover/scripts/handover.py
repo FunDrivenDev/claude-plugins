@@ -39,17 +39,18 @@ plugin waits for the [await] ones, up to `await_minutes` each, and stops the [en
 ones and those it gave up on; the session names them in its reply, the writer in the
 handover.
 
-With the relay on (HANDOVER_RELAY=1, set by scripts/claude-relay, or `request --relay`
+With the relay on (HANDOVER_RELAY=1, set by `toolbox session run`, which scripts/claude-relay now
+execs, or `request --relay`
 from the relay skill, or a session the relay started), the handover runs
 without the user: once the session has written its closing reply, /clear and the
-resume message are typed into its tmux pane, or, outside tmux, the claude-relay loop
+resume message are typed into its tmux pane, or, outside tmux, the `toolbox session run` loop
 restarts claude with that message. The handovers of a chain are numbered, and the chain
 halts for the user at `relay_limit` of them.
 
-AFK mode (claude-relay --afk, or the afk skill) runs a relay toward a goal while the
+AFK mode (`toolbox session run --afk`, or the afk skill) runs a relay toward a goal while the
 user is away: no `relay_limit`, an optional deadline after which no new handover starts,
 and a Stop hook that sends the session back to work until it ends a reply with
-`AFK done: <why>` or `AFK blocked: <why>`. A YOLO run (claude-relay --afk --yolo) skips
+`AFK done: <why>` or `AFK blocked: <why>`. A YOLO run (`toolbox session run --afk --yolo`) skips
 permission prompts: every tool call goes to an audit log, tagged by whether it would have
 run without YOLO, and the plugin, its data and the settings files are off limits to it.
 
@@ -1476,8 +1477,8 @@ def relay(st, sid, tokens, cfg, message):
     if not pane and not pid:
         st["relay_outcome"] = {"failed": True, "n": n}
         record("relay_failed", sid, chain=chain.get("base"), n=n, tokens=tokens)
-        alert("Relay impossible: this session runs neither in tmux nor under claude-relay. Run /clear.")
-        return "handover: cannot relay outside tmux or claude-relay. Run /clear."
+        alert("Relay impossible: this session runs neither in tmux nor under toolbox session run. Run /clear.")
+        return "handover: cannot relay outside tmux or toolbox session run. Run /clear."
     from_reply = bool(message)
     message = message or "Continue the work from the handover loaded above."
     write_json(
@@ -1705,7 +1706,7 @@ def cmd_afk(args):
             print("handover: AFK mode off. The relay stays on, within relay_limit.")
             return 0
         if not os.environ.get("TMUX_PANE") and not os.environ.get("HANDOVER_RELAY_FILE"):
-            print("handover: AFK mode needs tmux (start Claude Code with gmux or claude-relay).", file=sys.stderr)
+            print("handover: AFK mode needs tmux (start Claude Code with toolbox session create).", file=sys.stderr)
             return 1
         try:
             until = parse_until(args.until).timestamp() if args.until else None

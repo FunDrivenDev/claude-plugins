@@ -19,7 +19,7 @@ Words used below: the *handover* is the document the separate model writes, and 
 - **Writer failure.** The session is told, writes its closing reply all the same with a resume message complete enough to go on without the handover, and ends; the stop after that reply tries the writer once more. The status line shows the error, and a relay halts with an alert rather than start a session without a handover.
 - **Auto-compaction.** A handover is written in parallel and loaded next to the built-in summary, the compacted session waiting for it up to 150 s. The suggestion and the trigger are then reset, for the session starts over from a small context.
 - **Exit.** The handover is refreshed in the background if the session went on, and the next session in the same project is pointed to it once written.
-- **Relay.** Under `claude-relay`, the `/clear` is no longer yours: see [Relay](relay.md).
+- **Relay.** Under `toolbox session run` (the toolbox CLI), the `/clear` is no longer yours: see [Relay](relay.md).
 - **AFK.** A relay that works through a goal while you are away, past `relay_limit`: see [AFK mode](afk.md).
 
 ## Subagents

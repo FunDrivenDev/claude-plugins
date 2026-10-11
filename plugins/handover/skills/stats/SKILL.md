@@ -23,13 +23,13 @@ Show the tables as they are. In the first, one row is one cycle of a session, fr
 
 The `Relay chains` table, when there is one, has one row per chain of sessions the relay handed over without the user, named after its first handover file (`YYYY/MM/DD/HHhMM-<topic>`):
 
-- `start`: how the chain was started, `claude-relay` (the whole session) or `skill` (`/handover:relay` or `/handover:afk`); a `claude-relay --afk` run counts as `claude-relay`.
-- `handovers`: handovers written in the chain, over `relay_limit`; `relays`: sessions relayed; `mode`: `tmux` (keys typed into the pane) or `loop` (claude-relay restarted claude); `resumed`: new sessions that got their resume message.
+- `start`: how the chain was started, `claude-relay` (the whole session, under `toolbox session run` or the `claude-relay` shim) or `skill` (`/handover:relay` or `/handover:afk`); a `toolbox session run --afk` run counts as `claude-relay`.
+- `handovers`: handovers written in the chain, over `relay_limit`; `relays`: sessions relayed; `mode`: `tmux` (keys typed into the pane) or `loop` (`toolbox session run` restarted claude); `resumed`: new sessions that got their resume message.
 - `relay s`: median seconds from the relay starting to the new session resuming; `handover at`: median context size where the chain's handovers were written.
 - `stalls`: new sessions that did not load the handover in time.
-- `end`: `limit` (halted at `relay_limit`, waiting for `/clear`), `stalled`, `failed` (a session neither in tmux nor under claude-relay), how its last session ended (`clear`, `prompt_input_exit`, `compact-auto`…), or `open` while it runs; `min`: minutes from its first to its last event; `$`: writer cost over the chain.
+- `end`: `limit` (halted at `relay_limit`, waiting for `/clear`), `stalled`, `failed` (a session neither in tmux nor under `toolbox session run`), how its last session ended (`clear`, `prompt_input_exit`, `compact-auto`…), or `open` while it runs; `min`: minutes from its first to its last event; `$`: writer cost over the chain.
 
-The `AFK runs` table, when there is one, has one row per AFK run (`claude-relay --afk` or `/handover:afk`), with its goal and how it ended under the table:
+The `AFK runs` table, when there is one, has one row per AFK run (`toolbox session run --afk` or `/handover:afk`), with its goal and how it ended under the table:
 
 - `how`: `claude-relay` or `skill`; `until`: the deadline, if any; `sessions` and `handovers` over the whole run.
 - `sent back`: stops the `Stop` hook sent back to work.
@@ -45,7 +45,7 @@ Then read it in two or three sentences:
 - A `load wait s` above 0: the handover was still being written at `/clear` (a session that went on after its closing reply, a writer slower than the `Stop` hook's hold, a compaction); name the cycles.
 - Median `write s` under twice the status line's `refreshInterval`: the status row shows only one or two writer updates; suggest a shorter `refreshInterval` if the user wants to follow it.
 - Handovers a session asked for: compare their median point with `suggest_tokens` and with the trigger; few or none means agents wait for the trigger.
-- Relay chains: chains that end at `limit` mean work regularly outlasts `relay_limit`; check whether their last handovers still name concrete next steps before suggesting to raise it. Any `stalled` or `failed` chain is a relay bug or a setup gap (no tmux, no claude-relay): name it. A median relay over 30s, or `resumed` short of `relays`, points at the relay's waits. A low share of resume messages taken from the reply means sessions skip the closing reply.
+- Relay chains: chains that end at `limit` mean work regularly outlasts `relay_limit`; check whether their last handovers still name concrete next steps before suggesting to raise it. Any `stalled` or `failed` chain is a relay bug or a setup gap (no tmux, no `toolbox session run`): name it. A median relay over 30s, or `resumed` short of `relays`, points at the relay's waits. A low share of resume messages taken from the reply means sessions skip the closing reply.
 - AFK runs: `blocked` runs list what needs the user, so quote their reasons. Runs ending `idle`, or with many `sent back` per handover, mean the goal gives no clear next item or definition of done; suggest wording it as a list to work through and a condition to stop on. Runs ending `deadline` with work left are fine.
 - AFK runs with `waits`: name what stood still. A YOLO run with `guarded` calls tried to touch the plugin or the settings: say so. For a YOLO run, offer to check it with `handover.py --data-dir "${CLAUDE_PLUGIN_DATA}" stats --audit <run>` (hash chain, length at the end, plugin hash; exit 1 on a mismatch), and suggest allow rules for the YOLO-only calls the user would have approved.
 - Fewer than 10 cycles: say the sample is too small to tune anything yet.
