@@ -1,7 +1,7 @@
 {
   "name": "handover",
   "description": "Hand a session over to a fresh one before its context fills up: a separate model writes the handover from the transcript, /clear loads it",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "author": {
     "name": "Raphaël Louvradoux",
     "url": "https://github.com/rlvdx"
@@ -92,13 +92,13 @@
     "notifier": {
       "type": "string",
       "title": "Notifier",
-      "description": "How an alert (relay halted, AFK run done, blocked or waiting) calls you back, on top of the terminal bell: auto (the desktop notification of the platform: osascript on macOS, notify-send on Linux; else notify_command), macos, linux, command (notify_command) or bell (the bell only)",
+      "description": "How an alert (relay halted, AFK run done, blocked or waiting) calls you back, on top of the terminal bell: auto (the desktop notification of the environment: osascript on macOS, notify-send on a Linux desktop; plus notify_command when set), macos, linux, command (notify_command only) or bell (the bell only). Check it with handover.py notifier --test; see docs/notifications.md",
       "default": "auto"
     },
     "notify_command": {
       "type": "string",
       "title": "Notify command",
-      "description": "A command sh runs for each alert, with HANDOVER_TITLE and HANDOVER_MESSAGE in its environment: for instance curl -d \"$HANDOVER_MESSAGE\" ntfy.sh/<topic> to reach a phone. Used when notifier is command, or auto without a desktop notifier",
+      "description": "A command sh runs for each alert, with HANDOVER_TITLE and HANDOVER_MESSAGE in its environment: for instance curl -d \"$HANDOVER_MESSAGE\" ntfy.sh/<topic> to reach a phone. Used by notifier auto (with the desktop notification) and command (alone). Slack: docs/notifications.md",
       "default": ""
     }
   }

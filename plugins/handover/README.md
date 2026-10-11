@@ -24,6 +24,7 @@ Coming from `handover@fundriven` or `handoff`: see [Migrating from older version
 - **Relay**: under tmux, the plugin types `/clear` and the resume message itself, up to 5 handovers in a chain.
 - **AFK mode**: a relay that works through a goal while you are away, until done, blocked or a deadline, optionally in YOLO with guards and an audit log.
 - **Status line**: a one-line handover state for your status line, from the threshold to `Handover ready`.
+- **Notifications**: a desktop notification on macOS and Linux, or your own command (Slack, ntfy) when away or headless; `handover.py notifier --test` checks it.
 - **Metrics**: `/handover:stats` reports margins, writer cost and duration, relay chains and AFK runs, to tune the thresholds.
 
 ## Documentation
@@ -32,6 +33,7 @@ Coming from `handover@fundriven` or `handoff`: see [Migrating from older version
 - [Relay](docs/relay.md): automatic `/clear` under tmux, started with the `toolbox session` commands
 - [AFK mode](docs/afk.md): unattended runs on a goal, deadlines, YOLO
 - [Settings](docs/settings.md): the thresholds, how they relate, and every option
+- [Notifications](docs/notifications.md): how alerts reach you on macOS, a Linux desktop, a headless server or Slack
 - [Status line](docs/status-line.md): the handover state line and how to print it
 - [Metrics and tuning](docs/metrics.md): `/handover:stats` and what to change from it
 - [Migrating from older versions](docs/migration.md): from the `fundriven` marketplace or the `handoff` name

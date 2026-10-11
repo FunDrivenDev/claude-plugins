@@ -20,6 +20,8 @@ transcript, never by the session whose context is full.
     handover.py until <when>           resolve an AFK deadline: epoch on stdout, the date on stderr
     handover.py yolo-settings [--merge S]  the deny rules a YOLO run starts with, as a --settings JSON,
                                        added to the user's own --settings S
+    handover.py notifier [--test]      the notifier alerts go through here and why, as JSON; --test
+                                       sends one (docs/notifications.md)
 
 A session is told once, past `suggest_tokens`, to hand over by itself at the
 next boundary between scopes. Its wind-down starts once its context crosses
@@ -3174,6 +3176,33 @@ def cmd_config(args):
     return 0
 
 
+def settings_option(key, default):
+    """An option as the user set it now: the hook environment, settings.json, then what hooks saw."""
+    v = os.environ.get(f"CLAUDE_PLUGIN_OPTION_{key.upper()}", "").strip()
+    if v:
+        return v
+    settings = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"), "settings.json")
+    configured = (read_json(settings, {}).get("pluginConfigs") or {}).get(plugin_id()) or {}
+    v = (configured.get("options") or {}).get(key)
+    if v not in (None, ""):
+        return str(v)
+    return option(key, default)
+
+
+def cmd_notifier(args):
+    """The notifier the options pick in this environment, as JSON; --test sends an alert through it."""
+    choice, command = settings_option("notifier", "auto"), settings_option("notify_command", "")
+    report = N.describe(choice, command)
+    if args.test:
+        report["sent"] = N.notifier(choice, command).notify(
+            "Claude Code handover", "Test notification: alerts reach you here."
+        )
+    print(json.dumps(report, indent=1, ensure_ascii=False))
+    for hint in report["hints"]:
+        print(f"handover: {hint}", file=sys.stderr)
+    return 0
+
+
 def cmd_stats(args):
     reserve = config()["reserve"]
     sessions = {}
@@ -3377,6 +3406,8 @@ def main():
     a.add_argument("--off", action="store_true", help="turn AFK mode off in this session")
     y = sub.add_parser("yolo-settings")
     y.add_argument("--merge")
+    nt = sub.add_parser("notifier", help="the notifier picked here and why, as JSON; --test sends an alert")
+    nt.add_argument("--test", action="store_true")
     u = sub.add_parser("until")
     u.add_argument("when", nargs="+")
     args = ap.parse_args()
@@ -3397,6 +3428,7 @@ def main():
         "wake-timeout": cmd_wake_timeout,
         "config": cmd_config,
         "yolo-settings": cmd_yolo_settings,
+        "notifier": cmd_notifier,
     }[args.cmd](args)
 
 
