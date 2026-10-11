@@ -6,21 +6,21 @@ For a run that should go on while you are away, overnight for instance, on a seq
 
 Two ways to start one:
 
-- **A new run:** `gmux --afk '<goal>' [--until <when>] [--yolo] [claude flags]`, which calls `claude-relay --afk`. The goal is also the first prompt. Outside tmux, the run gets a tmux session of its own, `afk-<folder>`, which outlives its terminal tab: `tmux ls` lists it, `tmux attach -t afk-<folder>` rejoins it.
+- **A new run:** `toolbox session create --afk '<goal>' [--until <when>] [--yolo] [-- <claude options>]`, which calls `toolbox session run --afk` (see [Relay](relay.md)). The goal is also the first prompt. Outside tmux, the run gets a tmux session of its own, `afk-<folder>`, which outlives its terminal tab: `tmux ls` lists it, `tmux attach -t afk-<folder>` rejoins it.
 - **From a running session:** `/handover:afk <goal> [until <when>]`, in a session that already runs in tmux. The session starts on the goal right away; its tmux session stops closing with its tab.
 
 Then:
 
 - **It keeps going.** When a session stops between two tasks, the `Stop` hook sends it back to work with the goal. It hands over at boundaries between tasks, as suggested past `suggest_tokens`, or at `trigger_tokens`, and the relay carries the goal into the next session. No `relay_limit`.
 - **It ends when the model says so.** A reply that ends on `AFK done: <why>` (goal met) or `AFK blocked: <why>` (nothing left can move without you) ends the run, with a macOS notification and a terminal bell; a closing reply that carries that line ends it too, and its handover starts no new session. A session sent back three times in a row without doing anything ends it too (`idle`; denied tool calls are not work, and the reason counts them), and so does a session that ends other than by a relayed handover: an exit, a `/clear` of yours, a crash (`exit`).
-- **Deadline, optional.** `--until` takes a time (`8`, `8:30`, `8h30`, `8am`: the next one to come, so `8` launched at 23:00 is tomorrow 8:00), a day and a time (`tomorrow 8`, `mon 9:00`), a duration (`+10h`, `in 2h30m`) or a date (`2026-10-06 08:00`). `claude-relay` prints the deadline it understood. Past it, the session is told to finish its step and end its turn, and no new handover starts.
+- **Deadline, optional.** `--until` takes a time (`8`, `8:30`, `8h30`, `8am`: the next one to come, so `8` launched at 23:00 is tomorrow 8:00), a day and a time (`tomorrow 8`, `mon 9:00`), a duration (`+10h`, `in 2h30m`) or a date (`2026-10-06 08:00`). `toolbox session run` prints the deadline it understood. Past it, the session is told to finish its step and end its turn, and no new handover starts.
 - **Taking over.** Interrupt with Esc as usual; `/handover:afk off` stops sending the session back, and the relay goes back to `relay_limit`.
 
 AFK runs are unattended: start them with the permissions they need (an auto or accept-edits mode, an allow list), since a permission prompt would wait for you until morning. A run that stands still on a prompt, an idle session or an API error alerts you (notification and bell), and `/handover:stats` counts these waits.
 
 ## YOLO
 
-`gmux --afk '<goal>' --yolo` (or `claude-relay --afk … --yolo`) runs without any permission prompt: `--dangerously-skip-permissions`, for a run that must not wait on you at all. Use it on a machine or a project where the worst a wrong command does is acceptable.
+`toolbox session create --afk --yolo '<goal>'` (or `toolbox session run --afk '<goal>' --yolo`) runs without any permission prompt: `--dangerously-skip-permissions`, for a run that must not wait on you at all. Use it on a machine or a project where the worst a wrong command does is acceptable.
 
 What it still holds back:
 

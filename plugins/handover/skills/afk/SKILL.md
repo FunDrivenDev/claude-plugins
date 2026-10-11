@@ -22,7 +22,7 @@ Otherwise the argument is the goal. When it is empty, ask the user for the goal 
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/handover.py --data-dir "${CLAUDE_PLUGIN_DATA}" afk --session "${CLAUDE_SESSION_ID}" --goal '<goal>' [--until '<when>']
 ```
 
-This skill never turns YOLO on: a running session keeps its permission mode. A run without permission prompts starts with `claude-relay --afk '<goal>' --yolo`.
+This skill never turns YOLO on: a running session keeps its permission mode. A run without permission prompts starts with `toolbox session create --afk --yolo '<goal>'`.
 
 - Exit code 0: stdout holds the AFK rules. Tell the user in one line that AFK mode is on, with the deadline if there is one, then start on the goal right away and follow those rules until the run ends.
 - Otherwise: show the error from stderr, as is.
