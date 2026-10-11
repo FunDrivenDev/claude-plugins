@@ -18,6 +18,6 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/handover.py --data-dir "${CLAUDE_PLUGIN_DA
 
 As your turn ends, a separate model writes the handover from this session's complete transcript; do not write one yourself, and do not read the file it produces.
 
-- Exit code 0: do not start a new task. End your turn on one short line on where the work stands, without `Ready to hand over` nor the resume message. The hook then writes the handover and tells you once it is written; only then write your closing reply, as that message says: one line on where the work stands, then `Ready to hand over: run /clear.`, then, in a code block, the message to send after /clear to resume, naming the very next step. Once that reply ends, the relay clears the session and sends the message for the user.
+- Exit code 0: do not start a new task. End your turn on one short line on where the work stands, without `Ready to hand over` nor the resume message. The hook then writes the handover and tells you once it is written; only then write your closing reply, as that message says: one line on where the work stands, then the handover's full path, then `Ready to hand over: run /clear.`, then, in a code block, the message to send after /clear to resume, naming the very next step. Once that reply ends, the relay clears the session and sends the message for the user.
 - Exit code 3: subagents of this session still run. Start no new work and no new subagent; wait for their results, then run the command again.
 - Otherwise: show the error from stderr, as is.
