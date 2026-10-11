@@ -21,7 +21,7 @@ Tools are pinned in `mise.toml` and run through `just`:
 |---|---|
 | `just init` | Installs the pinned tools and turns on the git hooks (`.githooks`); safe to re-run |
 | `just lint` | `shellcheck` on every shell script and hook, `actionlint` on CI, `biome lint` on the mods' TypeScript (`biome.json`), `ruff` on the Python scripts (`ruff.toml`, Python 3.9 syntax: the handover hooks run the system `python3`) |
-| `just test` | The plugins' smoke tests: the status line under the default `bash` and macOS's `/bin/bash` 3.2, the handover plugin's carry-over of its old data |
+| `just test` | The plugins' smoke tests: the status line under the default `bash` and macOS's `/bin/bash` 3.2, the handover plugin's carry-over of its old data and its notifier adapters |
 | `just validate` | `claude plugin validate` on the marketplace and each plugin, and `claude plugin test` on each plugin with tests (needs the `claude` CLI) |
 | `just versions` | Fails when a plugin changed since `origin/main` (outside its `tests/`) without a version bump |
 | `just bump <plugin> patch\|minor\|major` | Raises the plugin's version in its `plugin.json` |

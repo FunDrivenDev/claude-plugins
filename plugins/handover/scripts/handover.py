@@ -85,6 +85,7 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import notify as N
 import transcript as T
 import writer_prompt as P
 
@@ -118,6 +119,8 @@ OPTIONS = (
     "relay_limit",
     "delegate",
     "yolo_guard_paths",
+    "notifier",
+    "notify_command",
 )
 
 
@@ -2263,23 +2266,7 @@ def claude_pid():
 
 
 def alert(message):
-    """A macOS notification and a terminal bell: the user is needed back at the keyboard."""
-    with contextlib.suppress(OSError, subprocess.SubprocessError):
-        subprocess.run(
-            [
-                "osascript",
-                "-e",
-                "on run argv",
-                "-e",
-                'display notification (item 1 of argv) with title "Claude Code handover"',
-                "-e",
-                "end run",
-                message,
-            ],
-            capture_output=True,
-            timeout=5,
-            check=False,
-        )
+    """Calls the user back to the keyboard: the notifier the options pick (notify.py) and a bell."""
     tty = "/dev/tty"
     if os.environ.get("TMUX_PANE"):
         with contextlib.suppress(OSError, subprocess.SubprocessError):
@@ -2293,8 +2280,9 @@ def alert(message):
                 ).stdout.strip()
                 or tty
             )
-    with contextlib.suppress(OSError), open(tty, "w") as f:
-        f.write("\a")
+    N.notifier(option("notifier", "auto"), option("notify_command", ""), tty=tty).notify(
+        "Claude Code handover", message
+    )
 
 
 def cmd_relay_drive(args):

@@ -45,6 +45,8 @@ The rules that tie them:
 | `refresh_tokens` | 2000 | A handover this far behind the session is rewritten before it is used | Rewrite on any change |
 | `relay_limit` | 5 | Handovers in a chain before it halts for you | — |
 | `compact_reserve_tokens` | 33000 | How far below `autoCompactWindow` compaction fires, for `/handover:stats` until real compactions are measured | — |
+| `notifier` | `auto` | How an alert calls you back, on top of the terminal bell: `auto` (the platform's desktop notification, else `notify_command`), `macos`, `linux`, `command` or `bell` ([Notifications](#notifications)) | — |
+| `notify_command` | (none) | A command `sh` runs for each alert, `HANDOVER_TITLE` and `HANDOVER_MESSAGE` in its environment | — |
 
 Change them with `/handover:config`, which asks about each option in turn with its default and current value, in `/config`, which lists one row per option, or in `settings.json`:
 
@@ -64,3 +66,23 @@ Change them with `/handover:config`, which asks about each option in turn with i
 The hooks read the options each time they run. The status line and `/handover:stats` run outside hooks, so they use the values the last hook run saw, kept in `options.json` in the plugin's data folder.
 
 Fixed, not options: the `Stop` hook holds the session up to 240 s for the writer (its timeout in `hooks.json` is 300 s), a new session waits up to 150 s for a handover still in flight, a loaded handover is cut at 9,500 characters (Claude Code moves injected context over 10,000 characters to a file Claude only sees a preview of), the transcript render sent to the writer is capped at 800,000 characters (about 200K tokens), and the writer runs at `medium` effort.
+
+## Notifications
+
+An alert (the relay halted, an AFK run done, blocked or waiting on you) goes through one port, `Notifier.notify(title, message)` in `scripts/notify.py`; `notifier` picks its adapter, and the terminal bell (the session's tmux pane, else `/dev/tty`) rings whatever the choice:
+
+| `notifier` | Adapter | Needs |
+|---|---|---|
+| `auto` | `macos` on macOS, `linux` on Linux, when its tool is installed; else `command` when `notify_command` is set; else the bell alone | — |
+| `macos` | A notification from `osascript` | macOS |
+| `linux` | A desktop notification from `notify-send` (GNOME, KDE…) | `libnotify-bin` on Ubuntu (`sudo apt-get install libnotify-bin`) and a desktop session: over SSH, only the bell rings |
+| `command` | `notify_command`, run by `sh` | the command's own tools |
+| `bell` | the terminal bell only | — |
+
+`notify_command` reaches you away from the machine, for an AFK run overnight:
+
+```json
+{"notifier": "command", "notify_command": "curl -s -H \"Title: $HANDOVER_TITLE\" -d \"$HANDOVER_MESSAGE\" ntfy.sh/<your-topic>"}
+```
+
+The title and the message come in the environment, never in the command line, so a message cannot inject shell. An adapter that fails is ignored: the plugin goes on, and the bell still rings. A new adapter is a class with a `notify(title, message)` method, added to `notifier()`.
