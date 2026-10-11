@@ -15,7 +15,7 @@ Either way, every session the relay starts relays in turn, until the chain reach
 
 Handovers go into one folder per day, `YYYY/MM/DD/`, named after the time they were written and their topic: `2026/10/07/09h32-<topic>.md`; a name already taken gets `-b`, `-c`. A relay chain follows the same rule, each handover in the folder of the day it was written: `2026/10/04/21h10-relay-after-handover.md`, `2026/10/04/21h55-relay-after-handover.md`, `2026/10/05/00h40-relay-after-handover.md`. Under its title, each handover of a chain says its rank and where the chain started: ``Relay 3/5 · chain started with `2026/10/04/21h10-relay-after-handover.md` ``. Handovers written before 0.10.0 stay where they are, as `YY-MM-DD-<topic>.md`.
 
-At `relay_limit` handovers (5) the chain halts: the last handover is written, but the session waits for your `/clear`, with a macOS notification and a terminal bell. A `/clear` of yours starts a new chain. The same alert fires when the new session fails to load the handover, or when a relay session runs neither in tmux nor under the loop below.
+At `relay_limit` handovers (5) the chain halts: the last handover is written, but the session waits for your `/clear`, with a notification ([notifier](settings.md#notifications)) and a terminal bell. A `/clear` of yours starts a new chain. The same alert fires when the new session fails to load the handover, or when a relay session runs neither in tmux nor under the loop below.
 
 Without tmux, `toolbox session run` falls back to a loop: the relay leaves the resume message in `$HANDOVER_RELAY_FILE` and ends `claude` with SIGTERM, and the loop starts `claude` again with the same arguments plus that message. There, give flags only and type the first prompt in the session.
 
