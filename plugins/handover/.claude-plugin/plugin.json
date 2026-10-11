@@ -1,7 +1,7 @@
 {
   "name": "handover",
   "description": "Hand a session over to a fresh one before its context fills up: a separate model writes the handover from the transcript, /clear loads it",
-  "version": "0.13.1",
+  "version": "0.13.2",
   "author": {
     "name": "Raphaël Louvradoux",
     "url": "https://github.com/rlvdx"

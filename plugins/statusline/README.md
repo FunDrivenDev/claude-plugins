@@ -2,26 +2,9 @@
 
 > **Deprecated**: no longer maintained. It keeps working as installed, but gets no new features or fixes.
 
-A Claude Code status line built around what ends a session's memory (auto-compaction) and what makes it expensive (an expired prompt cache, the quotas).
+A Claude Code status line built around what ends a session's memory (auto-compaction) and what makes it expensive (an expired prompt cache, the quotas). Two lines show the context against the real compaction point, the cache countdown, the quota pace, and the git branch and pull request.
 
-```
-⌛1h06m TTL 42m │ Opus 3/5 │ 90.0k/167k 53% │ <plugin segments>
-5h ███│░░░░░░░  30% ok →60% 🔄2h30m │ 7d █████│░░░░  50% ok →75% 🔄2d07h │ ⎇ feat/my-branch* #412✓
-```
-
-A dim `·` line sits between the two lines, as spacing (`CC_STATUS_SPACING=0` drops it).
-
-The first line, left to right:
-
-- session duration, then the time left before the prompt cache expires (`EXP 🔄N` once it has: the tokens the next message pays for in full);
-- model, effort out of 5 (in `/effort`'s colours), `⚡` in fast mode, `¬think` without thinking;
-- context tokens against the **auto-compact trigger** (`autoCompactWindow` minus a reserve), not the model's window; green → yellow → orange → red, then `⚠ COMPACTING`;
-- one segment per plugin that ships one (see [Plugin segments](#plugin-segments)).
-
-The second line:
-
-- 5-hour and 7-day quotas: a usage bar, `│` where even spending would put you by now, the verdict projected to the reset (`ok →N%`, `tight →N%`, `out <duration>`, `max`), and the time to the reset;
-- branch (`*` when tracked files changed), worktree, PR number with `✓` approved / `✗` changes requested.
+![The status line under a Claude Code session](docs/screenshot.png)
 
 ## Install
 
@@ -31,38 +14,22 @@ The second line:
 /statusline:install
 ```
 
-`/statusline:install` copies the script into the plugin's data directory (`~/.claude/plugins/data/statusline-fundrivendev/`) and points `statusLine` in `~/.claude/settings.json` at it, after saving the status line in place. A plugin update reaches the copy at the next session start.
+Needs `bash`, `jq` 1.6 or later, and `git`. `/statusline:uninstall` puts your previous status line back.
 
-To go back: `/statusline:uninstall` restores the saved status line, then `/plugin uninstall statusline@fundrivendev`.
+## Features
 
-Needs `bash` (macOS's 3.2 is fine), `jq` 1.6 or later, and `git`.
+- **Session and cache**: the session's age and the minutes left before the prompt cache expires, then `EXP` once it has.
+- **Model and effort**: the model, the effort out of 5 in `/effort`'s colours, fast mode and thinking off.
+- **Context**: the tokens against the auto-compact trigger, not the model's window, graded green to red, then `⚠ COMPACTING`.
+- **Quotas**: 5-hour and 7-day usage bars with an even-pace mark, a verdict projected to the reset, and the time to it.
+- **Git**: the branch, a `*` when tracked files changed, the worktree, and the PR number with its review state.
+- **Plugin segments**: any plugin can add a segment by shipping a `statusline-segment` executable, like the handover plugin's.
+- **Never slow**: git and the plugin segments are computed in the background and shown one refresh later.
+- **Never blank**: a bad setting or a missing `jq` shows a warning in the line instead of breaking it.
 
-## Settings (environment variables)
+## Documentation
 
-| Variable | Default | Role |
-|---|---|---|
-| `CC_TOKEN_LIMIT` | the settings' `autoCompactWindow`, else 200000 | the auto-compact window |
-| `CC_TOKEN_RESERVE` | 33000 | gap between the window and where compaction really fires |
-| `CC_TOKEN_WARN` / `CC_TOKEN_DANGER` / `CC_TOKEN_ALERT` | 50 / 75 / 90 | colour thresholds, in % of the limit |
-| `CC_STATUS_GIT_DIRTY` | 1 | `0` skips the `*` check on a huge repo |
-| `CC_QUOTA_BAR` | 10 | cells per quota bar, `0` hides the bars |
-| `CC_PACE_MIN` | 10 | % of a window that must elapse before a projection shows |
-| `CC_STATUS_SEGMENTS` | 1 | `0` skips the plugin segments |
-| `CC_STATUS_SPACING` | 1 | `0` drops the dim `·` spacer line between the two lines |
-| `CC_STATUS_LAZY` | 1 | `0` computes git and the plugin segments before printing (see [Lazy segments](#lazy-segments)) |
-
-An unusable setting never blanks the line; it is reported instead:
-
-- a value that is not an integer, or `WARN` / `DANGER` / `ALERT` out of order: the default applies, and a leading `⚠ ignored: …` segment names the variables (likewise for a non-numeric `autoCompactWindow`);
-- a window no larger than the reserve (`CC_TOKEN_LIMIT=20000` with the default 33000 reserve): the context segment shows `⚠ CC_TOKEN_LIMIT 20000 ≤ CC_TOKEN_RESERVE 33000` rather than a meaningless percentage;
-- `jq` missing or too old: only `⚠ jq not found` / `⚠ jq failed (1.6+ needed)` shows.
-
-## Plugin segments
-
-Any installed plugin can add a segment at the end of the first line by shipping an executable `statusline-segment` at its root. It gets the same JSON payload on stdin (compacted) and prints one line, or nothing; a non-zero exit shows nothing. It must print nothing where its plugin is disabled: the status line cannot tell.
-
-## Lazy segments
-
-Git and the plugin segments are the slow part of a refresh (a `git status`, a plugin's own interpreter starting). They never delay the line: each refresh prints the value the previous refresh computed, a dim `…` before the first one, and recomputes it in the background. They therefore lag one refresh behind; set `statusLine.refreshInterval` (seconds) in `settings.json` to bound that lag while idle. A run still going when the next refresh comes is not started again, so a slow or hung segment never piles up.
-
-The values are kept in `$TMPDIR/claude-statusline-$UID/`, per directory for git and per session and plugin for the segments. `CC_STATUS_LAZY=0` goes back to computing them before printing.
+- [Layout](docs/layout.md): what each segment of the two lines shows
+- [Install and uninstall](docs/install.md): what `/statusline:install` changes, and how to go back
+- [Settings](docs/settings.md): the environment variables and their defaults
+- [Segments](docs/segments.md): plugin segments, and the lazy git and segment refresh
