@@ -76,6 +76,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -1813,11 +1814,44 @@ def cmd_yolo_settings(args):
 GUARD_WORDS = re.compile(r"\bclaude\s+plugins?\s+(disable|uninstall|remove|update)\b|disableAllHooks|chflags")
 
 
+# The plugin's own commands a YOLO run may call, though its script lives under a guarded path: the handover
+# request (handover, trigger and relay skills) and the read-only ones. config, afk and the rest stay denied.
+OWN_COMMANDS = {"request", "status", "stats"}
+
+
+def own_command(command):
+    """True when the command is one plain call of this script's OWN_COMMANDS: no expansion, no redirection,
+    nothing chained to it, so it writes nothing the guard protects."""
+    if any(c in command for c in "$`\n"):
+        return False
+    try:
+        lex = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        argv = list(lex)
+    except ValueError:
+        return False
+    if any(a and set(a) <= set(lex.punctuation_chars) for a in argv):
+        return False
+    if len(argv) < 3 or os.path.basename(argv[0]) not in ("python3", "python"):
+        return False
+    if os.path.realpath(argv[1]) != os.path.realpath(os.path.abspath(__file__)):
+        return False
+    rest = argv[2:]
+    if rest[:1] == ["--data-dir"]:
+        rest = rest[2:]
+    elif rest and rest[0].startswith("--data-dir="):
+        rest = rest[1:]
+    return bool(rest) and rest[0] in OWN_COMMANDS
+
+
 def guard_hit(inp):
     """The guarded path or word a tool call names, if any. Bash commands are matched as text, so a path
-    spelled `~/.claude/plugins` or `$HOME/.claude/plugins` counts too; reading tools stay free."""
+    spelled `~/.claude/plugins` or `$HOME/.claude/plugins` counts too; reading tools and the plugin's own
+    commands (own_command) stay free."""
     tool, ti = inp.get("tool_name") or "", inp.get("tool_input") or {}
     if tool in ("Read", "Glob", "Grep", "LS"):
+        return None
+    if tool == "Bash" and own_command(str(ti.get("command") or "")):
         return None
     home = os.path.expanduser("~")
     text = " ".join(str(ti.get(k) or "") for k in ("command", "file_path", "notebook_path", "path"))
