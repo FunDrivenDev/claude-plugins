@@ -1,13 +1,10 @@
-# Continuous integration: `just lint` and `just test`, as the git hooks run them, with
-# the toolchain from mise.toml. The smoke tests also run on macOS, whose
-# /bin/bash 3.2 is what most colleagues' status lines run under. `ci-ok` is
-# the one check to require: FunDrivenDev's organisation ruleset gates `main` on it.
+# Continuous integration, run by hand only: `just lint` and `just test`, with the
+# toolchain from mise.toml. The git hooks are the CI (hk.pkl: `just lint` before a
+# commit, `just check` before a push). The smoke tests also run on macOS, whose
+# /bin/bash 3.2 is what most colleagues' status lines run under.
 name: CI
 
 on:
-  pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

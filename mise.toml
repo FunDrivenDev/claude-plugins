@@ -3,6 +3,7 @@
 [tools]
 actionlint = "1.7.12"
 biome = "2.5.15"
+hk = "2.5.0"
 jq = "1.8.2"
 just = "1.58.0"
 ruff = "0.16.10"

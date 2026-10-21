@@ -7,7 +7,8 @@ mise trust --quiet .
 mise install --quiet
 echo "✓ tools from mise.toml installed"
 
-if [ "$(git config --get core.hooksPath || true)" != .githooks ]; then
-  git config core.hooksPath .githooks
+# The git hooks live in hk.pkl; a clone set up before them still points git at .githooks.
+if [ "$(git config --get core.hooksPath || true)" = .githooks ]; then
+  git config --unset core.hooksPath
 fi
-echo "✓ git hooks: .githooks"
+echo "✓ git hooks: hk.pkl (\`mise exec -- hk install\` where no global hook runs it)"

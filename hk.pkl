@@ -1,0 +1,26 @@
+amends "package://github.com/jdx/hk/releases/download/v2.5.0/hk@2.5.0#/Config.pkl"
+
+// Git hooks call the Justfile, never the tools behind it (fundrivenOS rules/ci/hooks.md).
+// They are the CI: GitHub Actions runs ci.yml by hand only.
+hooks {
+    // No commit that fails the linters; unstaged work is stashed meanwhile.
+    ["pre-commit"] {
+        stash = "git"
+        steps {
+            ["just"] {
+                glob = "**/*"
+                check = "just lint"
+            }
+        }
+    }
+    // No push with a failing check: lint, smoke tests, the version bumps, the validator
+    // and the mods' tests.
+    ["pre-push"] {
+        steps {
+            ["just"] {
+                glob = "**/*"
+                check = "just check"
+            }
+        }
+    }
+}
