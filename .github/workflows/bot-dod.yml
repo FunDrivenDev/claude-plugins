@@ -1,0 +1,19 @@
+# Bot pull requests (Renovate, Dependabot) get the `dod` status from Actions, since no
+# laptop runs `toolbox dod check` on them: FunDrivenDev/.github's bot-dod workflow runs
+# the pre-push checks on the head and posts `dod`. A human pull request runs no job.
+name: Bot dod
+
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  dod:
+    # FunDrivenDev/.github#8's head until it merges, then the commit on main.
+    uses: FunDrivenDev/.github/.github/workflows/bot-dod.yml@d6970a3f6286866fdfdcef9a4cc6a8531938acff
+    permissions:
+      contents: read
+      statuses: write # the dod commit status on the head
+    with:
+      command: just check
