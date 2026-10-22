@@ -10,8 +10,8 @@ import type { GithubRef, LinearRef } from './tracker'
 
 const PANE = 'session-panel'
 const TITLE = 'Session'
-/** The dock's opening width in fullscreen; a width the person dragged or keyed wins. */
-const DOCK_COLUMNS = 116
+/** The dock's opening width in fullscreen: more than any terminal gives, so the engine opens it at its ceiling (45% of the terminal); a width the person dragged or keyed wins. */
+const DOCK_COLUMNS = 512
 /** The colour an action without its own takes under the pointer: Catppuccin Frappé blue. */
 const ACTION = '#8caaee'
 const HISTORY_CAP = 400
