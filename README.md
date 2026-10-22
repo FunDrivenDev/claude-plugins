@@ -9,7 +9,8 @@ Public Claude Code plugins by FunDrivenDev.
 | Plugin | What it does |
 |---|---|
 | [`statusline`](plugins/statusline/README.md) | **Deprecated**, no longer maintained. A status line built around the context budget: tokens against the auto-compact trigger, prompt-cache countdown, 5-hour and 7-day quota pace, git branch and PR, and a segment for each plugin that ships one. |
-| [`session-panel`](plugins/session-panel/README.md) | A side pane: model and effort, first prompt, uptime, prompt-cache countdown, each sub-agent's task and full history (finished ones greyed beside the running ones), and a checklist of the session's steps. |
+| [`session-panel`](plugins/session-panel/README.md) | A side pane: first prompt, each sub-agent's task and full history (finished ones greyed beside the running ones), and a checklist of the session's steps. |
+| [`session-bar`](plugins/session-bar/README.md) | A one-row bar beneath the prompt: running time, prompt-cache countdown, context usage, 5-hour and 7-day quotas, and the model and effort, switchable with a click. |
 | [`handover`](plugins/handover/README.md) | Takes over from auto-compaction: before the context fills up, a separate model writes a handover from the transcript and `/clear` starts a fresh session from it; plus a relay that clears and resumes sessions on its own, and an AFK mode. [`bench/handover/`](bench/handover/README.md) holds the benchmark behind it. |
 | [`tools`](plugins/tools/skills) | Workflow tooling: `wrap-up-doc` (session report as an artifact, Bear note or Slack message), `mcp-audit-and-fix`, `claude-config-audit-and-fix` (uses `writing-for-agents` from `mattpocock-skills@claude-plugins-official`) and `local-llm-advisor`. |
 
