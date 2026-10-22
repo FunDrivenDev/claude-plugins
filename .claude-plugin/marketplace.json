@@ -13,15 +13,9 @@
       "category": "productivity"
     },
     {
-      "name": "session-panel",
-      "description": "A calm side pane: first prompt, sub-agents with their task and full history, and a checklist of the session's steps.",
-      "source": "./plugins/session-panel",
-      "category": "productivity"
-    },
-    {
-      "name": "session-bar",
-      "description": "A bar beneath the prompt: running time, prompt-cache countdown, context usage, quotas, and the model and effort selectors.",
-      "source": "./plugins/session-bar",
+      "name": "session-mods",
+      "description": "A calm side pane (first prompt, sub-agents with their task and full history, a checklist of the session's steps) and a bar beneath the prompt (running time, prompt-cache countdown, context usage, quotas, and the model and effort selectors).",
+      "source": "./plugins/session-mods",
       "category": "productivity"
     },
     {

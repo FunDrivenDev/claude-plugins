@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderElement, ToolCallInput, ToolCallResult, UiCopyArgs } from 'claude-code'
+import type { EngineInterface, Hook, On, RenderElement, ToolCallInput, ToolCallResult, UiCopyArgs } from 'claude-code'
 
 import type { Agent, Config, Doc, Entry, FileChange, Handover, HandoverFile, Prompt, Repo, RepoChanges, Step, Tab, TrackedIssue, TrackedPr } from '../types'
 
@@ -9,6 +9,9 @@ import { PR_COLOR, RANK, findRefs, linearOfResult, prState, refKey, refsOfGh, re
 import type { GithubRef, LinearRef } from './tracker'
 
 const PANE = 'session-panel'
+
+type StartArgs = Parameters<Hook<'session.start'>>
+type StepArgs = Parameters<Hook<'turn.step'>>
 const TITLE = 'Session'
 /** The dock's opening width in fullscreen: more than any terminal gives, so the engine opens it at its ceiling (45% of the terminal); a width the person dragged or keyed wins. */
 const DOCK_COLUMNS = 512
@@ -22,44 +25,44 @@ const STEPS_CAP = 300
 /** Finished steps shown while the list is folded, above the current one. */
 const DONE_SHOWN = 4
 
-const agents = atom({ plugin: 'session-panel', key: 'agents' } as const, [] as Agent[])
-const steps = atom({ plugin: 'session-panel', key: 'steps' } as const, [] as Step[])
-const expanded = atom({ plugin: 'session-panel', key: 'expanded' } as const, null as string | null)
-const stepsOpen = atom({ plugin: 'session-panel', key: 'stepsOpen' } as const, false)
-const roots = atom({ plugin: 'session-panel', key: 'roots' } as const, [] as string[])
-const changes = atom({ plugin: 'session-panel', key: 'changes' } as const, [] as RepoChanges[])
+const agents = atom({ plugin: 'session-mods', key: 'agents' } as const, [] as Agent[])
+const steps = atom({ plugin: 'session-mods', key: 'steps' } as const, [] as Step[])
+const expanded = atom({ plugin: 'session-mods', key: 'expanded' } as const, null as string | null)
+const stepsOpen = atom({ plugin: 'session-mods', key: 'stepsOpen' } as const, false)
+const roots = atom({ plugin: 'session-mods', key: 'roots' } as const, [] as string[])
+const changes = atom({ plugin: 'session-mods', key: 'changes' } as const, [] as RepoChanges[])
 const UNTRACKED_COUNTED = 30
 const COMMITS_SHOWN = 8
 const EDITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Bash'])
-const prompts = atom({ plugin: 'session-panel', key: 'prompts' } as const, [] as (Prompt | string)[])
-const view = atom({ plugin: 'session-panel', key: 'view' } as const, 'overview' as 'overview' | 'prompts')
+const prompts = atom({ plugin: 'session-mods', key: 'prompts' } as const, [] as (Prompt | string)[])
+const view = atom({ plugin: 'session-mods', key: 'view' } as const, 'overview' as 'overview' | 'prompts')
 /** The repositories the session worked on, in the order it first touched them. */
-const workedRepos = atom({ plugin: 'session-panel', key: 'repos' } as const, [] as Repo[])
+const workedRepos = atom({ plugin: 'session-mods', key: 'repos' } as const, [] as Repo[])
 /** A repository as the Git section draws it; `isLocal` false for one known only by a pull request. */
 type RepoBlock = { key: string; name: string; pr: TrackedPr | null; worktree: string | null; isLocal: boolean }
-const tracker = atom({ plugin: 'session-panel', key: 'tracker' } as const, { issue: null, prs: [], mentioned: [] } as {
+const tracker = atom({ plugin: 'session-mods', key: 'tracker' } as const, { issue: null, prs: [], mentioned: [] } as {
   issue: TrackedIssue | null
   prs: TrackedPr[]
   mentioned: string[]
 })
-const handover = atom({ plugin: 'session-panel', key: 'handover' } as const, null as Handover | null)
-const documents = atom({ plugin: 'session-panel', key: 'documents' } as const, [] as Doc[])
-const config = atom({ plugin: 'session-panel', key: 'config' } as const, {
+const handover = atom({ plugin: 'session-mods', key: 'handover' } as const, null as Handover | null)
+const documents = atom({ plugin: 'session-mods', key: 'documents' } as const, [] as Doc[])
+const config = atom({ plugin: 'session-mods', key: 'config' } as const, {
   plansDirectory: null,
   handoverDir: null,
 } as Config)
-const tab = atom({ plugin: 'session-panel', key: 'tab' } as const, 'main' as Tab)
+const tab = atom({ plugin: 'session-mods', key: 'tab' } as const, 'main' as Tab)
 /** The session's overall topic, as the main agent names it with the session_title tool. */
-const topic = atom({ plugin: 'session-panel', key: 'topic' } as const, null as string | null)
+const topic = atom({ plugin: 'session-mods', key: 'topic' } as const, null as string | null)
 /** The session whose title is set, and the one reminded to set it: a title carried over through /clear or a reload belongs to another. */
-const titled = atom({ plugin: 'session-panel', key: 'titled' } as const, { set: null, reminded: null } as { set: string | null; reminded: string | null })
+const titled = atom({ plugin: 'session-mods', key: 'titled' } as const, { set: null, reminded: null } as { set: string | null; reminded: string | null })
 const WRITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
 /** Where documents are told apart, for the handover and plans folders it was read with. */
 let docContext: { key: string; ctx: DocContext } | null = null
 /** Main-loop calls that returned, possibly before the step that made them ended. */
 const returned = new Set<string>()
 let hasLinearApp = false
-const home = atom({ plugin: 'session-panel', key: 'home' } as const, null as string | null)
+const home = atom({ plugin: 'session-mods', key: 'home' } as const, null as string | null)
 const LINEAR_ID = /\b[A-Z][A-Z0-9]{1,9}-\d+\b/g
 const ISSUE_ICON = { github: { glyph: '◉', color: '#3fb950' }, linear: { glyph: '◐', color: '#5e6ad2' } } as const
 
@@ -704,7 +707,7 @@ async function titleFromHandover($: EngineInterface) {
 }
 
 const TITLE_TOOL = 'session_title'
-const TITLE_TOOL_ID = `mcp__session-panel__${TITLE_TOOL}`
+const TITLE_TOOL_ID = `mcp__session-mods__${TITLE_TOOL}`
 const TITLE_TOOL_DESCRIPTION = `Sets this session's title: its overall topic in 3 to 7 words, in the language of the person's prompts. It heads the session panel and names the session (/resume, the terminal tab), so the person can tell sessions apart at a glance.
 Call it once the first task is clear, then only when what the session is about changes significantly (a new task, not a new step of the same one). Never call it every turn.`
 
@@ -729,58 +732,122 @@ async function finish($: EngineInterface, agentId: string, answer?: string) {
   )
 }
 
-export const register: Register = on => {
-  let ticker: { cancel: () => void } | null = null
-  let scheme: Scheme = 'dark'
+/** The pane's tick and colour scheme, shared by its session start and its drawing. */
+let ticker: { cancel: () => void } | null = null
+let scheme: Scheme = 'dark'
 
-  on('session.start', async ($, e, next) => {
-    await update($, expanded, () => null)
-    await update($, view, () => 'overview')
-    await $.command.register({ name: 'session-panel', description: 'Open the session overview pane' })
-    await $.tool
-      .register({
-      name: TITLE_TOOL,
-      description: TITLE_TOOL_DESCRIPTION,
-      inputSchema: {
-        type: 'object',
-        properties: { title: { type: 'string', description: 'The overall topic, 3 to 7 words, no final period' } },
-        required: ['title'],
-      },
-      isDeferred: false,
-    })
-      .catch(() => undefined)
-    void $.ui.open({ id: PANE, title: TITLE, columns: DOCK_COLUMNS })
-    ticker?.cancel()
-    let ticks = 0
-    ticker = $.clock.every(1000, () => {
-      ticks++
-      if (ticks % 5 === 0) void readHandover($).then(() => titleFromHandover($))
-      if (ticks % 5 === 0) void readScheme($).then(s => (scheme = s))
-      if (ticks % 30 === 0) void readConfig($)
-      if (ticks % 60 === 0) void refreshPr($)
-      $.ui.invalidate('ui.render')
-    })
-    const remote = await $.process.run(['git', '-C', e.cwd, 'remote', 'get-url', 'origin'])
-    await update($, home, () => (remote.exitCode === 0 ? repoOfRemote(remote.stdout) : null))
-    hasLinearApp = (await $.process.run(['test', '-d', '/Applications/Linear.app'])).exitCode === 0
-    await readHandover($)
-    await titleFromHandover($)
-    await readConfig($)
-    scheme = await readScheme($)
-    await trackRepo($, e.cwd)
-    await refreshFiles($)
-
-    if ((await read($, prompts)).length === 0) {
-      const typed = (await $.session.messages())
-        .filter(m => m.role === 'user' && !m.toolResults?.length)
-        .map(m => promptText(m.text))
-        .filter((text): text is string => text !== null)
-      if (typed.length) await update($, prompts, () => typed.map(text => ({ text, at: null })))
-    }
-    await rescanTracker($)
-
-    return next(e)
+/** The pane's work at session start, before `register` lets the chain go on. */
+export async function startPanel($: StartArgs[0], e: StartArgs[1]): Promise<void> {
+  await update($, expanded, () => null)
+  await update($, view, () => 'overview')
+  await $.command.register({ name: 'session-panel', description: 'Open the session overview pane' })
+  await $.tool
+    .register({
+    name: TITLE_TOOL,
+    description: TITLE_TOOL_DESCRIPTION,
+    inputSchema: {
+      type: 'object',
+      properties: { title: { type: 'string', description: 'The overall topic, 3 to 7 words, no final period' } },
+      required: ['title'],
+    },
+    isDeferred: false,
   })
+    .catch(() => undefined)
+  void $.ui.open({ id: PANE, title: TITLE, columns: DOCK_COLUMNS })
+  ticker?.cancel()
+  let ticks = 0
+  ticker = $.clock.every(1000, () => {
+    ticks++
+    if (ticks % 5 === 0) void readHandover($).then(() => titleFromHandover($))
+    if (ticks % 5 === 0) void readScheme($).then(s => (scheme = s))
+    if (ticks % 30 === 0) void readConfig($)
+    if (ticks % 60 === 0) void refreshPr($)
+    $.ui.invalidate('ui.render')
+  })
+  const remote = await $.process.run(['git', '-C', e.cwd, 'remote', 'get-url', 'origin'])
+  await update($, home, () => (remote.exitCode === 0 ? repoOfRemote(remote.stdout) : null))
+  hasLinearApp = (await $.process.run(['test', '-d', '/Applications/Linear.app'])).exitCode === 0
+  await readHandover($)
+  await titleFromHandover($)
+  await readConfig($)
+  scheme = await readScheme($)
+  await trackRepo($, e.cwd)
+  await refreshFiles($)
+
+  if ((await read($, prompts)).length === 0) {
+    const typed = (await $.session.messages())
+      .filter(m => m.role === 'user' && !m.toolResults?.length)
+      .map(m => promptText(m.text))
+      .filter((text): text is string => text !== null)
+    if (typed.length) await update($, prompts, () => typed.map(text => ({ text, at: null })))
+  }
+  await rescanTracker($)
+}
+
+/** The pane's `turn.step` hook, which `register` wraps in the bar's work. */
+export async function* stepPanel($: StepArgs[0], e: StepArgs[1], next: StepArgs[2]) {
+  const agentId = e.agentId
+  const stepId = `${e.turnId}:${e.index}`
+  if (!agentId) {
+    await update($, steps, list => [...list, { id: stepId, label: 'Thinking…', isDone: false }].slice(-STEPS_CAP))
+  }
+
+  const thinking = new Map<number, string>()
+  const text = new Map<number, string>()
+  const toolIds: string[] = []
+  let live = 'Thinking…'
+  const stream = next(e)
+  let item = await stream.next()
+  while (!item.done) {
+    const chunk = item.value
+    if (chunk.kind === 'thinking') thinking.set(chunk.index, (thinking.get(chunk.index) ?? '') + chunk.text)
+    if (chunk.kind === 'text') text.set(chunk.index, (text.get(chunk.index) ?? '') + chunk.text)
+    if (chunk.kind === 'tool') toolIds.push(chunk.id)
+    if (!agentId) {
+      const label =
+        chunk.kind === 'tool'
+          ? `${chunk.name}…`
+          : lastSentence([...(chunk.kind === 'text' ? text : thinking).values()].join(' ')) ?? live
+      if (label !== live) {
+        live = label
+        await update($, steps, list => list.map(s => (s.id === stepId ? { ...s, label } : s)))
+      }
+    }
+    yield chunk
+    item = await stream.next()
+  }
+  const result = item.value
+
+  const thought = [...thinking.values()].join(' ').trim()
+  const said = [...text.values()].join(' ').trim()
+  if (agentId) {
+    if (thought) await addEntry($, agentId, { kind: 'think', text: thought })
+    if (said) await addEntry($, agentId, { kind: 'say', text: said })
+  } else {
+    const calls = result.toolUses.map(use =>
+      intentOf(use.name, typeof use.input === 'object' && use.input !== null ? (use.input as Record<string, unknown>) : {}),
+    )
+    const label =
+      (calls.length && calls.map(c => c.what).join(' · ')) || (thought && headline(thought)) || (said && headline(said)) || 'Answered'
+    const how = calls.map(c => c.how).filter(Boolean).join(' · ') || undefined
+    const why = calls.length && thought ? headline(thought) : undefined
+    await update($, steps, list => {
+      const index = list.findIndex(s => s.id === stepId)
+      const earlier = list.slice(Math.max(0, index - 3), index)
+      const same = calls.length ? earlier.reverse().find(s => s.label === label && s.how === how) : undefined
+      const repeats = same ? (same.repeats ?? 1) + 1 : undefined
+      return list.map(s =>
+        s.id === stepId
+          ? { ...s, label, how, why, toolIds, doneIds: toolIds.filter(id => returned.has(id)), isDone: true, ...(repeats ? { flag: 'repeat' as const, repeats } : {}) }
+          : s,
+      )
+    })
+  }
+
+  return result
+}
+
+export const registerPanel = (on: On) => {
 
   on('command.run', { command: 'session-panel' }, async $ => {
     await update($, expanded, () => null)
@@ -807,67 +874,6 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('turn.step', async function* ($, e, next) {
-    const agentId = e.agentId
-    const stepId = `${e.turnId}:${e.index}`
-    if (!agentId) {
-      await update($, steps, list => [...list, { id: stepId, label: 'Thinking…', isDone: false }].slice(-STEPS_CAP))
-    }
-
-    const thinking = new Map<number, string>()
-    const text = new Map<number, string>()
-    const toolIds: string[] = []
-    let live = 'Thinking…'
-    const stream = next(e)
-    let item = await stream.next()
-    while (!item.done) {
-      const chunk = item.value
-      if (chunk.kind === 'thinking') thinking.set(chunk.index, (thinking.get(chunk.index) ?? '') + chunk.text)
-      if (chunk.kind === 'text') text.set(chunk.index, (text.get(chunk.index) ?? '') + chunk.text)
-      if (chunk.kind === 'tool') toolIds.push(chunk.id)
-      if (!agentId) {
-        const label =
-          chunk.kind === 'tool'
-            ? `${chunk.name}…`
-            : lastSentence([...(chunk.kind === 'text' ? text : thinking).values()].join(' ')) ?? live
-        if (label !== live) {
-          live = label
-          await update($, steps, list => list.map(s => (s.id === stepId ? { ...s, label } : s)))
-        }
-      }
-      yield chunk
-      item = await stream.next()
-    }
-    const result = item.value
-
-    const thought = [...thinking.values()].join(' ').trim()
-    const said = [...text.values()].join(' ').trim()
-    if (agentId) {
-      if (thought) await addEntry($, agentId, { kind: 'think', text: thought })
-      if (said) await addEntry($, agentId, { kind: 'say', text: said })
-    } else {
-      const calls = result.toolUses.map(use =>
-        intentOf(use.name, typeof use.input === 'object' && use.input !== null ? (use.input as Record<string, unknown>) : {}),
-      )
-      const label =
-        (calls.length && calls.map(c => c.what).join(' · ')) || (thought && headline(thought)) || (said && headline(said)) || 'Answered'
-      const how = calls.map(c => c.how).filter(Boolean).join(' · ') || undefined
-      const why = calls.length && thought ? headline(thought) : undefined
-      await update($, steps, list => {
-        const index = list.findIndex(s => s.id === stepId)
-        const earlier = list.slice(Math.max(0, index - 3), index)
-        const same = calls.length ? earlier.reverse().find(s => s.label === label && s.how === how) : undefined
-        const repeats = same ? (same.repeats ?? 1) + 1 : undefined
-        return list.map(s =>
-          s.id === stepId
-            ? { ...s, label, how, why, toolIds, doneIds: toolIds.filter(id => returned.has(id)), isDone: true, ...(repeats ? { flag: 'repeat' as const, repeats } : {}) }
-            : s,
-        )
-      })
-    }
-
-    return result
-  })
 
   on('agent.spawn', async ($, e, next) => {
     const now = await $.clock.now()
