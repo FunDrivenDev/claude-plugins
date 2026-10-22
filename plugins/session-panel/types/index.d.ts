@@ -1,12 +1,3 @@
-export type Ttl = '5m' | '1h'
-
-export type Info = {
-  model: string | null
-  effort: string | null
-  lastRequestAt: number | null
-  ttl: Ttl | null
-}
-
 export type Entry = { kind: 'think' | 'say' | 'tool' | 'result' | 'error'; text: string }
 
 export type Agent = {
@@ -33,19 +24,6 @@ export type FileChange = {
 export type Commit = { hash: string; subject: string; body: string; at: number; isPushed: boolean }
 
 export type RepoChanges = { root: string; branch: string; files: FileChange[]; commits: Commit[] }
-
-export type Picker = 'model' | 'effort' | null
-
-export type Quota = {
-  label: string
-  used: number
-  /** Share of the window elapsed, 0 to 1; null while the reset time is unknown. */
-  elapsed: number | null
-  /** Where the average burn lands at the reset, or when the limit runs out. */
-  verdict: { text: string; tone: 'ok' | 'tight' | 'out' } | null
-  /** Milliseconds until the window resets. */
-  resetsIn: number | null
-}
 
 export type Step = {
   id: string
@@ -137,10 +115,6 @@ export type Doc = {
 
 /** The values the pane reads from configuration, as set; null where unset and the default applies. */
 export type Config = {
-  cacheTtl: Ttl
-  autoCompactWindow: number | null
-  tokenLimit: number | null
-  tokenReserve: number | null
   plansDirectory: string | null
   handoverDir: string | null
 }
@@ -148,12 +122,10 @@ export type Config = {
 declare module 'claude-code' {
   interface PluginState {
     'session-panel': {
-      info: Info
       agents: Agent[]
       steps: Step[]
       expanded: string | null
       stepsOpen: boolean
-      picking: Picker
       prompts: (Prompt | string)[]
       view: 'overview' | 'prompts'
       roots: string[]
@@ -165,7 +137,6 @@ declare module 'claude-code' {
       documents: Doc[]
       config: Config
       tab: Tab
-      quotasOpen: boolean
       topic: string | null
       /** The session whose title is set (by the agent or from its handover), and the one already reminded to set it. */
       titled: { set: string | null; reminded: string | null }

@@ -14,7 +14,7 @@
     },
     {
       "name": "session-panel",
-      "description": "A calm side pane: model and effort, first prompt, uptime, prompt-cache countdown, sub-agents with their task and full history, and a checklist of the session's steps.",
+      "description": "A calm side pane: first prompt, sub-agents with their task and full history, and a checklist of the session's steps.",
       "source": "./plugins/session-panel",
       "category": "productivity"
     },

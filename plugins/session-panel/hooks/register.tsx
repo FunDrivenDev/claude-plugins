@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement, ToolCallInput, ToolCallResult, UiCopyArgs } from 'claude-code'
 
-import type { Agent, Config, Doc, Entry, FileChange, Handover, HandoverFile, Info, Picker, Prompt, Quota, Repo, RepoChanges, Step, Tab, TrackedIssue, TrackedPr, Ttl } from '../types'
+import type { Agent, Config, Doc, Entry, FileChange, Handover, HandoverFile, Prompt, Repo, RepoChanges, Step, Tab, TrackedIssue, TrackedPr } from '../types'
 
 import { LOG_FORMAT, parseLog, parseNumstat, parseStatus, treeRows } from './files'
 import { ARTIFACTS, HANDOVER_DIR, PLANS_DIR, artifactOf, type DocContext, docGroups, docOf, docPaths, tilde } from './documents'
@@ -22,12 +22,6 @@ const STEPS_CAP = 300
 /** Finished steps shown while the list is folded, above the current one. */
 const DONE_SHOWN = 4
 
-const info = atom({ plugin: 'session-panel', key: 'info' } as const, {
-  model: null,
-  effort: null,
-  lastRequestAt: null,
-  ttl: null,
-} as Info)
 const agents = atom({ plugin: 'session-panel', key: 'agents' } as const, [] as Agent[])
 const steps = atom({ plugin: 'session-panel', key: 'steps' } as const, [] as Step[])
 const expanded = atom({ plugin: 'session-panel', key: 'expanded' } as const, null as string | null)
@@ -43,7 +37,6 @@ const view = atom({ plugin: 'session-panel', key: 'view' } as const, 'overview' 
 const workedRepos = atom({ plugin: 'session-panel', key: 'repos' } as const, [] as Repo[])
 /** A repository as the Git section draws it; `isLocal` false for one known only by a pull request. */
 type RepoBlock = { key: string; name: string; pr: TrackedPr | null; worktree: string | null; isLocal: boolean }
-const picking = atom({ plugin: 'session-panel', key: 'picking' } as const, null as Picker)
 const tracker = atom({ plugin: 'session-panel', key: 'tracker' } as const, { issue: null, prs: [], mentioned: [] } as {
   issue: TrackedIssue | null
   prs: TrackedPr[]
@@ -52,15 +45,9 @@ const tracker = atom({ plugin: 'session-panel', key: 'tracker' } as const, { iss
 const handover = atom({ plugin: 'session-panel', key: 'handover' } as const, null as Handover | null)
 const documents = atom({ plugin: 'session-panel', key: 'documents' } as const, [] as Doc[])
 const config = atom({ plugin: 'session-panel', key: 'config' } as const, {
-  cacheTtl: '1h',
-  autoCompactWindow: null,
-  tokenLimit: null,
-  tokenReserve: null,
   plansDirectory: null,
   handoverDir: null,
 } as Config)
-/** The quota bars unfolded beneath the top lines, from the quota pill. */
-const quotasOpen = atom({ plugin: 'session-panel', key: 'quotasOpen' } as const, false)
 const tab = atom({ plugin: 'session-panel', key: 'tab' } as const, 'main' as Tab)
 /** The session's overall topic, as the main agent names it with the session_title tool. */
 const topic = atom({ plugin: 'session-panel', key: 'topic' } as const, null as string | null)
@@ -76,37 +63,12 @@ const home = atom({ plugin: 'session-panel', key: 'home' } as const, null as str
 const LINEAR_ID = /\b[A-Z][A-Z0-9]{1,9}-\d+\b/g
 const ISSUE_ICON = { github: { glyph: '◉', color: '#3fb950' }, linear: { glyph: '◐', color: '#5e6ad2' } } as const
 
-/** The models the selector offers, each in its Catppuccin Frappé colour. */
-const MODELS = [
-  { id: 'claude-opus-5-5', color: '#ef9f76' },
-  { id: 'claude-fable-5-1', color: '#ca9ee6' },
-  { id: 'claude-sonnet-5-5', color: '#8caaee' },
-  { id: 'claude-haiku-4-5-20251001', color: '#a6d189' },
-] as const
-
-/** The effort scale, in the colours `/effort` gives each level (Claude Code's dark theme). */
-const EFFORTS = [
-  { level: 'low', color: '#ffc107' },
-  { level: 'medium', color: '#4eba65' },
-  { level: 'high', color: '#b1b9f9' },
-  { level: 'xhigh', color: '#af87ff' },
-  { level: 'max', color: '#eb5f57' },
-] as const
-
-export const modelColor = (id: string | null): string => {
-  const family = id ? /claude-([a-z]+)/.exec(id)?.[1] : undefined
-  return MODELS.find(m => family && m.id.startsWith(`claude-${family}`))?.color ?? '#a5adce'
-}
-
-export const effortColor = (level: string | null): string =>
-  EFFORTS.find(e => e.level === level)?.color ?? '#a5adce'
-
 export type Scheme = 'dark' | 'light'
 
 /**
  * Each colour the pane draws, as written for a dark background, with its twin
- * for a light one: Catppuccin Latte for Frappé; for the status line's bright
- * grading, GitHub's and `/effort`'s colours, the nearest tone that reads on white.
+ * for a light one: Catppuccin Latte for Frappé; for GitHub's colours, the
+ * nearest tone that reads on white.
  */
 const LIGHT: Record<string, string> = {
   '#a6d189': '#40a02b',
@@ -120,16 +82,6 @@ const LIGHT: Record<string, string> = {
   '#a5adce': '#6c6f85',
   '#c6d0f5': '#4c4f69',
   '#51576d': '#bcc0cc',
-  '#8a8a8a': '#7c7f93',
-  '#5fff00': '#40a02b',
-  '#ffff00': '#9a6700',
-  '#ffaf00': '#fe640b',
-  '#ff0000': '#d20f39',
-  '#ffc107': '#9a6700',
-  '#4eba65': '#40a02b',
-  '#b1b9f9': '#7287fd',
-  '#af87ff': '#8839ef',
-  '#eb5f57': '#d20f39',
   '#3fb950': '#1a7f37',
   '#f85149': '#cf222e',
   '#a371f7': '#8250df',
@@ -158,15 +110,6 @@ async function readScheme($: EngineInterface): Promise<Scheme> {
   return /does not exist/.test(r.stderr) ? 'light' : 'dark'
 }
 
-const effortLabel = (level: string | null): string => level ?? 'default'
-
-/** An alias `/model` takes (`opus`, `sonnet[1m]`) → the id the selector offers; an id as given. */
-export const modelId = (model: string): string => {
-  if (model.includes('claude-')) return model
-  const family = /^[a-z]+/.exec(model.toLowerCase())?.[0]
-  return MODELS.find(m => family && m.id.startsWith(`claude-${family}-`))?.id ?? model
-}
-
 /** `claude-opus-5-5[1m]` → `Opus 5.5`; anything else as given. */
 export const prettyModel = (id: string): string => {
   const m = /claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?/.exec(id)
@@ -185,138 +128,11 @@ export const duration = (ms: number): string => {
   return `${sec}s`
 }
 
-/** Prompt-cache time left, as the status line counts it: whole minutes, `<1m` in the last one. */
-export const minutesLeft = (ms: number): string => (ms < 60_000 ? '<1m' : `${Math.floor(ms / 60_000)}m`)
-
-/** The status line's grading: green while half the TTL is left, yellow down to a fifth, then orange. */
-export const cacheColor = (left: number, ttl: number): string =>
-  left * 2 >= ttl ? '#5fff00' : left * 5 >= ttl ? '#ffff00' : '#ffaf00'
-
-/** The status line's defaults: the auto-compact window, and how far below it compaction fires. */
-const WINDOW = 200_000
-const RESERVE = 33_000
-/** Where the context counter turns yellow, orange and red, as shares of the limit (CC_TOKEN_WARN, _DANGER, _ALERT). */
-const STAGES = [0.5, 0.75, 0.9] as const
-
-/** The auto-compact trigger (`limit`) and the window it sits a margin below. */
-export type Limit = { limit: number; window: number }
-
-/** `78234` → `78.2k`, `934` → `934`, as the status line counts tokens. */
-export const kfmt = (n: number): string => (n < 1000 ? String(n) : `${Math.floor(n / 1000)}.${Math.floor((n % 1000) / 100)}k`)
-
-const cap = (n: number): string => (n % 1000 === 0 ? `${n / 1000}k` : kfmt(n))
-
-/**
- * The context counter: tokens against the auto-compact trigger, how it is
- * reckoned in brackets (`250k − 33k`), green to half of the trigger, yellow to
- * three quarters, orange to nine tenths, then red, and compacting once reached.
- */
-export const contextOf = (tokens: number | undefined, { limit, window }: Limit): { text: string; color: string; isCompacting: boolean } => {
-  const sum = window > limit ? ` (${cap(window)} − ${cap(window - limit)})` : ''
-  if (tokens === undefined) return { text: `0/${cap(limit)}${sum}`, color: '#8a8a8a', isCompacting: false }
-  const text = `${kfmt(tokens)}/${cap(limit)}${sum} ${Math.floor((tokens * 100) / limit)}%`
-  if (tokens >= limit) return { text: `${text} ⚠ compacting`, color: '#ff0000', isCompacting: true }
-  const stage = STAGES.findIndex(share => tokens <= limit * share)
-  return { text, color: ['#5fff00', '#ffff00', '#ffaf00'][stage] ?? '#ff0000', isCompacting: false }
-}
-
-/** A whole positive number, from a number or its digits; null otherwise. */
-const whole = (value: unknown): number | null => {
-  const n = typeof value === 'string' && /^\d{1,12}$/.test(value) ? Number(value) : value
-  return typeof n === 'number' && Number.isInteger(n) && n > 0 ? n : null
-}
-
-/**
- * The auto-compact trigger as the engine sets it (/context's figures); where
- * the engine gives none, as the status line reckons it: CC_TOKEN_LIMIT, else
- * `autoCompactWindow`, else 200k; less CC_TOKEN_RESERVE.
- */
-async function readLimit($: EngineInterface): Promise<Limit> {
-  const b = (await $.session.usage({ breakdown: 'summary' })).context.breakdown
-  if (b?.autoCompactThreshold && b.autoCompactThreshold > 0)
-    return { limit: b.autoCompactThreshold, window: Math.max(b.rawMaxTokens, b.autoCompactThreshold) }
-  if (b && !b.isAutoCompactEnabled && b.rawMaxTokens > 0) return { limit: b.rawMaxTokens, window: b.rawMaxTokens }
-  const window = whole(await $.env.get('CC_TOKEN_LIMIT')) ?? whole((await $.settings.read()).autoCompactWindow) ?? WINDOW
-  const limit = window - (whole(await $.env.get('CC_TOKEN_RESERVE')) ?? RESERVE)
-  return { limit: limit > 0 ? limit : window, window }
-}
-
 /** The message the closing reply hands the next session: its code block after `/clear`, on one line, as the handover plugin reads it. */
 export const resumeMessage = (reply: string): string | null => {
   const at = reply.search(/\/clear\b/)
   const block = at < 0 ? null : /```[^\n]*\n([\s\S]*?)```/.exec(reply.slice(at))
   return block ? block[1]!.split(/\s+/).filter(Boolean).join(' ') || null : null
-}
-
-/** The rate-limit windows the status line shows, by their length. */
-const WINDOWS: Record<string, { label: string; ms: number }> = {
-  five_hour: { label: '5h', ms: 18_000_000 },
-  seven_day: { label: '7d', ms: 604_800_000 },
-}
-/** Share of a window that must elapse before its pace is judged, as the status line's CC_PACE_MIN. */
-const PACE_MIN = 0.1
-const TONE = { ok: '#a6d189', tight: '#e5c890', out: '#e78284' } as const
-
-/** Coarse time left, as the status line writes it: `2d07h`, `3h14m`, `42m`. */
-export const span = (ms: number): string => {
-  const m = Math.max(0, Math.floor(ms / 60_000))
-  const d = Math.floor(m / 1440)
-  const h = Math.floor((m % 1440) / 60)
-  if (d > 0) return `${d}d${String(h).padStart(2, '0')}h`
-  if (h > 0) return `${h}h${String(m % 60).padStart(2, '0')}m`
-  return `${m}m`
-}
-
-/**
- * A rate-limit window read as the status line reads it: the average burn so
- * far extrapolated to the reset lands under 90% (ok), at 90-100% (tight), or
- * runs out before it; judged once a tenth of the window has elapsed.
- */
-export const quotaOf = (kind: string, percentUsed: number, resetsAt: string | undefined, now: number): Quota | null => {
-  const win = WINDOWS[kind]
-  if (!win) return null
-  const used = Math.round(percentUsed)
-  const reset = resetsAt ? Date.parse(resetsAt) : NaN
-  const resetsIn = Number.isFinite(reset) && reset > now ? Math.min(reset - now, win.ms) : null
-  const elapsed = resetsIn === null ? null : (win.ms - resetsIn) / win.ms
-  let verdict: Quota['verdict'] = null
-  if (used >= 100) verdict = { text: 'max', tone: 'out' }
-  else if (elapsed !== null && elapsed > 0 && elapsed >= PACE_MIN) {
-    const projected = Math.round(used / elapsed)
-    if (projected > 100) {
-      const dry = ((100 - used) * elapsed * win.ms) / Math.max(used, 1)
-      verdict = { text: `out in ${span(dry)}`, tone: 'out' }
-    } else verdict = { text: `→${projected}%`, tone: projected >= 90 ? 'tight' : 'ok' }
-  }
-  return { label: win.label, used, elapsed, verdict, resetsIn }
-}
-
-export type BarRun = { text: string; color: string; isPace?: boolean; isAhead?: boolean }
-
-/**
- * A quota bar `width` cells wide, in half-cell steps: fill up to the pace tick
- * in green, fill past it (ahead of even spending) in the verdict's colour, the
- * rest a faint track; the tick marks where even spending would be by now.
- */
-export const barRuns = (q: Quota, width: number): BarRun[] => {
-  const tone = TONE[q.verdict?.tone ?? 'ok']
-  const halves = Math.round((Math.min(q.used, 100) / 100) * width * 2)
-  const pace = q.elapsed === null ? -1 : Math.min(width - 1, Math.round(q.elapsed * width))
-  const runs: BarRun[] = []
-  const push = (text: string, color: string, flags: Omit<BarRun, 'text' | 'color'> = {}) => {
-    const last = runs[runs.length - 1]
-    if (last && last.color === color && !last.isPace && !flags.isPace && !!last.isAhead === !!flags.isAhead) last.text += text
-    else runs.push({ text, color, ...flags })
-  }
-  for (let cell = 0; cell < width; cell++) {
-    const filled = halves - cell * 2
-    const isAhead = pace >= 0 && cell > pace
-    if (cell === pace) push('┃', '#c6d0f5', { isPace: true })
-    else if (filled >= 2) push('━', isAhead ? tone : TONE.ok, { isAhead })
-    else if (filled === 1) push('╸', isAhead ? tone : TONE.ok, { isAhead })
-    else push('─', '#51576d')
-  }
-  return runs
 }
 
 /** How long ago, coarsely: minutes within the hour, then hours, then days. */
@@ -502,8 +318,6 @@ const HELP_EXAMPLE = 34
 /** Starts the handover's wind-down at once, as `/handover:trigger` does. */
 const TRIGGER_NOW = { key: 'handover:trigger', emoji: '⚡', label: 'Hand over now', color: '#e5c890' } as const
 
-const ttlMs = (ttl: Ttl): number => (ttl === '1h' ? 3_600_000 : 300_000)
-
 async function addEntry($: EngineInterface, agentId: string, entry: Entry) {
   await update($, agents, list =>
     list.map(a =>
@@ -586,17 +400,6 @@ async function refreshFiles($: EngineInterface) {
   const found = await Promise.all((await read($, roots)).map(root => changesOf($, root, since)))
   const next = found.filter((repo): repo is RepoChanges => repo !== null)
   await update($, changes, () => next)
-}
-
-/**
- * Selects the session's model and effort before its first turn reports them:
- * the model `/model` shows, the effort from the variable or the settings it saves to.
- */
-async function seedModel($: EngineInterface) {
-  const model = modelId(await $.session.model())
-  const saved = (await $.env.get('CLAUDE_CODE_EFFORT_LEVEL')) ?? (await $.settings.read()).effortLevel
-  const effort = typeof saved === 'string' && EFFORTS.some(e => e.level === saved) ? saved : null
-  await update($, info, i => ({ ...i, model: i.model ?? model, effort: i.effort ?? effort }))
 }
 
 /** Marks a main-loop call as returned, so the step that made it can end. */
@@ -783,17 +586,11 @@ async function scanDocs($: EngineInterface, tool: string, input: Record<string, 
 }
 
 /** The values the pane reads from Claude Code's settings and the environment, as set. */
-async function readConfig($: EngineInterface, cacheTtl: Ttl) {
+async function readConfig($: EngineInterface) {
   const settings = await $.settings.read().catch(() => ({}) as Record<string, unknown>)
   const plans = (settings as Record<string, unknown>).plansDirectory
-  const next = {
-    cacheTtl,
-    autoCompactWindow: whole((settings as Record<string, unknown>).autoCompactWindow),
-    tokenLimit: whole(await $.env.get('CC_TOKEN_LIMIT').catch(() => undefined)),
-    tokenReserve: whole(await $.env.get('CC_TOKEN_RESERVE').catch(() => undefined)),
-    plansDirectory: typeof plans === 'string' && plans.trim() ? plans.trim() : null,
-  }
-  await update($, config, c => ({ ...c, ...next }))
+  const plansDirectory = typeof plans === 'string' && plans.trim() ? plans.trim() : null
+  await update($, config, c => ({ ...c, plansDirectory }))
 }
 
 const HANDOVER_READ = `d="$HOME/.claude/plugins/data/handover-fundrivendev"
@@ -932,10 +729,8 @@ async function finish($: EngineInterface, agentId: string, answer?: string) {
   )
 }
 
-export const register: Register = (on, options) => {
-  const defaultTtl: Ttl = options.cacheTtl === '5m' ? '5m' : '1h'
+export const register: Register = on => {
   let ticker: { cancel: () => void } | null = null
-  let limit: Limit = { limit: WINDOW - RESERVE, window: WINDOW }
   let scheme: Scheme = 'dark'
 
   on('session.start', async ($, e, next) => {
@@ -961,8 +756,7 @@ export const register: Register = (on, options) => {
       ticks++
       if (ticks % 5 === 0) void readHandover($).then(() => titleFromHandover($))
       if (ticks % 5 === 0) void readScheme($).then(s => (scheme = s))
-      if (ticks % 30 === 0) void readLimit($).then(n => (limit = n))
-      if (ticks % 30 === 0) void readConfig($, defaultTtl)
+      if (ticks % 30 === 0) void readConfig($)
       if (ticks % 60 === 0) void refreshPr($)
       $.ui.invalidate('ui.render')
     })
@@ -971,12 +765,10 @@ export const register: Register = (on, options) => {
     hasLinearApp = (await $.process.run(['test', '-d', '/Applications/Linear.app'])).exitCode === 0
     await readHandover($)
     await titleFromHandover($)
-    limit = await readLimit($)
-    await readConfig($, defaultTtl)
+    await readConfig($)
     scheme = await readScheme($)
     await trackRepo($, e.cwd)
     await refreshFiles($)
-    await seedModel($)
 
     if ((await read($, prompts)).length === 0) {
       const typed = (await $.session.messages())
@@ -1015,16 +807,10 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('classic.PreModelSwitch', async ($, e, next) => {
-    await update($, info, i => ({ ...i, ttl: e.cache_ttl }))
-    return next(e)
-  })
-
   on('turn.step', async function* ($, e, next) {
     const agentId = e.agentId
     const stepId = `${e.turnId}:${e.index}`
     if (!agentId) {
-      await update($, info, i => ({ ...i, model: e.model, effort: e.effort === undefined ? null : String(e.effort) }))
       await update($, steps, list => [...list, { id: stepId, label: 'Thinking…', isDone: false }].slice(-STEPS_CAP))
     }
 
@@ -1060,7 +846,6 @@ export const register: Register = (on, options) => {
       if (thought) await addEntry($, agentId, { kind: 'think', text: thought })
       if (said) await addEntry($, agentId, { kind: 'say', text: said })
     } else {
-      const now = await $.clock.now()
       const calls = result.toolUses.map(use =>
         intentOf(use.name, typeof use.input === 'object' && use.input !== null ? (use.input as Record<string, unknown>) : {}),
       )
@@ -1068,7 +853,6 @@ export const register: Register = (on, options) => {
         (calls.length && calls.map(c => c.what).join(' · ')) || (thought && headline(thought)) || (said && headline(said)) || 'Answered'
       const how = calls.map(c => c.how).filter(Boolean).join(' · ') || undefined
       const why = calls.length && thought ? headline(thought) : undefined
-      await update($, info, i => ({ ...i, lastRequestAt: now }))
       await update($, steps, list => {
         const index = list.findIndex(s => s.id === stepId)
         const earlier = list.slice(Math.max(0, index - 3), index)
@@ -1173,14 +957,12 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Link } = $.ui.resolve(e)
-    const [now, i, all, done, open, isStepsOpen, picker, repos, stored, shown, t, ho, repoList, written, conf, usage, shownTab, isQuotasOpen, title] = await Promise.all([
+    const [now, all, done, open, isStepsOpen, repos, stored, shown, t, ho, repoList, written, conf, usage, shownTab, title] = await Promise.all([
       $.clock.now(),
-      read($, info),
       read($, agents),
       read($, steps),
       read($, expanded),
       read($, stepsOpen),
-      read($, picking),
       read($, changes),
       read($, prompts),
       read($, view),
@@ -1191,27 +973,10 @@ export const register: Register = (on, options) => {
       read($, config),
       $.session.usage(),
       read($, tab),
-      read($, quotasOpen),
       read($, topic),
     ])
     const typed = stored.map(promptOf)
     const lastPrompt = typed.at(-1)
-    const quotas = usage.rateLimits
-      .map(l => quotaOf(l.kind, l.percentUsed, l.resetsAt, now))
-      .filter((q): q is Quota => q !== null)
-
-    const ttl = i.ttl ?? defaultTtl
-    const cache =
-      i.lastRequestAt === null
-        ? { text: 'no request yet', color: undefined }
-        : (() => {
-            const left = i.lastRequestAt + ttlMs(ttl) - now
-            if (left <= 0) return { text: 'expired', color: '#ff0000' }
-            return { text: minutesLeft(left), color: cacheColor(left, ttlMs(ttl)) }
-          })()
-
-    const context = contextOf(usage.context.tokens, limit)
-
     const running = all.filter(a => a.endedAt === null)
     const finished = all.filter(a => a.endedAt !== null)
     /** What a sub-agent is doing now: its last call, else its last thought or words. */
@@ -1234,31 +999,6 @@ export const register: Register = (on, options) => {
       <Text bold color="claude">
         {title}
       </Text>
-    )
-
-    const columns = Math.max(12, e.props.bodyColumns - 2)
-    /** Ahead of pace, the overshoot breathes with the clock, once a second. */
-    const isBright = Math.floor(now / 1000) % 2 === 0
-    const quotaBar = (q: Quota, width: number) => (
-      <Box key={`quota:${q.label}`} flexDirection="column" width={width}>
-        <Box flexDirection="row" justifyContent="space-between">
-          <Text>
-            <Text dimColor>{q.label} </Text>
-            <Text bold color={TONE[q.verdict?.tone ?? 'ok']}>
-              {q.used}%
-            </Text>
-            {q.verdict && <Text color={TONE[q.verdict.tone]}> {q.verdict.text}</Text>}
-          </Text>
-          {q.resetsIn !== null && <Text dimColor>🔄 {span(q.resetsIn)}</Text>}
-        </Box>
-        <Text>
-          {barRuns(q, width).map((run, k) => (
-            <Text key={k} color={run.color} bold={run.isPace} dimColor={run.isAhead && q.verdict?.tone !== 'ok' && !isBright}>
-              {run.text}
-            </Text>
-          ))}
-        </Text>
-      </Box>
     )
 
     /** Opens or closes a sub-agent, its heading brought to the top of the pane. */
@@ -1310,42 +1050,6 @@ export const register: Register = (on, options) => {
         </Box>
       )
     }
-
-    const pill = (key: string, label: string, color: string, isOn: boolean, onPress: () => unknown) => (
-      <Box key={`${key}:pill`} borderStyle="round" borderColor={color} paddingX={1}>
-        <Text color={color}>{isOn ? '● ' : '○ '}</Text>
-        <Button key={key} label={label} plain hover={hot(key, color)} onPress={onPress} />
-      </Box>
-    )
-
-    const toggle = (which: Exclude<Picker, null>) => update($, picking, cur => (cur === which ? null : which))
-
-    const pickModel = async (id: string) => {
-      await update($, picking, () => null)
-      await update($, info, cur => ({ ...cur, model: id }))
-      await $.command.run({ command: 'model', args: id })
-    }
-
-    const pickEffort = async (level: string) => {
-      await update($, picking, () => null)
-      await update($, info, cur => ({ ...cur, effort: level }))
-      await $.command.run({ command: 'effort', args: level })
-    }
-
-    const options =
-      picker === 'model'
-        ? MODELS.map(m =>
-            pill(`model:${m.id}`, prettyModel(m.id), m.color, i.model !== null && modelColor(i.model) === m.color, () =>
-              pickModel(m.id),
-            ),
-          )
-        : picker === 'effort'
-          ? EFFORTS.map(level =>
-              pill(`effort:${level.level}`, effortLabel(level.level), level.color, i.effort === level.level, () =>
-                pickEffort(level.level),
-              ),
-            )
-          : null
 
     const last = done[done.length - 1]
     const current = last && isRunning(last) ? last : null
@@ -1523,56 +1227,28 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
-    const toggleQuotas = () => update($, quotasOpen, cur => !cur)
-    /** Each window's use in one pill, in its verdict's colour; a press anywhere but the coloured dots unfolds the bars beneath the top lines. */
-    const quotaPill = quotas.length > 0 && (
-      <Box key="quotas:box" borderStyle="round" borderColor="#51576d" paddingX={1} flexShrink={0}>
-        {quotas.map((q, k) => (
-          <Box key={`quotas:${q.label}:row`} flexDirection="row">
-            {k > 0 && <Button key={`quotas:${q.label}:divider`} label=" │ " plain dimColor hover={hot(`quotas:${q.label}:divider`)} onPress={toggleQuotas} />}
-            <Text color={TONE[q.verdict?.tone ?? 'ok']}>● </Text>
-            <Button key={`quotas:${q.label}`} label={`${q.label} ${q.used}%`} plain hover={{ color: TONE[q.verdict?.tone ?? 'ok'] }} onPress={toggleQuotas} />
-          </Box>
-        ))}
-        <Button key="quotas:fold" label={isQuotasOpen ? ' 🔼 ' : ' 🔽 '} plain hover={hot('quotas:fold')} onPress={toggleQuotas} />
-      </Box>
-    )
-
-    /** The session's title on a line of its own; beneath, the model and effort, the tabs, and a close mark wide enough to click. */
+    /** The session's title on a line of its own; beneath, the tabs and a close mark wide enough to click. */
     const header = (
       <Box flexDirection="column" marginBottom={1}>
         <Text bold color="claude" wrap="wrap">
           {title ?? TITLE}
         </Text>
-      <Box flexDirection="row" alignItems="center" columnGap={1}>
-        {tabPill('main', 'Main')}
-        {tabPill('misc', 'Misc')}
-        {tabPill('config', 'Config')}
-        {tabPill('help', 'Help')}
-        <Box flexGrow={1} />
-        {pill('pick:model', i.model ? prettyModel(i.model) : 'model…', modelColor(i.model), picker === 'model', () => toggle('model'))}
-        {pill('pick:effort', effortLabel(i.effort), effortColor(i.effort), picker === 'effort', () => toggle('effort'))}
-        {quotaPill}
-        <Box key="close:box" borderStyle="round" borderColor="#51576d" paddingX={1} flexShrink={0}>
-          <Button
-            key="close"
-            label=" ✕ "
-            plain
-            hover={{ color: '#e78284' }}
-            onPress={() => $.ui.close({ id: PANE }).catch(() => undefined)}
-          />
+        <Box flexDirection="row" alignItems="center" columnGap={1}>
+          {tabPill('main', 'Main')}
+          {tabPill('misc', 'Misc')}
+          {tabPill('config', 'Config')}
+          {tabPill('help', 'Help')}
+          <Box flexGrow={1} />
+          <Box key="close:box" borderStyle="round" borderColor="#51576d" paddingX={1} flexShrink={0}>
+            <Button
+              key="close"
+              label=" ✕ "
+              plain
+              hover={{ color: '#e78284' }}
+              onPress={() => $.ui.close({ id: PANE }).catch(() => undefined)}
+            />
+          </Box>
         </Box>
-      </Box>
-        {options && (
-          <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
-            {options}
-          </Box>
-        )}
-        {isQuotasOpen && quotas.length > 0 && (
-          <Box flexDirection="row" columnGap={3} marginTop={1}>
-            {quotas.map(q => quotaBar(q, Math.floor((columns - 3 * (quotas.length - 1)) / quotas.length)))}
-          </Box>
-        )}
       </Box>
     )
 
@@ -1619,20 +1295,6 @@ export const register: Register = (on, options) => {
     /** Each tab's body, drawn only for the tab shown: the ticker redraws the pane every second. */
     const mainBody = () => (
       <Box key="tab:main:body" flexDirection="column">
-        <Box marginBottom={1}>
-          <Text wrap="truncate-end">
-            ⌛ <Text dimColor>running </Text>
-            {duration(now - usage.startedAt)}
-            {'   '}⏳ <Text dimColor>cache </Text>
-            <Text color={cache.color}>{cache.text}</Text>
-            {'   '}
-            <Text dimColor>context </Text>
-            <Text bold color={context.color} inverse={context.isCompacting}>
-              {context.text}
-            </Text>
-          </Text>
-        </Box>
-
         {issueSection()}
         {gitSection(repoBlocks())}
 
@@ -1822,41 +1484,10 @@ export const register: Register = (on, options) => {
         {content}
       </Box>
     )
-    const sample: Quota = { label: '5h', used: 62, elapsed: 0.5, verdict: { text: '→124%', tone: 'out' }, resetsIn: 9_000_000 }
     const helpBody = () => (
       <Box key="tab:help:body" flexDirection="column">
         {section('Top lines')}
         <Box flexDirection="column">
-          {helpRow(
-            'quotas',
-            framed(
-              '#51576d',
-              <Text>
-                <Text color={TONE.ok}>● </Text>5h 42%<Text dimColor> │ </Text>
-                <Text color={TONE.tight}>● </Text>7d 81% 🔽
-              </Text>,
-            ),
-            'Use of each rate-limit window, its dot coloured by pace: green on track, yellow tight (90-100% at reset), red runs out before the reset. Press to unfold the bars.',
-          )}
-          {helpRow(
-            'bar',
-            <Box flexDirection="column">
-              <Text>
-                <Text dimColor>5h </Text>
-                <Text bold color={TONE.out}>62%</Text>
-                <Text color={TONE.out}> →124%</Text>
-                <Text dimColor> 🔄 2h30m</Text>
-              </Text>
-              <Text>
-                {barRuns(sample, HELP_EXAMPLE - 2).map((run, k) => (
-                  <Text key={k} color={run.color} bold={run.isPace}>
-                    {run.text}
-                  </Text>
-                ))}
-              </Text>
-            </Box>,
-            '→ the use projected at the reset, or "out in" how long it lasts at this pace; 🔄 the time to the reset. ┃ marks where even spending would be by now: fill past it is spent ahead of pace, and blinks once tight.',
-          )}
           {helpRow('close', framed('#51576d', <Text> ✕ </Text>), 'Closes the pane; /session-panel reopens it on Main.')}
           {helpRow(
             'hover',
@@ -1871,31 +1502,6 @@ export const register: Register = (on, options) => {
 
         {section('Main')}
         <Box flexDirection="column">
-          {helpRow(
-            'running',
-            <Text>
-              ⌛ <Text dimColor>running </Text>1h12m
-            </Text>,
-            'How long the session has run.',
-          )}
-          {helpRow(
-            'cache',
-            <Text>
-              ⏳ <Text dimColor>cache </Text>
-              <Text color={cacheColor(240_000, 300_000)}>4m</Text>
-            </Text>,
-            'Time left before the prompt cache expires: green over half its TTL, then yellow, then orange; red "expired" means the next request rereads the whole context at full price.',
-          )}
-          {helpRow(
-            'context',
-            <Text>
-              <Text dimColor>context </Text>
-              <Text bold color="#5fff00">
-                96.2k/217k (250k − 33k) 44%
-              </Text>
-            </Text>,
-            'Tokens against where Claude Code auto-compacts. 250k is the autoCompactWindow setting (100k to 1M, 200k by default), set through /config; 33k the auto-compaction margin, how far below that window it compacts. Green to half, yellow to 75%, orange to 90%, then red; "⚠ compacting" once reached.',
-          )}
           {helpRow(
             'issue',
             <Box flexDirection="row">
@@ -2115,31 +1721,9 @@ export const register: Register = (on, options) => {
     )
     const configBody = () => (
       <Box key="tab:config:body" flexDirection="column">
-        {section('session-panel')}
-        {whereSet('A plugin option: pluginConfigs["session-panel@fundrivendev"].options in settings.json.')}
-        {configRow('ttl', 'cacheTtl', conf.cacheTtl === '1h' ? null : conf.cacheTtl, '1h', 'The prompt-cache lifetime the cache countdown starts from, 1h or 5m, until a model switch reports the real one.')}
-
         {section('Claude Code')}
         {whereSet('Settings: settings.json, or /config.')}
-        {configRow(
-          'window',
-          'autoCompactWindow',
-          conf.autoCompactWindow === null ? null : cap(conf.autoCompactWindow),
-          '200k',
-          'The auto-compact window, 100k to 1M tokens: the context counter measures against it, less the margin below.',
-        )}
         {configRow('plans', 'plansDirectory', conf.plansDirectory && tilde(conf.plansDirectory, docHome), PLANS_DIR, 'Where Claude Code writes its plans: listed under Plans in Documents.')}
-
-        {section('Environment')}
-        {whereSet('Shell variables, or env in settings.json; the statusline plugin reads them too.')}
-        {configRow('limit', 'CC_TOKEN_LIMIT', conf.tokenLimit === null ? null : cap(conf.tokenLimit), 'autoCompactWindow', 'Overrides the auto-compact window, where Claude Code gives no trigger of its own.')}
-        {configRow(
-          'reserve',
-          'CC_TOKEN_RESERVE',
-          conf.tokenReserve === null ? null : cap(conf.tokenReserve),
-          '33k',
-          'The auto-compaction margin: how far below the window Claude Code compacts.',
-        )}
 
         {section('handover plugin')}
         {whereSet('Its options: pluginConfigs["handover@fundrivendev"].options in settings.json.')}
