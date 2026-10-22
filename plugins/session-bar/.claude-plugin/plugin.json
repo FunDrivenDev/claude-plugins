@@ -1,0 +1,30 @@
+{
+  "name": "session-bar",
+  "version": "0.1.0",
+  "description": "A bottom bar beneath the prompt: running time, prompt-cache countdown, context usage, quotas, and the model and effort selectors",
+  "author": {
+    "name": "Raphaël Louvradoux"
+  },
+  "homepage": "https://github.com/FunDrivenDev/claude-plugins/tree/main/plugins/session-bar",
+  "repository": "https://github.com/FunDrivenDev/claude-plugins",
+  "keywords": [
+    "bar",
+    "session",
+    "quota",
+    "model",
+    "mod"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "cacheTtl": {
+      "type": "string",
+      "title": "Prompt-cache TTL",
+      "description": "The prompt-cache lifetime to count down from (a model switch reports the real one)",
+      "options": [
+        "1h",
+        "5m"
+      ],
+      "default": "1h"
+    }
+  }
+}
