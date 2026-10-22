@@ -10,7 +10,7 @@ It is a mod: a plugin of function hooks, drawn by the engine (no shell script, n
 
 ## Settings
 
-The pane has no option of its own. It reads Claude Code's `plansDirectory` and the handover plugin's `handover_dir` and token thresholds. The **Config** tab lists each one as in effect, with what it does and its default.
+The bar's one option, `cacheTtl`, is described in [Bar](bar.md#configuration). The pane has no option of its own. It reads Claude Code's `plansDirectory` and the handover plugin's `handover_dir` and token thresholds. The **Config** tab lists each one as in effect, with what it does and its default.
 
 ## Limits
 

@@ -2,7 +2,7 @@
 
 What the pane draws above its tabs' content: the title, the tabs and the close mark. [Back to the README](../README.md)
 
-The running time, the prompt-cache countdown, the context counter, the quotas and the model and effort selectors moved to the `session-bar` mod.
+The running time, the prompt-cache countdown, the context counter, the quotas and the model and effort selectors sit in the plugin's other mod, the bar beneath the prompt: see [Bar](bar.md).
 
 ## Title
 

@@ -119,9 +119,33 @@ export type Config = {
   handoverDir: string | null
 }
 
+/** The bar beneath the prompt. */
+export type Ttl = '5m' | '1h'
+
+export type Info = {
+  model: string | null
+  effort: string | null
+  lastRequestAt: number | null
+  ttl: Ttl | null
+}
+
+export type Picker = 'model' | 'effort' | null
+
+export type Quota = {
+  label: string
+  used: number
+  /** Share of the window elapsed, 0 to 1; null while the reset time is unknown. */
+  elapsed: number | null
+  /** Where the average burn lands at the reset, or when the limit runs out. */
+  verdict: { text: string; tone: 'ok' | 'tight' | 'out' } | null
+  /** Milliseconds until the window resets. */
+  resetsIn: number | null
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    'session-panel': {
+    /** The pane's keys, then the bar's (`info`, `picking`, `quotasOpen`): one plugin, no key shared. */
+    'session-mods': {
       agents: Agent[]
       steps: Step[]
       expanded: string | null
@@ -140,6 +164,9 @@ declare module 'claude-code' {
       topic: string | null
       /** The session whose title is set (by the agent or from its handover), and the one already reminded to set it. */
       titled: { set: string | null; reminded: string | null }
+      info: Info
+      picking: Picker
+      quotasOpen: boolean
     }
   }
 }

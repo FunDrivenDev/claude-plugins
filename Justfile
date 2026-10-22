@@ -27,7 +27,7 @@ test:
 versions:
     mise exec -- scripts/versions.sh
 
-# Raise a plugin's version: `just bump session-panel minor`.
+# Raise a plugin's version: `just bump session-mods minor`.
 bump plugin level:
     mise exec -- scripts/bump.sh {{plugin}} {{level}}
 

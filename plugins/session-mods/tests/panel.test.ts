@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { ago, cleanTitle, clockTime, handoverPhase, phaseLine, describeCall, duration, fileMeta, handoverStatus, handoverTitle, headline, lastSentence, prettyModel, previousPrompts, promptText, recolor, resumeMessage } from '../hooks/register'
+import { ago, cleanTitle, clockTime, handoverPhase, phaseLine, describeCall, duration, fileMeta, handoverStatus, handoverTitle, headline, lastSentence, prettyModel, previousPrompts, promptText, recolor, resumeMessage } from '../hooks/panel'
 
 const PANE = {
   component: 'Pane',
@@ -74,7 +74,7 @@ test('the pane shows the first prompt and moves a finished sub-agent to the done
   })
 
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ plugin: 'session-panel', surface, ...PANE })
+    const ui = await $.ui.mount({ plugin: 'session-mods', surface, ...PANE })
     expect(await ui.find({ text: /and another prompt/ })).toBeDefined()
     expect(await ui.find({ text: /Build a calm side panel/ })).toBeUndefined()
     expect((await ui.find({ key: 'prompts' }))?.props.label).toBe('(1 previous prompt)')
@@ -89,7 +89,7 @@ test('the pane shows the first prompt and moves a finished sub-agent to the done
 
   await $.turn.complete({ answer: 'Found them', durationMs: 5, isAborted: false, turnId: 't', agentId: 'a1', reason: 'answer' })
 
-  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
   await ui.press({ key: 'tab:misc' })
   expect(await ui.find({ text: /0 running · 1 done/ })).toBeDefined()
   await ui.press({ key: 'agent:a1' })
@@ -124,7 +124,7 @@ test('an open sub-agent shows its latest entries only and collapses from its foo
   for (let k = 0; k < 200; k++) await $.tool.call({ tool: 'Bash', command: `echo step-${k}`, agentId: 'a1' } as never)
 
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ plugin: 'session-panel', surface, ...PANE })
+    const ui = await $.ui.mount({ plugin: 'session-mods', surface, ...PANE })
     await ui.press({ key: 'tab:misc' })
     await ui.press({ key: 'agent:a1' })
     expect(await ui.find({ text: /echo step-199/ })).toBeDefined()
@@ -137,7 +137,7 @@ test('an open sub-agent shows its latest entries only and collapses from its foo
     await ui.unmount()
   }
 
-  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
   await ui.press({ key: 'tab:misc' })
   await ui.press({ key: 'agent:a1' })
   expect(await ui.find({ key: 'agent:a1:close' })).toBeDefined()
@@ -167,7 +167,7 @@ test('a step shows the command it ran, and only the four latest stay unfolded', 
     }
   }
 
-  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
   expect(await ui.find({ text: /Say echo 5/ })).toBeUndefined()
   await ui.press({ key: 'tab:misc' })
   expect(await ui.find({ text: /Say echo 5 ×2/ })).toBeDefined()
@@ -193,7 +193,7 @@ test('the corner shows the prompted pull request in its GitHub colour, linked', 
   })
 
   await $.prompt.submit(typed('push it to FunDrivenDev/claude-plugins#7'))
-  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
   expect(await ui.find({ text: /⎇ claude-plugins/ })).toBeDefined()
   expect(await ui.find({ text: /#7 Publish/ })).toBeDefined()
   expect(await ui.find({ text: /draft/ })).toBeDefined()
@@ -225,7 +225,7 @@ test('a bare #N numbering a list yields to the pull request the session works on
   })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
 
-  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
   expect(await ui.find({ text: /#21 PR 21/ })).toBeDefined()
   expect(await ui.find({ text: /#1 PR 1/ })).toBeUndefined()
   await ui.unmount()
@@ -257,7 +257,7 @@ test('a new session lists only the commits made since it began, in its linked wo
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   expect(logs[0]).toContain('--since=@1700000000')
 
-  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
   expect(await ui.find({ text: /▣ repo/ })).toBeDefined()
   await ui.unmount()
 })
@@ -299,7 +299,7 @@ test('the documents the session writes list under their kind, linked, by name, a
     return ok('')
   })
 
-  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
   expect(await ui.find({ text: /None written yet\./ })).toBeDefined()
   await ui.unmount()
 
@@ -309,7 +309,7 @@ test('the documents the session writes list under their kind, linked, by name, a
   await $.tool.call({ tool: 'Artifact', file_path: '/w/guide.html' } as never)
 
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ plugin: 'session-panel', surface, ...PANE })
+    const ui = await $.ui.mount({ plugin: 'session-mods', surface, ...PANE })
     expect(await ui.find({ text: /None written yet/ })).toBeUndefined()
     expect(await ui.find({ text: /^Documents$/ })).toBeDefined()
     expect(await ui.find({ text: /^Artifacts$/ })).toBeDefined()
@@ -333,7 +333,7 @@ test('the documents the session writes list under their kind, linked, by name, a
 test('the Config tab lists each value the pane reads, as in effect, with its default', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
-  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
   await ui.press({ key: 'tab:config' })
   expect(await ui.find({ text: /^plansDirectory$/ })).toBeDefined()
   expect(await ui.find({ text: /~\/Notes\/claude\/agent-handovers \(default\)/ })).toBeDefined()
@@ -359,7 +359,7 @@ test('the pane takes its light colours on a light macOS', async ($, on) => {
   })
 
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
   expect(await ui.find({ text: /context/ })).toBeUndefined()
   expect(await ui.find({ text: /⌛|⏳/ })).toBeUndefined()
   expect(JSON.stringify(await ui.find({ key: 'tab:main:box' }))).toContain('"borderColor":"#1e66f5"')
@@ -383,20 +383,20 @@ test('the top line shows the title the main agent sets, switches tabs and closes
     return { value: undefined } as never
   })
 
-  let ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  let ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
   expect(await ui.find({ text: /^Session$/ })).toBeDefined()
   await ui.unmount()
 
-  const set = await $.tool.call({ tool: 'mcp__session-panel__session_title', title: '"Session panel tabs."' } as never)
+  const set = await $.tool.call({ tool: 'mcp__session-mods__session_title', title: '"Session panel tabs."' } as never)
   expect(set.text).toBe('Session title set: Session panel tabs')
   expect(ran).toEqual([])
   await $.turn.complete({ answer: 'Done', durationMs: 5, isAborted: false, turnId: 't', reason: 'answer' } as never)
-  for (let k = 0; k < 50 && !ran.length; k++) await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE }).then(m => m.unmount())
+  for (let k = 0; k < 50 && !ran.length; k++) await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE }).then(m => m.unmount())
   expect(ran).toEqual(['rename Session panel tabs'])
-  const empty = await $.tool.call({ tool: 'mcp__session-panel__session_title', title: ' ' } as never)
+  const empty = await $.tool.call({ tool: 'mcp__session-mods__session_title', title: ' ' } as never)
   expect(empty.deny).toContain('empty title')
 
-  ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
   expect(await ui.find({ text: /^Session panel tabs$/ })).toBeDefined()
   expect(await ui.find({ text: /^Handover$/ })).toBeDefined()
   expect(await ui.find({ text: /^Git diff$/ })).toBeUndefined()
@@ -431,7 +431,7 @@ test('the handover section leaves its states to Help, and Hand over now starts t
   })
   await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
 
-  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
   expect(await ui.find({ text: /^Handover states$/ })).toBeUndefined()
   expect(await ui.find({ text: /Writing the handover$/ })).toBeUndefined()
   expect(await ui.find({ text: /^Call-to-action pills$/ })).toBeUndefined()
@@ -486,7 +486,7 @@ test('a written handover starts the next session with its resume message in one 
   await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
   expect(ran).toContain('/rename Ship the session panel')
 
-  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
   expect(await ui.find({ text: /^Ship the session panel$/ })).toBeDefined()
   await ui.press({ key: 'handover:run' })
   expect(ran).toContain('/clear')
@@ -515,7 +515,7 @@ test('a session without a title of its own reminds the agent once, and no more o
   expect(reminded()).toEqual([true, false])
 
   sid = 's2'
-  await $.tool.call({ tool: 'mcp__session-panel__session_title', title: 'Panel title fix' } as never)
+  await $.tool.call({ tool: 'mcp__session-mods__session_title', title: 'Panel title fix' } as never)
   await $.prompt.submit(typed('carry on'))
   expect(reminded()).toEqual([true, false, false])
 })
@@ -523,7 +523,7 @@ test('a session without a title of its own reminds the agent once, and no more o
 test('the Help tab explains each item beside an example of it, in place of the rest', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
-  const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
   await ui.press({ key: 'tab:help' })
   expect(await ui.find({ text: /Closes the pane; \/session-panel reopens it/ })).toBeDefined()
   expect(await ui.find({ text: /Hand over now/ })).toBeDefined()

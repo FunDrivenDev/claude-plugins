@@ -1,16 +1,16 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Hook, On, PluginOptions } from 'claude-code'
 
 import type { Info, Picker, Quota, Ttl } from '../types'
 
-const info = atom({ plugin: 'session-bar', key: 'info' } as const, {
+const info = atom({ plugin: 'session-mods', key: 'info' } as const, {
   model: null,
   effort: null,
   lastRequestAt: null,
   ttl: null,
 } as Info)
-const picking = atom({ plugin: 'session-bar', key: 'picking' } as const, null as Picker)
-const quotasOpen = atom({ plugin: 'session-bar', key: 'quotasOpen' } as const, false)
+const picking = atom({ plugin: 'session-mods', key: 'picking' } as const, null as Picker)
+const quotasOpen = atom({ plugin: 'session-mods', key: 'quotasOpen' } as const, false)
 
 const ACTION = '#8caaee'
 const DIM = '#51576d'
@@ -257,41 +257,48 @@ async function seedModel($: EngineInterface) {
   await update($, info, i => ({ ...i, model: i.model ?? model, effort: i.effort ?? effort }))
 }
 
-export const register: Register = (on, options) => {
-  const defaultTtl: Ttl = options.cacheTtl === '5m' ? '5m' : '1h'
-  let ticker: { cancel: () => void } | null = null
-  let limit: Limit = { limit: WINDOW - RESERVE, window: WINDOW }
-  let scheme: Scheme = 'dark'
+type StartArgs = Parameters<Hook<'session.start'>>
+type StepArgs = Parameters<Hook<'turn.step'>>
 
-  on('session.start', async ($, e, next) => {
-    await update($, picking, () => null)
-    ticker?.cancel()
-    let ticks = 0
-    ticker = $.clock.every(1000, () => {
-      ticks++
-      if (ticks % 5 === 0) void readScheme($).then(s => (scheme = s))
-      if (ticks % 30 === 0) void readLimit($).then(n => (limit = n))
-      $.ui.invalidate('ui.render')
-    })
-    limit = await readLimit($)
-    scheme = await readScheme($)
-    await seedModel($)
-    return next(e)
+/** The bar's tick, auto-compact trigger and colour scheme, shared by its session start and its drawing. */
+let ticker: { cancel: () => void } | null = null
+let limit: Limit = { limit: WINDOW - RESERVE, window: WINDOW }
+let scheme: Scheme = 'dark'
+
+/** The bar's work at session start, before `register` lets the chain go on. */
+export async function startBar($: StartArgs[0], _e: StartArgs[1]): Promise<void> {
+  await update($, picking, () => null)
+  ticker?.cancel()
+  let ticks = 0
+  ticker = $.clock.every(1000, () => {
+    ticks++
+    if (ticks % 5 === 0) void readScheme($).then(s => (scheme = s))
+    if (ticks % 30 === 0) void readLimit($).then(n => (limit = n))
+    $.ui.invalidate('ui.render')
   })
+  limit = await readLimit($)
+  scheme = await readScheme($)
+  await seedModel($)
+}
+
+/** The bar's work before a `turn.step` goes down the chain, and after it returns: `register` wraps the pane's hook in them. */
+export async function beforeStepBar($: StepArgs[0], e: StepArgs[1]): Promise<void> {
+  if (!e.agentId) await update($, info, i => ({ ...i, model: e.model, effort: e.effort === undefined ? null : String(e.effort) }))
+}
+
+export async function afterStepBar($: StepArgs[0], e: StepArgs[1]): Promise<void> {
+  if (!e.agentId) {
+    const now = await $.clock.now()
+    await update($, info, i => ({ ...i, lastRequestAt: now }))
+  }
+}
+
+export const registerBar = (on: On, options: PluginOptions) => {
+  const defaultTtl: Ttl = options.cacheTtl === '5m' ? '5m' : '1h'
 
   on('classic.PreModelSwitch', async ($, e, next) => {
     await update($, info, i => ({ ...i, ttl: e.cache_ttl }))
     return next(e)
-  })
-
-  on('turn.step', async function* ($, e, next) {
-    if (!e.agentId) await update($, info, i => ({ ...i, model: e.model, effort: e.effort === undefined ? null : String(e.effort) }))
-    const result = yield* next(e)
-    if (!e.agentId) {
-      const now = await $.clock.now()
-      await update($, info, i => ({ ...i, lastRequestAt: now }))
-    }
-    return result
   })
 
   /** Beneath the prompt's hint line, the engine's own line kept live above the bar. */

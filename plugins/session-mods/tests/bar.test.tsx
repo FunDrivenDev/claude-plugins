@@ -1,10 +1,10 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { barRuns, cacheColor, contextOf, duration, effortColor, kfmt, minutesLeft, modelColor, modelId, prettyModel, quotaOf, recolor, span } from '../hooks/register'
+import { barRuns, cacheColor, contextOf, duration, effortColor, kfmt, minutesLeft, modelColor, modelId, prettyModel, quotaOf, recolor, span } from '../hooks/bar'
 
 const BAR = {
-  plugin: 'session-bar',
+  plugin: 'session-mods',
   component: 'PromptHint',
   props: { isDraft: false, isWorking: false, hint: '? for shortcuts' },
 } as const

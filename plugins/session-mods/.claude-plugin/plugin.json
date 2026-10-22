@@ -1,15 +1,17 @@
 {
-  "name": "session-bar",
+  "name": "session-mods",
   "version": "0.1.0",
-  "description": "A bottom bar beneath the prompt: running time, prompt-cache countdown, context usage, quotas, and the model and effort selectors",
+  "description": "Two session mods: a calm side pane (first prompt, sub-agents with their history, the session's reasoning steps) and a bar beneath the prompt (running time, prompt-cache countdown, context usage, quotas, and the model and effort selectors)",
   "author": {
     "name": "Raphaël Louvradoux"
   },
-  "homepage": "https://github.com/FunDrivenDev/claude-plugins/tree/main/plugins/session-bar",
+  "homepage": "https://github.com/FunDrivenDev/claude-plugins/tree/main/plugins/session-mods",
   "repository": "https://github.com/FunDrivenDev/claude-plugins",
   "keywords": [
+    "pane",
     "bar",
     "session",
+    "subagents",
     "quota",
     "model",
     "mod"
