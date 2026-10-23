@@ -488,6 +488,34 @@ def on_subagent(inp, event):
             agents.pop(inp.get("agent_id"), None)
 
 
+def on_task_stopped(inp):
+    """PostToolUse of Workflow and TaskStop: a subagent stopped with TaskStop can get no SubagentStop, so its entry
+    goes here, or it would count as running for AGENT_SECONDS. TaskStop names a workflow by its task id alone: its
+    launch keeps the folder its agents' transcripts go to, named agent-<agent id>."""
+    tool, resp, sid = inp.get("tool_name"), inp.get("tool_response"), inp["session_id"]
+    if not isinstance(resp, dict):
+        return
+    stopped = set()
+    if tool == "Workflow" and resp.get("taskId"):
+        run = resp.get("runId") or ""
+        folder = resp.get("transcriptDir") or os.path.join(
+            os.path.splitext(inp.get("transcript_path") or "")[0], "subagents", "workflows", run
+        )
+        with locked_json(tasks_path(sid)) as tasks:
+            tasks.setdefault("workflows", {})[resp["taskId"]] = folder
+    elif tool == "TaskStop" and resp.get("task_type") == "local_agent":
+        stopped.add(resp.get("task_id"))
+    elif tool == "TaskStop" and resp.get("task_type") == "local_workflow":
+        with locked_json(tasks_path(sid)) as tasks:
+            folder = (tasks.get("workflows") or {}).pop(resp.get("task_id"), None)
+        if folder:
+            stopped = {os.path.basename(p).split(".")[0].removeprefix("agent-") for p in glob.glob(f"{folder}/agent-*")}
+    if stopped and os.path.exists(agents_path(sid)):
+        with locked_json(agents_path(sid)) as agents:
+            for agent in stopped:
+                agents.pop(agent, None)
+
+
 def agents_busy(sid, inp=None):
     """How many subagents of this session still run. At Stop, the background tasks Claude Code lists
     are the truth: a turn that ended with none in flight leaves no subagent running."""
@@ -995,6 +1023,11 @@ REQUESTED = (
     "it produces."
 )
 
+AGENTS_PENDING = (
+    " Subagents of this session may still run ({} counted): start no new one. End your turn all the same; "
+    "those still running wake you with their results, and the handover is written once none runs."
+)
+
 
 def cmd_request(args):
     """The handover and relay skills: the session asks to hand over. The handover is written as its turn ends,
@@ -1002,15 +1035,10 @@ def cmd_request(args):
     reply comes after it."""
     cfg = config()
     sid = args.session
+    # Not a refusal: this count can hold a subagent that no longer runs (interrupted, crashed, or stopped
+    # in a way PostToolUse missed). The Stop hook reads the running ones from Claude Code and waits for those.
+    busy = agents_busy(sid)
     with locked_state(sid) as st:
-        busy = agents_busy(sid)
-        if busy:
-            print(
-                f"handover: {busy} subagent(s) of this session still run. Start no new work and no new "
-                "subagent; once their results are in, ask for the handover again.",
-                file=sys.stderr,
-            )
-            return 3
         if not st.get("transcript"):
             st["transcript"] = find_transcript(sid)
         if args.focus is not None:
@@ -1039,7 +1067,7 @@ def cmd_request(args):
         for k in ("closing_reply", "reply_due", "reply_reminded", "held_since"):
             st.pop(k, None)
         reset_commands(st, sid)
-    print(REQUESTED)
+    print(REQUESTED + (AGENTS_PENDING.format(busy) if busy else ""))
     return 0
 
 
@@ -1184,10 +1212,15 @@ def on_activity(inp, cfg, event):
     commands run, a stop is neither the end of the wind-down nor a reason to send the session back; [endless]
     commands still running during the wind-down are stopped.
     """
+    # Before the early returns: the running subagents are kept in every session, handing over or not, so that a
+    # request finds none that no longer runs. A subagent can stop one too. Only a Stop reads them.
+    if event == "PostToolUse":
+        on_task_stopped(inp)
     if inp.get("agent_id"):
         # A subagent's tool call: the context that fills up, and the handover, are the main session's.
         return None
     sid, tp = inp["session_id"], inp["transcript_path"]
+    busy = agents_busy(sid, inp) if event == "Stop" else 0
     tokens, _ = T.context_tokens(tp)
     if (
         not os.path.exists(state_path(sid))
@@ -1195,7 +1228,6 @@ def on_activity(inp, cfg, event):
         and not suggesting(cfg, tokens)
     ):
         return None
-    busy = agents_busy(sid, inp if event == "Stop" else None)
     out = {}
     notes = []
     # What is left to do once the lock is released: the writer takes it.
