@@ -995,6 +995,11 @@ REQUESTED = (
     "it produces."
 )
 
+AGENTS_PENDING = (
+    " Subagents of this session may still run ({} counted): start no new one. End your turn all the same; "
+    "those still running wake you with their results, and the handover is written once none runs."
+)
+
 
 def cmd_request(args):
     """The handover and relay skills: the session asks to hand over. The handover is written as its turn ends,
@@ -1002,15 +1007,10 @@ def cmd_request(args):
     reply comes after it."""
     cfg = config()
     sid = args.session
+    # Not a refusal: a subagent stopped with TaskStop can get no SubagentStop, so this count can
+    # hold one that no longer runs. The Stop hook reads the running ones from Claude Code and waits for those.
+    busy = agents_busy(sid)
     with locked_state(sid) as st:
-        busy = agents_busy(sid)
-        if busy:
-            print(
-                f"handover: {busy} subagent(s) of this session still run. Start no new work and no new "
-                "subagent; once their results are in, ask for the handover again.",
-                file=sys.stderr,
-            )
-            return 3
         if not st.get("transcript"):
             st["transcript"] = find_transcript(sid)
         if args.focus is not None:
@@ -1039,7 +1039,7 @@ def cmd_request(args):
         for k in ("closing_reply", "reply_due", "reply_reminded", "held_since"):
             st.pop(k, None)
         reset_commands(st, sid)
-    print(REQUESTED)
+    print(REQUESTED + (AGENTS_PENDING.format(busy) if busy else ""))
     return 0
 
 

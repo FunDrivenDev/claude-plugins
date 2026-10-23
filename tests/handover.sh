@@ -41,6 +41,17 @@ start
 same "a second start imports nothing again" 2 \
   "$(jq -c 'select(.session == "a" or .session == "b")' "$data/handover-fundrivendev/metrics.jsonl" | wc -l | tr -d ' ')"
 
+echo "handover: a subagent stopped without SubagentStop"
+mkdir -p "$WORK/.claude/projects/p"
+echo '{"type": "user", "message": {"role": "user", "content": "hi"}}' >"$WORK/.claude/projects/p/s1.jsonl"
+handover() { HOME=$WORK CLAUDE_PLUGIN_DATA="$data/handover-fundrivendev" python3 "$ROOT/plugins/handover/scripts/handover.py" "$@"; }
+echo '{"hook_event_name": "SubagentStart", "session_id": "s1", "agent_id": "a1", "agent_type": "general-purpose"}' |
+  handover hook >/dev/null 2>&1 || true
+out=$(handover request --cause user --session s1 2>&1) && code=0 || code=$?
+same "the request is accepted" 0 "$code"
+same "the session is told subagents may still run" 1 "$(grep -c 'may still run (1 counted)' <<<"$out")"
+same "the wind-down starts" true "$(jq -r '.wind_down != null' "$data/handover-fundrivendev/sessions/s1.json" 2>/dev/null)"
+
 if [ "$failures" -gt 0 ]; then
   echo "$failures failure(s)"; exit 1
 fi
