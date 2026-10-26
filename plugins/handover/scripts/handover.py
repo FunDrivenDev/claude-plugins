@@ -1920,30 +1920,10 @@ OWN_CALL_RE = re.compile(
 
 OWN_COMMAND_ALONE = (
     "Denied: in this YOLO run, the plugin's own `{0}` runs only as one plain call. Nothing chained to it "
-    "(`;`, `&&`, `|`, `; echo $?`), no redirection, and no `$`, backtick or line break outside single quotes. "
-    "Run it again exactly as the skill shows it, with `--reason` and `--focus` single-quoted: its exit code "
-    "and its output come back without an `echo`."
+    "(`;`, `&&`, `|`, `; echo $?`), no redirection, and no `$`, backtick or line break anywhere, quotes "
+    "included. Run it again exactly as the skill shows it, with `--reason` and `--focus` on one line each: its "
+    "exit code and its output come back without an `echo`."
 )
-
-
-def expands(command):
-    """True when the shell would expand or split something in the command: a `$` or a backtick outside single
-    quotes, or a line break outside any quotes. Inside single quotes, the shell takes every character as is."""
-    single = double = escaped = False
-    for c in command:
-        if escaped:
-            escaped = False
-        elif single:
-            single = c != "'"
-        elif c == "\\":
-            escaped = True
-        elif c == "'" and not double:
-            single = True
-        elif c == '"':
-            double = not double
-        elif c in "$`" or (c == "\n" and not double):
-            return True
-    return False
 
 
 def own_call_attempt(command):
@@ -1956,7 +1936,7 @@ def own_call_attempt(command):
 def own_command(command):
     """True when the command is one plain call of this script's OWN_COMMANDS: no expansion, no redirection,
     nothing chained to it, so it writes nothing the guard protects."""
-    if expands(command):
+    if any(c in command for c in "$`\n"):
         return False
     try:
         lex = shlex.shlex(command, posix=True, punctuation_chars=True)

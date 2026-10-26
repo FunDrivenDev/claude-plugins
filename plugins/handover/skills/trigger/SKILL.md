@@ -16,7 +16,7 @@ Run this command. When the focus above is not empty, append `--focus '<focus>'`,
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/handover.py --data-dir "${CLAUDE_PLUGIN_DATA}" request --cause user --session "${CLAUDE_SESSION_ID}" --reason 'asked by the user'
 ```
 
-Run it as one plain call, exactly as shown: nothing chained to it (no `; echo $?`, no `&&`), no redirection, `--reason` and `--focus` single-quoted. Its exit code and output come back anyway, and a YOLO run denies any other form.
+Run it as one plain call, exactly as shown: nothing chained to it (no `; echo $?`, no `&&`), no redirection, `--reason` and `--focus` single-quoted, each on one line and without `$` or backtick. Its exit code and output come back anyway, and a YOLO run denies any other form.
 
 As your turn ends, a separate model writes the handover from this session's complete transcript; do not write one yourself, and do not read the file it produces.
 

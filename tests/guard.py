@@ -39,10 +39,9 @@ class OwnCommands(unittest.TestCase):
         for tail in (f"; rm -rf {DATA}", f"&& rm -rf {DATA}", f"> {SCRIPT}", f"| tee {SCRIPT}", "$(touch x)", "`x`"):
             self.assertIsNotNone(hit(f"{CALL} status {tail}"), tail)
 
-    def test_single_quotes_keep_a_dollar_or_a_line_break_literal(self):
-        self.assertIsNone(hit(f"{CALL} request --cause model --session abc --reason 'costs $5, `x`' --focus 'a\nb'"))
-        self.assertIsNotNone(hit(f'{CALL} request --cause model --session abc --reason "$(touch x)"'))
-        self.assertIsNotNone(hit(f"{CALL} request --cause model --session abc --reason 'a'\nrm -rf {DATA}"))
+    def test_a_dollar_or_a_line_break_is_denied_even_in_quotes(self):
+        for reason in ("'costs $5'", "'a\nb'", '"$(touch x)"', "'`x`'"):
+            self.assertIsNotNone(hit(f"{CALL} request --cause model --session abc --reason {reason}"), reason)
 
     def test_a_denied_own_command_is_named_for_the_refusal(self):
         # As an AFK run once sent it: the appended `echo rc=$?` made the guard deny the handover request.
