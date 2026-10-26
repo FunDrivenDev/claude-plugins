@@ -541,6 +541,33 @@ NO_NEW_AGENT = (
     "session, and name them in your closing reply."
 )
 
+# In an AFK run, a refused subagent hands the session over: a fresh session can start it, and no one is there to.
+AFK_AGENT_HANDOVER = (
+    "Not started here: this session's context is past the point where a fresh session does better, so the "
+    "handover is requested now, and the next session of this AFK run starts with this call. Do not retry it "
+    "and start no new task. Wait for the subagents still running, if any, then end your turn on one short line "
+    "saying where the work stands. The hook tells you once the handover is written; then write your closing "
+    "reply, without `AFK done` nor `AFK blocked`: the run goes on in the next session."
+)
+
+REFUSED_FOCUS = (
+    "Start with the {call} the previous session was refused because its context was full, then go on with the "
+    "goal. Its input: {input}"
+)
+
+
+def refused_call(tool, ti):
+    """The subagent or workflow a session was refused, named for the next session's focus."""
+    what = ti.get("name") or ti.get("subagent_type") or ""
+    desc = ti.get("description") or ""
+    call = " ".join(x for x in (tool, what) if x) + (f" ({desc})" if desc else "")
+    return {"call": call, "input": json.dumps(ti, ensure_ascii=False)[:2000]}
+
+
+def refused_focus(st):
+    r = st.get("refused_call")
+    return REFUSED_FOCUS.format(**r) if r else None
+
 
 def tasks_path(sid):
     return os.path.join(data_dir(), "sessions", f"{sid}.tasks.json")
@@ -1039,36 +1066,42 @@ def cmd_request(args):
     # in a way PostToolUse missed). The Stop hook reads the running ones from Claude Code and waits for those.
     busy = agents_busy(sid)
     with locked_state(sid) as st:
-        if not st.get("transcript"):
-            st["transcript"] = find_transcript(sid)
-        if args.focus is not None:
-            st["focus"] = args.focus
-        if args.relay and not st.get("relay_on"):
-            st["relay_on"] = True
-            st.setdefault("relay_start", relay_start())
-            # A handover written before the relay was asked for is not part of the chain.
-            if not st.get("chain"):
-                st.pop("path", None)
-        tokens = T.context_tokens(st["transcript"])[0]
-        # Asked for in the session: where, and the session's own reason, show in `stats`.
-        record(
-            "handover_requested",
-            sid,
-            cause=args.cause,
-            tokens=tokens,
-            trigger=cfg["trigger"],
-            suggest=cfg["suggest"],
-            reason=(args.reason or "")[:300] or None,
-        )
-        if not st.get("wind_down"):
-            start_wind_down(st, sid, args.cause, tokens, cfg)
-        # The session knows: only the handover and its closing reply are left, due again after an earlier handover.
-        st["user_notified"] = st["wind_down_sent"] = True
-        for k in ("closing_reply", "reply_due", "reply_reminded", "held_since"):
-            st.pop(k, None)
-        reset_commands(st, sid)
+        request_handover(st, sid, args.cause, cfg, reason=args.reason, focus=args.focus, relay=args.relay)
     print(REQUESTED + (AGENTS_PENDING.format(busy) if busy else ""))
     return 0
+
+
+def request_handover(st, sid, cause, cfg, reason=None, focus=None, relay=False, transcript=None):
+    """The session hands over: its wind-down starts, and the handover is written as its turn ends. Asked for by
+    the session (`request`), or by the hooks when an AFK run could not go on in this session."""
+    if not st.get("transcript"):
+        st["transcript"] = transcript or find_transcript(sid)
+    if focus is not None:
+        st["focus"] = focus
+    if relay and not st.get("relay_on"):
+        st["relay_on"] = True
+        st.setdefault("relay_start", relay_start())
+        # A handover written before the relay was asked for is not part of the chain.
+        if not st.get("chain"):
+            st.pop("path", None)
+    tokens = T.context_tokens(st["transcript"])[0]
+    # Where, and the session's own reason, show in `stats`.
+    record(
+        "handover_requested",
+        sid,
+        cause=cause,
+        tokens=tokens,
+        trigger=cfg["trigger"],
+        suggest=cfg["suggest"],
+        reason=(reason or "")[:300] or None,
+    )
+    if not st.get("wind_down"):
+        start_wind_down(st, sid, cause, tokens, cfg)
+    # The session knows: only the handover and its closing reply are left, due again after an earlier handover.
+    st["user_notified"] = st["wind_down_sent"] = True
+    for k in ("closing_reply", "reply_due", "reply_reminded", "held_since"):
+        st.pop(k, None)
+    reset_commands(st, sid)
 
 
 def cmd_write(args):
@@ -1631,6 +1664,12 @@ def afk_overdue(afk):
     return bool(afk.get("until")) and time.time() >= afk["until"]
 
 
+def afk_goes_on(st):
+    """An AFK run that a fresh session can carry on: active, and short of its deadline."""
+    afk = afk_active(st)
+    return bool(afk) and not afk.get("deadline_told") and not afk_overdue(afk)
+
+
 AFK_YOLO = (
     "\nYOLO: this run skips permission prompts. Every tool call goes to an audit log the user reads "
     "afterwards, with what would have needed their approval. Deny rules still apply, and the handover "
@@ -1686,12 +1725,31 @@ def afk_end(st, sid, kind, reason):
     alert(f"AFK run {kind}: {reason}"[:200])
 
 
+AFK_NOT_BLOCKED = (
+    "Not blocked: this session was refused {call} because its context is full, and a fresh session can start "
+    "it. The handover is requested, and the run goes on in the next session. End your turn now on one short "
+    "line saying where the work stands; the hook tells you once the handover is written, then write your "
+    "closing reply, without `AFK done` nor `AFK blocked`."
+)
+
+
+def blocked_by_refusal(st, last):
+    """An `AFK blocked:` line from a session refused a subagent: a fresh session can start it, so the run does
+    not wait for the user."""
+    ends = AFK_END_RE.findall(last or "")
+    return bool(ends) and ends[-1][0].lower() == "blocked" and bool(st.get("agents_refused")) and afk_goes_on(st)
+
+
 def afk_declared_end(st, sid, last):
-    """End the run on the `AFK done:` or `AFK blocked:` line the session's reply ends it with; returns a note."""
+    """End the run on the `AFK done:` or `AFK blocked:` line the session's reply ends it with; returns a note.
+    A block that only a full context caused does not end it: the handover relays to a fresh session."""
     ends = AFK_END_RE.findall(last or "")
     if not ends:
         return None
     kind, why = ends[-1]
+    if blocked_by_refusal(st, last):
+        record("afk_block_overruled", sid, run=st["afk"]["run"], reason=why.strip()[:300])
+        return None
     afk_end(st, sid, kind.lower(), why.strip())
     return f"handover: AFK run {kind.lower()}: {why.strip()[:200]}"
 
@@ -1716,6 +1774,11 @@ def afk_on_activity(st, sid, inp, event):
     if (st.get("wind_down") and not st.get("closing_reply")) or st.get("relay_outcome"):
         return None
     last = inp.get("last_assistant_message") or T.last_assistant_text(inp["transcript_path"]) or ""
+    if blocked_by_refusal(st, last):
+        why = AFK_END_RE.findall(last)[-1][1].strip()
+        record("afk_block_overruled", sid, run=afk["run"], reason=why[:300])
+        request_handover(st, sid, "afk_blocked", config(), reason=why, focus=refused_focus(st))
+        return {"decision": "block", "reason": AFK_NOT_BLOCKED.format(call=st["refused_call"]["call"])}
     note = afk_declared_end(st, sid, last)
     if note:
         return {"systemMessage": note}
@@ -1851,6 +1914,25 @@ GUARD_WORDS = re.compile(r"\bclaude\s+plugins?\s+(disable|uninstall|remove|updat
 OWN_COMMANDS = {"request", "status", "stats"}
 
 
+OWN_CALL_RE = re.compile(
+    r"handover\.py[\"']?\s+(?:--data-dir(?:=\S+|\s+(?:\"[^\"]*\"|'[^']*'|\S+))\s+)?(request|status|stats)\b"
+)
+
+OWN_COMMAND_ALONE = (
+    "Denied: in this YOLO run, the plugin's own `{0}` runs only as one plain call. Nothing chained to it "
+    "(`;`, `&&`, `|`, `; echo $?`), no redirection, and no `$`, backtick or line break anywhere, quotes "
+    "included. Run it again exactly as the skill shows it, with `--reason` and `--focus` on one line each: its "
+    "exit code and its output come back without an `echo`."
+)
+
+
+def own_call_attempt(command):
+    """The own command a denied Bash command meant to call (`request`, `status`, `stats`), so the refusal
+    can say how to call it."""
+    m = OWN_CALL_RE.search(command)
+    return m.group(1) if m else None
+
+
 def own_command(command):
     """True when the command is one plain call of this script's OWN_COMMANDS: no expansion, no redirection,
     nothing chained to it, so it writes nothing the guard protects."""
@@ -1911,13 +1993,32 @@ def on_pre_tool_use(inp):
     tool = inp.get("tool_name") or ""
     if not reason and tool in ("Agent", "Task", "Workflow") and refuses_agents(st):
         reason = NO_NEW_AGENT
-        record("agent_refused", sid, tool=tool, agent=(inp.get("tool_input") or {}).get("subagent_type"))
+        ti = inp.get("tool_input") or {}
+        record("agent_refused", sid, tool=tool, agent=ti.get("subagent_type"))
+        with locked_state(sid) as st:
+            st["agents_refused"] = st.get("agents_refused", 0) + 1
+            st["refused_call"] = refused_call(tool, ti)
+            if afk_goes_on(st) and not st.get("wind_down"):
+                # Refused here, the work would wait for the user: the next session starts with it instead.
+                request_handover(
+                    st,
+                    sid,
+                    "agent_refused",
+                    config(),
+                    reason=f"{st['refused_call']['call']} refused past the suggestion",
+                    focus=refused_focus(st),
+                    transcript=inp.get("transcript_path"),
+                )
+                reason = AFK_AGENT_HANDOVER
     afk = afk_active(st)
     if not reason and afk and yolo_on(afk, inp):
         hit = guard_hit(inp)
         if hit:
+            own = own_call_attempt(str((inp.get("tool_input") or {}).get("command") or "")) if tool == "Bash" else None
             reason = (
-                f"Denied: this YOLO run must leave {hit} alone (the handover plugin, its audit log and the "
+                OWN_COMMAND_ALONE.format(own)
+                if own
+                else f"Denied: this YOLO run must leave {hit} alone (the handover plugin, its audit log and the "
                 "settings that load them). Do the work another way, or note it for the user."
             )
             audit_write(afk, inp, "guarded", hit)

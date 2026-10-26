@@ -22,6 +22,7 @@ test:
     mise exec -- tests/handover.sh
     mise exec -- python3 tests/notify.py
     mise exec -- python3 tests/guard.py
+    mise exec -- python3 tests/afk.py
 
 # Fail when a plugin changed since origin/main without a version bump (needs origin/main, so not in CI).
 versions:
