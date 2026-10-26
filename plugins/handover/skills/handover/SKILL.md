@@ -18,6 +18,8 @@ Run this command. Replace `<reason>` with one line on why now (the boundary reac
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/handover.py --data-dir "${CLAUDE_PLUGIN_DATA}" request --cause model --session "${CLAUDE_SESSION_ID}" --reason '<reason>'
 ```
 
+Run it as one plain call, exactly as shown: nothing chained to it (no `; echo $?`, no `&&`), no redirection, `--reason` and `--focus` single-quoted. Its exit code and output come back anyway, and a YOLO run denies any other form.
+
 As your turn ends, a separate model writes the handover from this session's complete transcript; do not write one yourself, and do not read the file it produces.
 
 - Exit code 0: do not start a new task. End your turn on one short line on where the work stands, without `Ready to hand over` nor the resume message: the user must not run /clear before the handover exists. The hook then writes the handover and tells you once it is written; only then write your closing reply, as that message says: one line on where the work stands, then the handover's full path, then `Ready to hand over: run /clear.`, then, in a code block, the message the user should send after /clear to resume, naming the very next step.

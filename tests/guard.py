@@ -39,6 +39,18 @@ class OwnCommands(unittest.TestCase):
         for tail in (f"; rm -rf {DATA}", f"&& rm -rf {DATA}", f"> {SCRIPT}", f"| tee {SCRIPT}", "$(touch x)", "`x`"):
             self.assertIsNotNone(hit(f"{CALL} status {tail}"), tail)
 
+    def test_single_quotes_keep_a_dollar_or_a_line_break_literal(self):
+        self.assertIsNone(hit(f"{CALL} request --cause model --session abc --reason 'costs $5, `x`' --focus 'a\nb'"))
+        self.assertIsNotNone(hit(f'{CALL} request --cause model --session abc --reason "$(touch x)"'))
+        self.assertIsNotNone(hit(f"{CALL} request --cause model --session abc --reason 'a'\nrm -rf {DATA}"))
+
+    def test_a_denied_own_command_is_named_for_the_refusal(self):
+        # As an AFK run once sent it: the appended `echo rc=$?` made the guard deny the handover request.
+        command = f"{CALL} request --cause model --session abc --reason 'done'; echo rc=$?"
+        self.assertIsNotNone(hit(command))
+        self.assertEqual(H.own_call_attempt(command), "request")
+        self.assertIsNone(H.own_call_attempt(f"rm -rf {DATA}"))
+
     def test_another_script_under_the_plugin_stays_denied(self):
         other = os.path.join(H.plugin_root(), "scripts", "notify.py")
         self.assertIsNotNone(hit(f"python3 {other} request --session abc"))
