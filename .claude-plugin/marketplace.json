@@ -26,7 +26,7 @@
     },
     {
       "name": "tools",
-      "description": "Workflow tooling: wrap-up report (artifact, Bear, Slack), MCP server audit, Claude config audit, and local-LLM setup advice",
+      "description": "Workflow tooling: wrap-up report (artifact, Bear, Slack), mental-model pages, MCP server audit, Claude config audit, and local-LLM setup advice",
       "source": "./plugins/tools",
       "category": "productivity"
     }
