@@ -34,6 +34,8 @@ jq -n --arg p "$WORK/seg-plugin" '{version: 2, plugins: {"seg@test": [{scope: "u
 git -C "$WORK/repo" init -q -b feat/smoke
 git -C "$WORK/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
 
+# Each reset sits 30 s past a whole minute: the line counts down in minutes, so a value on the boundary
+# would change between two renders a second apart.
 now=$(date +%s)
 payload=$(jq -n --arg cwd "$WORK/repo" --argjson now "$now" '{
   model: {display_name: "Opus"}, effort: {level: "high"}, cwd: $cwd,
@@ -41,7 +43,7 @@ payload=$(jq -n --arg cwd "$WORK/repo" --argjson now "$now" '{
   context_window: {total_input_tokens: 90000, current_usage: {}},
   rate_limits: {
     five_hour: {used_percentage: 30, resets_at: ($now + 9030)},
-    seven_day: {used_percentage: 40, resets_at: ($now + 302400)}},
+    seven_day: {used_percentage: 40, resets_at: ($now + 302430)}},
   prompt_cache: {caching_observed: true, warm: true, expires_at: ($now + 2550), ttl: "1h"}}')
 
 shells=("$(command -v bash)")
