@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-# No commit that fails the linters; the whole suite runs before a push.
-set -euo pipefail
-just lint

@@ -7,9 +7,9 @@ _default:
 init:
     scripts/init.sh
 
-# Lint every shell script and git hook (shellcheck), the CI workflow (actionlint), the mods' TypeScript (biome) and the Python scripts (ruff format --check and ruff check, ruff.toml); the pre-commit hook.
+# Lint every shell script (shellcheck), the CI workflow (actionlint), the mods' TypeScript (biome) and the Python scripts (ruff format --check and ruff check, ruff.toml); the pre-commit hook.
 lint:
-    git ls-files -z --cached --others --exclude-standard '*.sh' '.githooks/*' | xargs -0 mise exec -- shellcheck
+    git ls-files -z --cached --others --exclude-standard '*.sh' | xargs -0 mise exec -- shellcheck
     mise exec -- actionlint
     mise exec -- biome lint --error-on-warnings
     mise exec -- ruff format --check --quiet
@@ -24,7 +24,7 @@ test:
     mise exec -- python3 tests/guard.py
     mise exec -- python3 tests/afk.py
 
-# Fail when a plugin changed since origin/main without a version bump (needs origin/main, so not in CI).
+# Fail when a plugin changed since origin/main without a version bump (needs origin/main, so not in ci.yml).
 versions:
     mise exec -- scripts/versions.sh
 
@@ -36,7 +36,7 @@ bump plugin level:
 ci-verdict *results:
     scripts/ci-verdict.sh {{ results }}
 
-# Check the marketplace and every plugin with Claude Code's own validator, and run the mods' tests (needs the claude CLI, so not in CI).
+# Check the marketplace and every plugin with Claude Code's own validator, and run the mods' tests (needs the claude CLI, so not in ci.yml).
 validate:
     scripts/validate.sh
 

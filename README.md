@@ -19,8 +19,8 @@ Tools are pinned in `mise.toml` and run through `just`:
 
 | Recipe | What it does |
 |---|---|
-| `just init` | Installs the pinned tools and turns on the git hooks (`.githooks`); safe to re-run |
-| `just lint` | `shellcheck` on every shell script and hook, `actionlint` on CI, `biome lint` on the mods' TypeScript (`biome.json`), `ruff` on the Python scripts (`ruff.toml`, Python 3.9 syntax: the handover hooks run the system `python3`) |
+| `just init` | Installs the pinned tools; the git hooks are in `hk.pkl` (`mise exec -- hk install` installs them where no global hook runs hk); safe to re-run |
+| `just lint` | `shellcheck` on every shell script, `actionlint` on CI, `biome lint` on the mods' TypeScript (`biome.json`), `ruff` on the Python scripts (`ruff.toml`, Python 3.9 syntax: the handover hooks run the system `python3`) |
 | `just test` | The plugins' smoke tests: the status line under the default `bash` and macOS's `/bin/bash` 3.2, the handover plugin's carry-over of its old data and its notifier adapters |
 | `just validate` | `claude plugin validate` on the marketplace and each plugin, and `claude plugin test` on each plugin with tests (needs the `claude` CLI) |
 | `just versions` | Fails when a plugin changed since `origin/main` (outside its `tests/`) without a version bump |
@@ -28,6 +28,6 @@ Tools are pinned in `mise.toml` and run through `just`:
 | `just check` | All of the above: `lint`, `test`, `versions`, `validate` |
 | `just ci-verdict <results>` | CI's verdict: green when each job result is `success` or `skipped` |
 
-The pre-commit hook runs `just lint`, the pre-push hook `just check`; CI runs `just lint` and `just test`, the tests on Linux and macOS, then a `ci-ok` job that passes only when every other job succeeded or was skipped: the one check FunDrivenDev's organisation ruleset requires on `main`. Renovate keeps the tools and the actions current, automerging once `ci-ok` is green.
+The git hooks (`hk.pkl`) are the CI: the pre-commit hook runs `just lint`, the pre-push hook `just check`, and FunDrivenDev's organisation ruleset gates `main` on the `dod` status `toolbox dod check` posts from the laptop. GitHub Actions runs no check on a pull request or a push: `.github/workflows/ci.yml` stays for a manual run of `just lint` and `just test`, the tests on Linux and macOS, then a `ci-ok` job that passes only when every other job succeeded or was skipped. Renovate keeps the tools and the actions current.
 
 Merging a PR is the release: the marketplace serves `main`, and Claude Code updates an installed plugin only when its version changes. So a PR that changes a plugin bumps it (`just bump`: patch for a fix, minor for a feature, major for a breaking change), and the pre-push `just versions` refuses one that doesn't.
