@@ -113,100 +113,84 @@ STARTUP_POINTER_SECONDS = 24 * 3600
 LIVE_SECONDS = 7 * 24 * 3600
 
 
-OPTIONS = (
-    "handover_dir",
-    "suggest_tokens",
-    "trigger_tokens",
-    "await_minutes",
-    "writer_model",
-    "handover_chars",
-    "refresh_tokens",
-    "compact_reserve_tokens",
-    "relay_limit",
-    "delegate",
-    "yolo_guard_paths",
-    "notifier",
-    "notify_command",
-)
-NUMBER_OPTIONS = (
-    "suggest_tokens",
-    "trigger_tokens",
-    "await_minutes",
-    "handover_chars",
-    "refresh_tokens",
-    "compact_reserve_tokens",
-    "relay_limit",
-)
-BOOLEAN_OPTIONS = ("delegate",)
+PLUGIN_JSON = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".claude-plugin", "plugin.json")
 
 
-def option(key, default):
-    """Hook environment first; outside hooks, the values the last SessionStart hook saw."""
+def plugin_json():
+    return read_json(PLUGIN_JSON, {})
+
+
+def settings_path():
+    return os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"), "settings.json")
+
+
+def option(key):
+    """An option: the hook environment, then settings.json as the user set it now, then the plugin.json default.
+    Values in settings.json and plugin.json may be typed; the result is always a string."""
     v = os.environ.get(f"CLAUDE_PLUGIN_OPTION_{key.upper()}", "").strip()
     if v:
         return v
-    v = read_json(os.path.join(data_dir(), "options.json"), {}).get(key)
-    return default if v is None or v == "" else v
+    configured = (read_json(settings_path(), {}).get("pluginConfigs") or {}).get(plugin_id()) or {}
+    v = (configured.get("options") or {}).get(key)
+    if v in (None, ""):
+        v = (plugin_json().get("userConfig") or {}).get(key, {}).get("default", "")
+    return str(v).lower() if isinstance(v, bool) else str(v)
 
 
-def typed(key, value):
-    """An option's value as its plugin.json type: a number or a boolean; a string the type does not parse stays
-    as it is."""
-    if key in BOOLEAN_OPTIONS:
-        return str(value).strip().lower() not in ("false", "0", "no", "off")
-    if key in NUMBER_OPTIONS:
-        try:
-            n = float(value)
-        except ValueError:
-            return value
-        return int(n) if n.is_integer() else n
-    return value
+def config(option=option):
+    def number(key):
+        return int(float(option(key)))
 
-
-def save_options():
-    """Keep the options the hooks see, typed, for the status line and the commands run outside hooks, with the
-    token thresholds they resolve to, defaults included: the one place other plugins read them from."""
-    seen = {
-        k: typed(k, os.environ[f"CLAUDE_PLUGIN_OPTION_{k.upper()}"])
-        for k in OPTIONS
-        if os.environ.get(f"CLAUDE_PLUGIN_OPTION_{k.upper()}")
+    return {
+        "dir": os.path.expanduser(option("handover_dir")),
+        "suggest": number("suggest_tokens"),
+        "trigger": number("trigger_tokens"),
+        # How long the wind-down waits for each [await] background command before stopping it.
+        "await": number("await_minutes") * 60,
+        "writer_model": option("writer_model"),
+        # Target length of the handover; loading cuts it at INJECT_CHARS.
+        "chars": min(number("handover_chars"), INJECT_CHARS),
+        # A handover this many tokens behind the session is refreshed before it is used.
+        "refresh": number("refresh_tokens"),
+        # Auto-compaction fires about this far below autoCompactWindow; `stats` uses it
+        # until real compactions have been recorded.
+        "reserve": number("compact_reserve_tokens"),
+        # Handovers in a relay chain before it stops for the user.
+        "relay_limit": number("relay_limit"),
+        # Tell each session to give self-contained tasks to subagents.
+        "delegate": option("delegate").lower() not in ("false", "0", "no", "off"),
     }
-    cfg = config(lambda key, default: seen.get(key, default))
-    seen["thresholds"] = {
+
+
+def thresholds(cfg):
+    return {
         "suggest_tokens": cfg["suggest"],
         "trigger_tokens": cfg["trigger"],
         "warn_at_tokens": warn_point(cfg["suggest"], cfg["trigger"]),
     }
-    path = os.path.join(data_dir(), "options.json")
-    if read_json(path) != seen:
-        write_json(path, seen)
 
 
-def config(option=option):
-    """The plugin options; the defaults repeat those of plugin.json."""
+def record_thresholds(sid):
+    """At SessionStart, the thresholds this session runs with, and the plugin version that resolved them: its
+    hooks, its status line and other plugins (the session-mods pane) read them from its state file, so a settings
+    change, or a session on another plugin version, never moves them under a running session."""
+    with locked_state(sid) as st:
+        st["thresholds"] = thresholds(config())
+        st["plugin_version"] = plugin_json().get("version")
 
-    def number(key, default):
-        return int(float(option(key, default)))
 
-    return {
-        "dir": os.path.expanduser(option("handover_dir", "~/Notes/claude/agent-handovers")),
-        "suggest": number("suggest_tokens", "200000"),
-        "trigger": number("trigger_tokens", "250000"),
-        # How long the wind-down waits for each [await] background command before stopping it.
-        "await": number("await_minutes", "10") * 60,
-        "writer_model": option("writer_model", "sonnet"),
-        # Target length of the handover; loading cuts it at INJECT_CHARS.
-        "chars": min(number("handover_chars", "8000"), INJECT_CHARS),
-        # A handover this many tokens behind the session is refreshed before it is used.
-        "refresh": number("refresh_tokens", "2000"),
-        # Auto-compaction fires about this far below autoCompactWindow; `stats` uses it
-        # until real compactions have been recorded.
-        "reserve": number("compact_reserve_tokens", "33000"),
-        # Handovers in a relay chain before it stops for the user.
-        "relay_limit": number("relay_limit", "10"),
-        # Tell each session to give self-contained tasks to subagents.
-        "delegate": str(option("delegate", "true")).lower() not in ("false", "0", "no", "off"),
-    }
+def tracked(sid):
+    """Whether the session's state holds more than what SessionStart records."""
+    return bool(set(read_json(state_path(sid), {})) - {"thresholds", "plugin_version"})
+
+
+def session_config(sid, st=None):
+    """config(), with the thresholds the session recorded at its start; resolved now when it recorded none."""
+    cfg = config()
+    th = (st if st is not None else read_json(state_path(sid), {}) if sid else {}).get("thresholds") or {}
+    if isinstance(th.get("suggest_tokens"), int) and isinstance(th.get("trigger_tokens"), int):
+        cfg.update(suggest=th["suggest_tokens"], trigger=th["trigger_tokens"])
+    return cfg
 
 
 def data_dir():
@@ -382,7 +366,8 @@ def compact_window():
 
 def warn_point(suggest, trigger):
     """Where the status line turns yellow: halfway from the suggestion to the trigger, or WARN_TOKENS before the
-    trigger without a suggestion below it. Saved in options.json as thresholds.warn_at_tokens, for the other readers."""
+    trigger without a suggestion below it. Recorded in the session's state as thresholds.warn_at_tokens, for the other
+    readers."""
     return (suggest + trigger) // 2 if 0 < suggest < trigger else trigger - WARN_TOKENS
 
 
@@ -899,7 +884,7 @@ def cmd_wake_timeout(args):
         tokens, _ = T.context_tokens(args.transcript)
         st["closing_reply"] = True
         record("closing_reply_written", args.session, tokens=tokens, reply=False, woken=False, written=outcome)
-        hand_over(st, args.session, tokens, config(), None, outcome)
+        hand_over(st, args.session, tokens, session_config(args.session, st), None, outcome)
     return 0
 
 
@@ -1131,8 +1116,8 @@ def cmd_request(args):
     """The handover and relay skills: the session asks to hand over. The handover is written as its turn ends,
     from the complete transcript, so nothing the session closes before that is missing from it; the closing
     reply comes after it."""
-    cfg = config()
     sid = args.session
+    cfg = session_config(sid)
     # Not a refusal: this count can hold a subagent that no longer runs (interrupted, crashed, or stopped
     # in a way PostToolUse missed). The Stop hook reads the running ones from Claude Code and waits for those.
     busy = agents_busy(sid)
@@ -1177,8 +1162,8 @@ def request_handover(st, sid, cause, cfg, reason=None, focus=None, relay=False, 
 
 def cmd_write(args):
     """Write the handover now: the writer the hooks start, or a handover asked for from a shell."""
-    cfg = config()
     sid = args.session
+    cfg = session_config(sid)
     with locked_state(sid) as st:
         if args.transcript:
             st["transcript"] = args.transcript
@@ -1326,11 +1311,7 @@ def on_activity(inp, cfg, event):
     sid, tp = inp["session_id"], inp["transcript_path"]
     busy = agents_busy(sid, inp) if event == "Stop" else 0
     tokens, _ = T.context_tokens(tp)
-    if (
-        not os.path.exists(state_path(sid))
-        and not (cfg["trigger"] and tokens >= cfg["trigger"])
-        and not suggesting(cfg, tokens)
-    ):
+    if not tracked(sid) and not (cfg["trigger"] and tokens >= cfg["trigger"]) and not suggesting(cfg, tokens):
         return None
     out = {}
     notes = []
@@ -1852,7 +1833,7 @@ def afk_on_activity(st, sid, inp, event):
     if blocked_by_refusal(st, last):
         why = AFK_END_RE.findall(last)[-1][1].strip()
         record("afk_block_overruled", sid, run=afk["run"], reason=why[:300])
-        request_handover(st, sid, "afk_blocked", config(), reason=why, focus=refused_focus(st))
+        request_handover(st, sid, "afk_blocked", session_config(sid, st), reason=why, focus=refused_focus(st))
         return {"decision": "block", "reason": AFK_NOT_BLOCKED.format(call=st["refused_call"]["call"])}
     note = afk_declared_end(st, sid, last)
     if note:
@@ -1942,7 +1923,7 @@ def guarded_paths(project=None):
         os.path.join(home, ".claude", "settings.local.json"),
         os.path.join(home, ".claude", "hooks"),
     ]
-    paths += [os.path.expanduser(p) for p in re.split(r"[\s,]+", option("yolo_guard_paths", "")) if p]
+    paths += [os.path.expanduser(p) for p in re.split(r"[\s,]+", option("yolo_guard_paths")) if p]
     if project:
         paths += [
             os.path.join(project, ".claude", "settings.json"),
@@ -2079,7 +2060,7 @@ def on_pre_tool_use(inp):
                     st,
                     sid,
                     "agent_refused",
-                    config(),
+                    session_config(sid, st),
                     reason=f"{st['refused_call']['call']} refused past the suggestion",
                     focus=refused_focus(st),
                     transcript=inp.get("transcript_path"),
@@ -2524,9 +2505,7 @@ def alert(message):
                 ).stdout.strip()
                 or tty
             )
-    N.notifier(option("notifier", "auto"), option("notify_command", ""), tty=tty).notify(
-        "Claude Code handover", message
-    )
+    N.notifier(option("notifier"), option("notify_command"), tty=tty).notify("Claude Code handover", message)
 
 
 def cmd_relay_drive(args):
@@ -2666,7 +2645,7 @@ def reply_only(st, transcript):
 
 def on_session_end(inp):
     sid = inp["session_id"]
-    if not os.path.exists(state_path(sid)):
+    if not tracked(sid):
         return
     with locked_state(sid) as st:
         if afk_active(st) and not st.get("relay_outcome"):
@@ -2899,11 +2878,12 @@ def cmd_hook(_args):
     if os.environ.get("HANDOVER_CHILD"):
         return 0
     inp = json.load(sys.stdin)
-    cfg = config()
     event = inp.get("hook_event_name")
     if event == "SessionStart":
         import_old_data()
-    save_options()
+        if inp.get("session_id"):
+            record_thresholds(inp["session_id"])
+    cfg = session_config(inp.get("session_id"))
     if inp.get("session_id"):
         mark_live(inp["session_id"], event)
     handler = {
@@ -2939,7 +2919,7 @@ def cmd_guidance(_args):
     with contextlib.suppress(KeyError, OSError), locked_json(tasks_path(inp["session_id"])) as tasks:
         # Recorded with each untagged command: was the session told the tags?
         tasks["guided"] = True
-    cfg = config()
+    cfg = session_config(inp.get("session_id"))
     text = TAGS + ("\n\n" + DELEGATE if cfg["delegate"] else "")
     out = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}
     warning = compaction_conflict(cfg, inp.get("cwd"))
@@ -3058,11 +3038,12 @@ def cmd_statusline(_args):
     # Nothing in a session the plugin's hooks never ran in: the plugin is disabled there.
     if not sid or not os.path.exists(live_path(sid)):
         return 0
-    cfg = config()
+    st = read_json(state_path(sid), {})
+    cfg = session_config(sid, st)
     tokens = int((inp.get("context_window") or {}).get("total_input_tokens") or 0)
     if not tokens and inp.get("transcript_path"):
         tokens = T.context_tokens(inp["transcript_path"])[0]
-    colour, text = status_line(read_json(state_path(sid), {}), read_json(progress_path(sid)), tokens, cfg)
+    colour, text = status_line(st, read_json(progress_path(sid)), tokens, cfg)
     print(f"{C[colour]}✋ {text}{C['off']}", end="")
     return 0
 
@@ -3380,7 +3361,7 @@ def chezmoi_source(path):
 def cmd_config(args):
     """The config skill: each option with its default and current value, or new values saved."""
     pid = plugin_id()
-    settings = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"), "settings.json")
+    settings = settings_path()
     if args.set:
         try:
             values = {k: str(v).lower() if isinstance(v, bool) else str(v) for k, v in json.loads(args.set).items()}
@@ -3409,7 +3390,6 @@ def cmd_config(args):
         sys.stderr.write(p.stderr or p.stdout)
         return p.returncode
     info = json.loads(p.stdout)
-    seen = read_json(os.path.join(data_dir(), "options.json"), {})
     options = []
     for key, schema in info.get("schema", {}).items():
         current = (info.get("inputs") or {}).get(key, "")
@@ -3420,7 +3400,6 @@ def cmd_config(args):
                 "choices": (info.get("choices") or {}).get(key),
                 "configured": key in (info.get("configured") or []),
                 "current": current if key in (info.get("configured") or []) else None,
-                "seen_by_hooks": seen.get(key),
             }
         )
     print(
@@ -3433,22 +3412,9 @@ def cmd_config(args):
     return 0
 
 
-def settings_option(key, default):
-    """An option as the user set it now: the hook environment, settings.json, then what hooks saw."""
-    v = os.environ.get(f"CLAUDE_PLUGIN_OPTION_{key.upper()}", "").strip()
-    if v:
-        return v
-    settings = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"), "settings.json")
-    configured = (read_json(settings, {}).get("pluginConfigs") or {}).get(plugin_id()) or {}
-    v = (configured.get("options") or {}).get(key)
-    if v not in (None, ""):
-        return str(v)
-    return option(key, default)
-
-
 def cmd_notifier(args):
     """The notifier the options pick in this environment, as JSON; --test sends an alert through it."""
-    choice, command = settings_option("notifier", "auto"), settings_option("notify_command", "")
+    choice, command = option("notifier"), option("notify_command")
     report = N.describe(choice, command)
     if args.test:
         report["sent"] = N.notifier(choice, command).notify(
