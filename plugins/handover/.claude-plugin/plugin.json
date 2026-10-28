@@ -1,7 +1,7 @@
 {
   "name": "handover",
   "description": "Hand a session over to a fresh one before its context fills up: a separate model writes the handover from the transcript, /clear loads it",
-  "version": "0.17.1",
+  "version": "0.18.0",
   "author": {
     "name": "Raphaël Louvradoux",
     "url": "https://github.com/rlvdx"
@@ -18,14 +18,14 @@
       "type": "number",
       "title": "Suggest a handover (tokens)",
       "description": "Context size at which the session is told, once, to hand over by itself (the handover skill) at the next boundary between scopes. Only below trigger_tokens. 0 never tells it",
-      "default": 150000,
+      "default": 200000,
       "min": 0
     },
     "trigger_tokens": {
       "type": "number",
       "title": "Trigger (tokens)",
       "description": "Context size at which the session is told to start no new task, finish those in progress (the current step, its subagents, its [await] commands) and hand over; the handover is written once it has. 0 turns the trigger off: handovers are then written only when the session asks for one (the handover skill) and before compaction",
-      "default": 185000,
+      "default": 235000,
       "min": 0
     },
     "await_minutes": {
@@ -74,7 +74,7 @@
       "type": "number",
       "title": "Relay limit (handovers)",
       "description": "Handovers in a chain of sessions the relay hands over to one another without the user. At the last one the chain halts, with a notification (notifier) and a terminal bell, and waits for /clear",
-      "default": 5,
+      "default": 10,
       "min": 1
     },
     "delegate": {

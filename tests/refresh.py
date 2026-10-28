@@ -29,7 +29,7 @@ def append(path, *entries):
         f.writelines(json.dumps(e) + "\n" for e in entries)
 
 
-def closed_session(sid, written_at=185_000):
+def closed_session(sid, written_at=235_000):
     """A wound-down session whose handover was written at `written_at` and whose closing reply's stop just ran."""
     transcript = os.path.join(HOME, f"{sid}.jsonl")
     append(transcript, {"type": "user", "message": {"role": "user", "content": "go"}}, assistant(written_at))
@@ -55,27 +55,27 @@ class RefreshAtTheEnd(unittest.TestCase):
     def test_the_closing_reply_alone_rewrites_nothing(self):
         transcript = closed_session("reply")
         # The reply reaches the transcript after its Stop hook: 2.3K tokens, past refresh_tokens.
-        append(transcript, assistant(187_300), {"type": "system", "subtype": "stop_hook_summary"})
+        append(transcript, assistant(237_300), {"type": "system", "subtype": "stop_hook_summary"})
         self.assertEqual(end("reply", transcript), [])
 
     def test_a_prompt_after_the_reply_rewrites_the_handover(self):
         transcript = closed_session("prompt")
-        append(transcript, assistant(187_300), {"type": "user", "message": {"role": "user", "content": "one more"}})
-        append(transcript, assistant(198_000))
+        append(transcript, assistant(237_300), {"type": "user", "message": {"role": "user", "content": "one more"}})
+        append(transcript, assistant(248_000))
         self.assertEqual(end("prompt", transcript), ["session_end"])
 
     def test_a_failed_handover_is_written_at_the_end(self):
         transcript = closed_session("failed")
         with H.locked_state("failed") as st:
             st["written"] = {"ok": False}
-        append(transcript, assistant(187_300))
+        append(transcript, assistant(237_300))
         self.assertEqual(end("failed", transcript), ["session_end"])
 
     def test_without_a_closing_reply_the_rule_is_unchanged(self):
         transcript = closed_session("no-reply")
         with H.locked_state("no-reply") as st:
             st.pop("reply_offset")
-        append(transcript, assistant(187_300))
+        append(transcript, assistant(237_300))
         self.assertEqual(end("no-reply", transcript), ["session_end"])
 
 

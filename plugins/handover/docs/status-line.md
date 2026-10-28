@@ -15,7 +15,7 @@ The one-line handover state a status line can print. [Back to the README](../REA
 | `✋ Handover ready · run /clear` | green | Handover and closing reply written |
 | `✋ Handover ready · relaying` | green | The relay is clearing the session |
 | `✋ Compacting · handover written, loads after it` | gray | A compaction runs; its handover is loaded next to the summary, no `/clear` to run |
-| `✋ Relay limit · 5 handovers · run /clear` | red | The chain reached `relay_limit` |
+| `✋ Relay limit · 10 handovers · run /clear` | red | The chain reached `relay_limit` |
 | `✋ AFK deadline · 3 handovers · run /clear` | red | An AFK run's deadline passed at a handover |
 | `✋ AFK done · <why>` | green | The AFK run ended on `AFK done`; red for `blocked`, `deadline`, `idle`, `exit` |
 | `✋ Handover failed · <error>` | red | The writer failed |
@@ -23,7 +23,7 @@ The one-line handover state a status line can print. [Back to the README](../REA
 
 The line is empty in a session where the plugin is disabled: the plugin's hooks mark each session they run in, from its start to its end, and the status line prints only for those. A status-line script can therefore call it whenever the plugin is installed.
 
-`· loaded` is appended when the session started from a handover (`· relay 3/5` when the relay started it, `· relay 3 · AFK until 08:00` in an AFK run), and `refreshing` replaces `writing` when an existing handover is rewritten.
+`· loaded` is appended when the session started from a handover (`· relay 3/10` when the relay started it, `· relay 3 · AFK until 08:00` in an AFK run), and `refreshing` replaces `writing` when an existing handover is rewritten.
 
 With the [`statusline`](../../statusline/README.md) plugin, the line shows up by itself: the plugin ships an executable `statusline-segment`, which that status line runs for each installed plugin. Otherwise, print it as a second line from your own status-line script:
 

@@ -155,8 +155,8 @@ def config():
 
     return {
         "dir": os.path.expanduser(option("handover_dir", "~/Notes/claude/agent-handovers")),
-        "suggest": number("suggest_tokens", "150000"),
-        "trigger": number("trigger_tokens", "185000"),
+        "suggest": number("suggest_tokens", "200000"),
+        "trigger": number("trigger_tokens", "235000"),
         # How long the wind-down waits for each [await] background command before stopping it.
         "await": number("await_minutes", "10") * 60,
         "writer_model": option("writer_model", "sonnet"),
@@ -170,7 +170,7 @@ def config():
         # until real compactions have been recorded.
         "reserve": number("compact_reserve_tokens", "33000"),
         # Handovers in a relay chain before it stops for the user.
-        "relay_limit": number("relay_limit", "5"),
+        "relay_limit": number("relay_limit", "10"),
         # Tell each session to give self-contained tasks to subagents.
         "delegate": str(option("delegate", "true")).lower() not in ("false", "0", "no", "off"),
     }
