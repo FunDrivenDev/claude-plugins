@@ -99,6 +99,10 @@ MAX_RENDER_CHARS = 800_000
 # How long a new session waits for a handover still being written: the refresh of a session that went on
 # after its closing reply, a pre-compaction handover, a writer slower than STOP_WRITE_SECONDS.
 WAIT_SECONDS = 150
+# How far below the trigger the status line turns yellow when no suggestion comes before it.
+WARN_TOKENS = 20_000
+# Claude Code's autoCompactWindow when the settings leave it unset.
+DEFAULT_COMPACT_WINDOW = 200_000
 # How long the Stop hook holds the session while the writer works, within the hook's timeout in hooks.json.
 STOP_WRITE_SECONDS = 240
 WRITER_TIMEOUT = 600
@@ -116,7 +120,6 @@ OPTIONS = (
     "await_minutes",
     "writer_model",
     "handover_chars",
-    "warn_tokens",
     "refresh_tokens",
     "compact_reserve_tokens",
     "relay_limit",
@@ -155,22 +158,20 @@ def config():
 
     return {
         "dir": os.path.expanduser(option("handover_dir", "~/Notes/claude/agent-handovers")),
-        "suggest": number("suggest_tokens", "150000"),
-        "trigger": number("trigger_tokens", "185000"),
+        "suggest": number("suggest_tokens", "200000"),
+        "trigger": number("trigger_tokens", "250000"),
         # How long the wind-down waits for each [await] background command before stopping it.
         "await": number("await_minutes", "10") * 60,
         "writer_model": option("writer_model", "sonnet"),
         # Target length of the handover; loading cuts it at INJECT_CHARS.
         "chars": min(number("handover_chars", "8000"), INJECT_CHARS),
-        # The status line warns this far below the trigger.
-        "warn": number("warn_tokens", "20000"),
         # A handover this many tokens behind the session is refreshed before it is used.
         "refresh": number("refresh_tokens", "2000"),
         # Auto-compaction fires about this far below autoCompactWindow; `stats` uses it
         # until real compactions have been recorded.
         "reserve": number("compact_reserve_tokens", "33000"),
         # Handovers in a relay chain before it stops for the user.
-        "relay_limit": number("relay_limit", "5"),
+        "relay_limit": number("relay_limit", "10"),
         # Tell each session to give self-contained tasks to subagents.
         "delegate": str(option("delegate", "true")).lower() not in ("false", "0", "no", "off"),
     }
@@ -345,6 +346,40 @@ def record(event, sid, **fields):
 def compact_window():
     v = read_json(os.path.expanduser("~/.claude/settings.json"), {}).get("autoCompactWindow")
     return v if isinstance(v, int) else None
+
+
+def warn_point(suggest, trigger):
+    """Where the status line turns yellow: halfway from the suggestion to the trigger, or WARN_TOKENS before the
+    trigger without a suggestion below it."""
+    return (suggest + trigger) // 2 if 0 < suggest < trigger else trigger - WARN_TOKENS
+
+
+def compaction_conflict(cfg, cwd):
+    """A warning when auto-compaction fires before the trigger, so the automatic handover never does; None when
+    the thresholds fit or auto-compaction is off. Settings layer as in Claude Code: user, project, local."""
+    layers = [os.path.expanduser("~/.claude/settings.json")]
+    if cwd:
+        layers += [os.path.join(cwd, ".claude", f) for f in ("settings.json", "settings.local.json")]
+    window, enabled = None, read_json(os.path.expanduser("~/.claude.json"), {}).get("autoCompactEnabled")
+    for path in layers:
+        s = read_json(path, {})
+        window = s.get("autoCompactWindow", window)
+        enabled = s.get("autoCompactEnabled", enabled)
+    if enabled is False:
+        return None
+    where = f"autoCompactWindow {window // 1000}K" if isinstance(window, int) else "autoCompactWindow unset"
+    window = window if isinstance(window, int) else DEFAULT_COMPACT_WINDOW
+    point = window - cfg["reserve"]
+    limit = cfg["trigger"] or cfg["suggest"]
+    if not limit or point > limit:
+        return None
+    name = "trigger_tokens" if cfg["trigger"] else "suggest_tokens"
+    return (
+        f"handover: auto-compaction fires near {point // 1000}K ({where}), before {name} at {limit // 1000}K, "
+        "so the automatic handover never fires. Set autoCompactWindow above "
+        f"{(limit + cfg['reserve']) // 1000}K in ~/.claude/settings.json, or lower {name} under {point // 1000}K "
+        "with /handover:config."
+    )
 
 
 @contextlib.contextmanager
@@ -798,13 +833,17 @@ def watch_wake(sid, transcript):
     )
 
 
-def turn_since(transcript, offset):
-    """Whether a new turn (a message, the notice of a command's end) reached the transcript past `offset`."""
+def turn_since(transcript, offset, types=("user", "assistant")):
+    """Whether a new turn (a message, the notice of a command's end) reached the transcript past `offset`.
+
+    With `types=("user",)`, whether anything came in for the session to answer: a prompt, a notice, a tool's result.
+    """
     with contextlib.suppress(OSError), open(transcript, "rb") as f:
         f.seek(offset)
         for line in f.read().decode("utf-8", "replace").splitlines():
             with contextlib.suppress(ValueError):
-                if json.loads(line).get("type") in ("user", "assistant"):
+                e = json.loads(line)
+                if e.get("type") in types and not e.get("isSidechain"):
                     return True
     return False
 
@@ -1099,7 +1138,7 @@ def request_handover(st, sid, cause, cfg, reason=None, focus=None, relay=False, 
         start_wind_down(st, sid, cause, tokens, cfg)
     # The session knows: only the handover and its closing reply are left, due again after an earlier handover.
     st["user_notified"] = st["wind_down_sent"] = True
-    for k in ("closing_reply", "reply_due", "reply_reminded", "held_since"):
+    for k in ("closing_reply", "reply_due", "reply_reminded", "held_since", "reply_offset"):
         st.pop(k, None)
     reset_commands(st, sid)
 
@@ -1456,6 +1495,10 @@ def close(sid, cfg, last):
         if outcome is None:
             outcome = "slow" if writer_running(st) else "failed" if st.get("write_failed") else "written"
         st["write_failed"] = outcome == "failed"
+        # The closing reply (2K to 4K tokens) reaches the transcript after this hook: `reply_only` tells it from a
+        # session that went on.
+        with contextlib.suppress(OSError):
+            st["reply_offset"] = os.path.getsize(st["transcript"])
         return hand_over(st, sid, tokens, cfg, resume_message(last), outcome)
 
 
@@ -2582,6 +2625,13 @@ def audit_post(inp):
         audit_write(afk, inp, verdict, why)
 
 
+def reply_only(st, transcript):
+    """Whether the session ends on its closing reply, nothing having come in since: its handover is as fresh as it
+    gets, the reply being for the user, so the next session loads it at once rather than wait for a rewrite."""
+    offset = st.get("reply_offset")
+    return offset is not None and (st.get("written") or {}).get("ok") and not turn_since(transcript, offset, ("user",))
+
+
 def on_session_end(inp):
     sid = inp["session_id"]
     if not os.path.exists(state_path(sid)):
@@ -2594,7 +2644,7 @@ def on_session_end(inp):
             return
         tokens, _ = T.context_tokens(inp["transcript_path"])
         record("session_ended", sid, tokens=tokens, reason=inp.get("reason"))
-        if needs_refresh(st, tokens):
+        if needs_refresh(st, tokens) and not reply_only(st, inp["transcript_path"]):
             start_writer(st, sid, "session_end")
         project = st.get("project") or project_of(inp)
     write_json(
@@ -2789,6 +2839,7 @@ def after_compact(inp):
             "held_since",
             "write_failed",
             "closing_reply",
+            "reply_offset",
             "written",
             "compacting",
         ):
@@ -2849,14 +2900,21 @@ def cmd_guidance(_args):
     injected context."""
     if os.environ.get("HANDOVER_CHILD"):
         return 0
-    with (
-        contextlib.suppress(ValueError, KeyError, OSError),
-        locked_json(tasks_path(json.load(sys.stdin)["session_id"])) as tasks,
-    ):
+    try:
+        inp = json.load(sys.stdin)
+    except ValueError:
+        inp = {}
+    with contextlib.suppress(KeyError, OSError), locked_json(tasks_path(inp["session_id"])) as tasks:
         # Recorded with each untagged command: was the session told the tags?
         tasks["guided"] = True
-    text = TAGS + ("\n\n" + DELEGATE if config()["delegate"] else "")
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}))
+    cfg = config()
+    text = TAGS + ("\n\n" + DELEGATE if cfg["delegate"] else "")
+    out = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}
+    warning = compaction_conflict(cfg, inp.get("cwd"))
+    if warning:
+        out["systemMessage"] = warning
+        out["hookSpecificOutput"]["additionalContext"] += f"\n\n{warning} Tell the user in your first reply."
+    print(json.dumps(out))
     return 0
 
 
@@ -2953,7 +3011,7 @@ def status_line(st, prog, tokens, cfg):
         return "gray", f"Handover {'suggested' if suggested else 'trigger off'}{loaded}"
     if tokens >= trig:
         return "orange", f"Wind-down on the next tool call{loaded}"
-    colour = "yellow" if tokens >= trig - cfg["warn"] else "gray"
+    colour = "yellow" if tokens >= warn_point(suggest, trig) else "gray"
     head = "Handover suggested · will trigger" if suggested else "Handover will trigger"
     return colour, f"{head} at {kfmt(trig)}{loaded}"
 

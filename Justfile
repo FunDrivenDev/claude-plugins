@@ -23,6 +23,8 @@ test:
     mise exec -- python3 tests/notify.py
     mise exec -- python3 tests/guard.py
     mise exec -- python3 tests/afk.py
+    mise exec -- python3 tests/refresh.py
+    mise exec -- python3 tests/conflict.py
 
 # Fail when a plugin changed since origin/main without a version bump (needs origin/main, so not in ci.yml).
 versions:
