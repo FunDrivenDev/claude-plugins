@@ -38,20 +38,20 @@ describe('helpers', () => {
     expect(clockTime(new Date(2026, 9, 8, 9, 5).getTime())).toBe('09:05')
     expect(fileMeta(null, null)).toBeNull()
     const thresholds = { suggest: 150_000, warnAt: 167_500, trigger: 185_000 }
-    const ho = { isOn: true, loaded: null, written: null, thresholds, thresholdsError: null, isWriting: false, isWindingDown: false, error: null, resume: null }
+    const ho = { isOn: true, loaded: null, written: null, thresholds, thresholdsError: null, pending: null, isWriting: false, isWindingDown: false, error: null, resume: null }
     expect(handoverStatus(ho, 92_000).text).toBe('triggers at 185k · now 92k')
     expect(handoverStatus(ho, 167_000).color).toBe('#a5adce')
     expect(handoverStatus(ho, 167_500).color).toBe('#e5c890')
     expect(handoverStatus({ ...ho, thresholds: null, thresholdsError: 'why' }, 92_000)).toEqual({ text: 'thresholds unknown · why', color: '#e78284' })
     expect(handoverPhase({ ...ho, thresholds: null, thresholdsError: 'why' }, 190_000)).toBeNull()
-    expect(readThresholds(JSON.stringify({ thresholds: { suggest_tokens: 200_000, warn_at_tokens: 225_000, trigger_tokens: 250_000 } }))).toEqual({
-      thresholds: { suggest: 200_000, warnAt: 225_000, trigger: 250_000 },
-      thresholdsError: null,
-    })
-    expect(readThresholds('missing /d/options.json\n').thresholdsError).toBe('/d/options.json not found; the handover plugin writes it at session start')
-    expect(readThresholds('{"trigger_tokens": "250000"}').thresholdsError).toContain('has no thresholds')
-    expect(readThresholds('{"thresholds": {"suggest_tokens": 1, "warn_at_tokens": 2, "trigger_tokens": "3"}}').thresholdsError).toContain('not a number: thresholds.trigger_tokens')
-    expect(readThresholds('{').thresholdsError).toContain('not valid JSON')
+    const recorded = { thresholds: { suggest_tokens: 200_000, warn_at_tokens: 225_000, trigger_tokens: 250_000 }, plugin_version: '0.20.0' }
+    expect(readThresholds(recorded, {})).toEqual({ thresholds: { suggest: 200_000, warnAt: 225_000, trigger: 250_000 }, thresholdsError: null, pending: null })
+    expect(readThresholds(recorded, { suggest_tokens: 200_000, trigger_tokens: 250_000 }).pending).toBeNull()
+    expect(readThresholds(recorded, { trigger_tokens: '120000' }).pending).toEqual({ trigger: 120_000 })
+    expect(readThresholds({}, {}).thresholdsError).toContain('older than 0.20.0')
+    expect(readThresholds({ ...recorded, thresholds: { suggest_tokens: 1, warn_at_tokens: 2, trigger_tokens: '3' } }, {}).thresholdsError).toBe(
+      "in this session's handover state (handover 0.20.0), not a number: thresholds.trigger_tokens",
+    )
     expect(handoverPhase(ho, 92_000)).toBeNull()
     expect(handoverPhase({ ...ho, isWindingDown: true }, 92_000)).toBe('winding')
     expect(handoverPhase(ho, 190_000)).toBe('winding')
@@ -353,6 +353,36 @@ test('the Config tab lists each value the pane reads, as in effect, with its def
   await ui.unmount()
 })
 
+test('the Config tab shows the thresholds this session runs with, and those set since for the next session', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 50_000 } as never, rateLimits: [] } }))
+  const state = { thresholds: { suggest_tokens: 200_000, warn_at_tokens: 225_000, trigger_tokens: 250_000 }, plugin_version: '0.20.0' }
+  on('process.run', ($, e) => {
+    const isHandover = e.argv.some(arg => arg.includes('handover-fundrivendev'))
+    return { value: { exitCode: isHandover ? 0 : 1, stdout: isHandover ? `on\n@@\n${JSON.stringify(state)}` : '', stderr: '' } } as never
+  })
+  on('session.id', () => ({ value: 's1' }) as never)
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.model', () => ({ value: 'opus' }))
+  on('command.register', () => ({ value: undefined }) as never)
+  on('session.messages', () => ({ value: [] }))
+  on('ui.open', () => ({ value: undefined }) as never)
+  on('env.get', () => ({ value: undefined }))
+  on('settings.read', () => ({
+    value: { pluginConfigs: { 'handover@fundrivendev': { options: { trigger_tokens: 120_000, handover_dir: '/h/handovers' } } } },
+  }))
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+
+  const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'tab:config' })
+  expect(await ui.find({ text: /^250k$/ })).toBeDefined()
+  expect(await ui.find({ text: /^120k set in settings · applies from the next session$/ })).toBeDefined()
+  expect(await ui.find({ text: /^200k$/ })).toBeDefined()
+  expect(await ui.find({ text: /^\/h\/handovers$/ })).toBeDefined()
+  expect(await ui.find({ text: /unknown/ })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('the pane takes its light colours on a light macOS', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
@@ -426,7 +456,7 @@ test('the handover section leaves its states to Help, and Hand over now starts t
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 50_000 } as never, rateLimits: [] } }))
   on('process.run', ($, e) => {
     const isHandover = e.argv.some(arg => arg.includes('handover-fundrivendev'))
-    return { value: { exitCode: isHandover ? 0 : 1, stdout: isHandover ? 'on\n@@\n{}\n@@\n{}' : '', stderr: '' } } as never
+    return { value: { exitCode: isHandover ? 0 : 1, stdout: isHandover ? 'on\n@@\n{}' : '', stderr: '' } } as never
   })
   on('session.id', () => ({ value: 's1' }) as never)
   on('session.start', ($, e) => ({ cwd: e.cwd }))
@@ -464,7 +494,7 @@ test('a written handover starts the next session with its resume message in one 
   on('process.run', ($, e) => {
     if (e.argv.some(arg => arg.includes('handover-fundrivendev'))) {
       const state = { written: { ok: true }, path: '/h/written.md', loaded_from: '/h/loaded.md' }
-      return { value: { exitCode: 0, stdout: `on\n@@\n${JSON.stringify(state)}\n@@\n{}`, stderr: '' } } as never
+      return { value: { exitCode: 0, stdout: `on\n@@\n${JSON.stringify(state)}`, stderr: '' } } as never
     }
     if (e.argv.includes('/h/loaded.md')) return { value: { exitCode: 0, stdout: '---\nsummary: "Ship the session panel"\n---\n@@\n12\n1000', stderr: '' } } as never
     return { value: { exitCode: 1, stdout: '', stderr: '' } } as never

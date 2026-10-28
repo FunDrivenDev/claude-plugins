@@ -15,4 +15,5 @@ The bar's one option, `cacheTtl`, is described in [Bar](bar.md#configuration). T
 ## Limits
 
 - Steps and sub-agents are recorded from the moment the plugin loads; the first prompt is read back from the transcript.
-- The handover thresholds come from the `thresholds` the handover plugin saves in its `options.json` (handover 0.19.0 and later), the point where its line turns yellow included. The pane has no default of its own: when it cannot read them, the Handover row and the Config tab say why.
+- The handover thresholds are those this session runs with: the `thresholds` the handover plugin records in the session's state, `sessions/<session_id>.json` in its data folder, at session start (handover 0.20.0 and later), the point where its line turns yellow included. The pane has no default of its own: when it cannot read them, the Handover row and the Config tab say why. A `suggest_tokens` or `trigger_tokens` set in `settings.json` since then shows beneath it in the Config tab, as applying from the next session.
+- `handover_dir` comes from the handover plugin's options in `settings.json`, `pluginConfigs["handover@fundrivendev"].options`.
