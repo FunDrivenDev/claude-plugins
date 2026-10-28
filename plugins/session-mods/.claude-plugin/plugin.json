@@ -1,6 +1,6 @@
 {
   "name": "session-mods",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Two session mods: a calm side pane (first prompt, sub-agents with their history, the session's reasoning steps) and a bar beneath the prompt (running time, prompt-cache countdown, context usage, quotas, and the model and effort selectors)",
   "author": {
     "name": "Raphaël Louvradoux"

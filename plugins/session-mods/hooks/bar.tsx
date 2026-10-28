@@ -248,11 +248,14 @@ export const barRuns = (q: Quota, width: number): BarRun[] => {
 
 /**
  * Selects the session's model and effort before its first turn reports them:
- * the model `/model` shows, the effort from the variable or the settings it saves to.
+ * the model `/model` shows, the effort from the variable, else the model's own
+ * `modelSettings` entry, else the settings' `effortLevel`, the order Claude Code applies.
  */
 async function seedModel($: EngineInterface) {
   const model = modelId(await $.session.model())
-  const saved = (await $.env.get('CLAUDE_CODE_EFFORT_LEVEL')) ?? (await $.settings.read()).effortLevel
+  const settings = await $.settings.read()
+  const perModel = (settings.modelSettings as Record<string, { effortLevel?: unknown }> | undefined)?.[model]?.effortLevel
+  const saved = (await $.env.get('CLAUDE_CODE_EFFORT_LEVEL')) ?? perModel ?? settings.effortLevel
   const effort = typeof saved === 'string' && EFFORTS.some(e => e.level === saved) ? saved : null
   await update($, info, i => ({ ...i, model: i.model ?? model, effort: i.effort ?? effort }))
 }
