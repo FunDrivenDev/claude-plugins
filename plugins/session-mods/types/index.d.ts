@@ -87,10 +87,12 @@ export type Handover = {
   /** The handover this session started from, and the one it wrote. */
   loaded: HandoverFile | null
   written: HandoverFile | null
-  /** The token thresholds the handover plugin resolved, as it saved them in its options.json; null when they could not be read. */
+  /** The token thresholds this session runs with, as the handover plugin recorded them in its state at session start; null when they could not be read. */
   thresholds: HandoverThresholds | null
   /** Why the thresholds could not be read, when they could not. */
   thresholdsError: string | null
+  /** Thresholds set in settings since the session started, which apply from the next session; null when none differs. */
+  pending: Partial<HandoverThresholds> | null
   isWriting: boolean
   /** The wind-down has started (the trigger, a request or /handover:trigger): no new task, those in progress finish. */
   isWindingDown: boolean

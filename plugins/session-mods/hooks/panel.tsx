@@ -593,54 +593,63 @@ async function scanDocs($: EngineInterface, tool: string, input: Record<string, 
   await keepDocs($, named, Math.floor((await $.session.usage()).startedAt / 1000))
 }
 
+/** The handover plugin's options as set in Claude Code's settings: what the next session will resolve, defaults aside. */
+const handoverOptions = (settings: Record<string, unknown>): Record<string, unknown> => {
+  const configs = settings.pluginConfigs as Record<string, { options?: Record<string, unknown> }> | undefined
+  return configs?.['handover@fundrivendev']?.options ?? {}
+}
+
 /** The values the pane reads from Claude Code's settings and the environment, as set. */
 async function readConfig($: EngineInterface) {
-  const settings = await $.settings.read().catch(() => ({}) as Record<string, unknown>)
-  const plans = (settings as Record<string, unknown>).plansDirectory
-  const plansDirectory = typeof plans === 'string' && plans.trim() ? plans.trim() : null
-  await update($, config, c => ({ ...c, plansDirectory }))
+  const settings = (await $.settings.read().catch(() => ({}))) as Record<string, unknown>
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null)
+  const plansDirectory = text(settings.plansDirectory)
+  const handoverDir = text(handoverOptions(settings).handover_dir)
+  await update($, config, c => ({ ...c, plansDirectory, handoverDir }))
 }
 
 const HANDOVER_READ = `d="$HOME/.claude/plugins/data/handover-fundrivendev"
 test -d "$d" || d="$HOME/.claude/plugins/data/handover-fundriven"
 test -e "$d/live/$1" && echo on
-echo "@@"; cat "$d/sessions/$1.json" 2>/dev/null
-echo "@@"; cat "$d/options.json" 2>/dev/null || echo "missing $d/options.json"`
+echo "@@"; cat "$d/sessions/$1.json" 2>/dev/null`
 
 /** A handover's first lines, for its title, then its line count and last change (`date -r` works on macOS and GNU). */
 const HANDOVER_FILE = `head -n 40 "$1" || exit 1
 printf '\\n@@\\n'; wc -l < "$1"; date -r "$1" +%s`
 
-/** The handover plugin's saved thresholds, from its options.json, or why they could not be read: never a default of the pane's own. */
-export const readThresholds = (opts: string): { thresholds: HandoverThresholds | null; thresholdsError: string | null } => {
-  const failed = (thresholdsError: string) => ({ thresholds: null, thresholdsError })
-  const missing = /^missing (.*)/.exec(opts.trim())
-  if (missing) return failed(`${missing[1]} not found; the handover plugin writes it at session start`)
-  let opt: unknown
-  try {
-    opt = JSON.parse(opts)
-  } catch {
-    return failed("the handover plugin's options.json is not valid JSON")
-  }
-  const saved = (opt as { thresholds?: unknown } | null)?.thresholds
+/**
+ * The thresholds this session runs with, as the handover plugin recorded them in its state at session start, or why
+ * they are unknown: never a default of the pane's own. `pending` holds a threshold set in settings since, which applies
+ * from the next session.
+ */
+export const readThresholds = (
+  st: Record<string, unknown>,
+  options: Record<string, unknown>,
+): { thresholds: HandoverThresholds | null; thresholdsError: string | null; pending: Partial<HandoverThresholds> | null } => {
+  const failed = (thresholdsError: string) => ({ thresholds: null, thresholdsError, pending: null })
+  const saved = st.thresholds
   if (typeof saved !== 'object' || saved === null) {
-    return failed("the handover plugin's options.json has no thresholds; handover 0.19.0 and later write them at session start")
+    return failed("this session's handover state records no thresholds: its handover plugin is older than 0.20.0, which records them at session start")
   }
   const values: Record<string, unknown> = { ...saved }
   const keys = { suggest: 'suggest_tokens', warnAt: 'warn_at_tokens', trigger: 'trigger_tokens' } as const
   const bad = Object.values(keys).filter(key => typeof values[key] !== 'number')
-  if (bad.length) return failed(`in the handover plugin's options.json, not a number: thresholds.${bad.join(', thresholds.')}`)
-  return {
-    thresholds: { suggest: values.suggest_tokens as number, warnAt: values.warn_at_tokens as number, trigger: values.trigger_tokens as number },
-    thresholdsError: null,
+  const version = typeof st.plugin_version === 'string' ? ` (handover ${st.plugin_version})` : ''
+  if (bad.length) return failed(`in this session's handover state${version}, not a number: thresholds.${bad.join(', thresholds.')}`)
+  const thresholds = { suggest: values.suggest_tokens as number, warnAt: values.warn_at_tokens as number, trigger: values.trigger_tokens as number }
+  const pending: Partial<HandoverThresholds> = {}
+  for (const name of ['suggest', 'trigger'] as const) {
+    const set = Number(options[keys[name]])
+    if (options[keys[name]] !== undefined && options[keys[name]] !== '' && Number.isFinite(set) && set !== thresholds[name]) pending[name] = set
   }
+  return { thresholds, thresholdsError: null, pending: Object.keys(pending).length ? pending : null }
 }
 
 /** Reads the handover plugin's state for this session, as its status line does. */
 async function readHandover($: EngineInterface) {
   const sid = await $.session.id()
   const out = await $.process.run(['sh', '-c', HANDOVER_READ, 'sh', sid])
-  const [live = '', state = '', opts = ''] = out.stdout.split('@@\n')
+  const [live = '', state = ''] = out.stdout.split('@@\n')
   const parse = (text: string): Record<string, unknown> => {
     try {
       return JSON.parse(text) as Record<string, unknown>
@@ -649,7 +658,7 @@ async function readHandover($: EngineInterface) {
     }
   }
   const st = parse(state)
-  const opt = parse(opts)
+  const settings = (await $.settings.read().catch(() => ({}))) as Record<string, unknown>
   const titled = async (path: unknown): Promise<HandoverFile | null> => {
     if (typeof path !== 'string' || !path) return null
     const out = await $.process.run(['sh', '-c', HANDOVER_FILE, 'sh', path])
@@ -668,15 +677,13 @@ async function readHandover($: EngineInterface) {
     isOn: live.trim() === 'on',
     loaded: await titled(st.loaded_from),
     written: written?.ok ? await titled(st.path) : null,
-    ...readThresholds(opts),
+    ...readThresholds(st, handoverOptions(settings)),
     isWriting: typeof writer?.since === 'number' && now - writer.since < 660,
     isWindingDown: Boolean(st.wind_down),
     error: typeof st.error === 'string' ? st.error : null,
     resume: said ? resumeMessage(said) : null,
   }
   await update($, handover, () => next)
-  const dir = typeof opt.handover_dir === 'string' && opt.handover_dir.trim() ? opt.handover_dir.trim() : null
-  if ((await read($, config)).handoverDir !== dir) await update($, config, c => ({ ...c, handoverDir: dir }))
   if (next.written) await keepDocs($, [next.written.path])
 }
 
@@ -1745,8 +1752,8 @@ export const registerPanel = (on: On) => {
         </Box>,
         `${does} Default: ${fallback}.`,
       )
-    /** A token threshold as the handover plugin resolved it, defaults included, or why it is unknown. */
-    const thresholdRow = (key: string, name: string, value: number | undefined, does: string) =>
+    /** A token threshold as this session runs with it, defaults included, the value set for the next session, or why it is unknown. */
+    const thresholdRow = (key: string, name: string, value: number | undefined, next: number | undefined, does: string) =>
       helpRow(
         `config:${key}`,
         <Box flexDirection="column">
@@ -1754,6 +1761,11 @@ export const registerPanel = (on: On) => {
           <Text wrap="truncate-end" color={value === undefined ? '#e78284' : '#8caaee'}>
             {value !== undefined ? kilo(value) : `unknown · ${ho ? ho.thresholdsError : 'not read yet'}`}
           </Text>
+          {next !== undefined && (
+            <Text wrap="truncate-end" color="#e5c890">
+              {`${kilo(next)} set in settings · applies from the next session`}
+            </Text>
+          )}
         </Box>,
         does,
       )
@@ -1773,9 +1785,9 @@ export const registerPanel = (on: On) => {
         {section('handover plugin')}
         {whereSet('Its options: pluginConfigs["handover@fundrivendev"].options in settings.json.')}
         {configRow('handover-dir', 'handover_dir', conf.handoverDir && tilde(conf.handoverDir, docHome), HANDOVER_DIR, 'Where handovers are written: listed under Agent handovers in Documents.')}
-        {thresholdRow('suggest', 'suggest_tokens', ho?.thresholds?.suggest, 'Context size from which a handover is suggested at the next boundary.')}
-        {thresholdRow('warn', 'thresholds.warn_at_tokens', ho?.thresholds?.warnAt, 'Context size at which the Handover line turns yellow, computed by the handover plugin.')}
-        {thresholdRow('trigger', 'trigger_tokens', ho?.thresholds?.trigger, 'Context size at which the session winds down and hands over; 0 turns it off.')}
+        {thresholdRow('suggest', 'suggest_tokens', ho?.thresholds?.suggest, ho?.pending?.suggest, 'Context size from which a handover is suggested at the next boundary.')}
+        {thresholdRow('warn', 'thresholds.warn_at_tokens', ho?.thresholds?.warnAt, undefined, 'Context size at which the Handover line turns yellow, computed by the handover plugin.')}
+        {thresholdRow('trigger', 'trigger_tokens', ho?.thresholds?.trigger, ho?.pending?.trigger, 'Context size at which the session winds down and hands over; 0 turns it off.')}
       </Box>
     )
 
