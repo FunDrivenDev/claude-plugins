@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Hook, On, RenderElement, ToolCallInput, ToolCallResult, UiCopyArgs } from 'claude-code'
 
-import type { Agent, Config, Doc, Entry, FileChange, Handover, HandoverFile, Prompt, Repo, RepoChanges, Step, Tab, TrackedIssue, TrackedPr } from '../types'
+import type { Agent, Config, Doc, Entry, FileChange, Handover, HandoverFile, HandoverThresholds, Prompt, Repo, RepoChanges, Step, Tab, TrackedIssue, TrackedPr } from '../types'
 
 import { LOG_FORMAT, parseLog, parseNumstat, parseStatus, treeRows } from './files'
 import { ARTIFACTS, HANDOVER_DIR, PLANS_DIR, artifactOf, type DocContext, docGroups, docOf, docPaths, tilde } from './documents'
@@ -261,12 +261,14 @@ export const handoverStatus = (h: Handover, tokens: number): { text: string; col
   if (h.error) return { text: `failed · ${h.error}`, color: '#e78284' }
   if (h.isWriting) return { text: 'writing…', color: '#ef9f76' }
   if (h.written) return { text: 'ready · run /clear', color: '#a6d189' }
-  const suggested = h.suggest > 0 && tokens >= h.suggest
-  if (!h.trigger) return { text: suggested ? 'suggested' : 'trigger off', color: '#a5adce' }
-  if (tokens >= h.trigger) return { text: 'wind-down on the next tool call', color: '#ef9f76' }
+  const t = h.thresholds
+  if (!t) return { text: `thresholds unknown · ${h.thresholdsError}`, color: '#e78284' }
+  const suggested = t.suggest > 0 && tokens >= t.suggest
+  if (!t.trigger) return { text: suggested ? 'suggested' : 'trigger off', color: '#a5adce' }
+  if (tokens >= t.trigger) return { text: 'wind-down on the next tool call', color: '#ef9f76' }
   return {
-    text: `${suggested ? 'suggested · ' : ''}triggers at ${kilo(h.trigger)} · now ${kilo(tokens)}`,
-    color: tokens >= h.trigger - h.warn ? '#e5c890' : '#a5adce',
+    text: `${suggested ? 'suggested · ' : ''}triggers at ${kilo(t.trigger)} · now ${kilo(tokens)}`,
+    color: tokens >= t.warnAt ? '#e5c890' : '#a5adce',
   }
 }
 
@@ -276,6 +278,9 @@ const NEXT_ACTIONS = [
   { key: 'handover:edit', emoji: '✏️', label: 'Edit the prompt first', color: '#8caaee', isSent: false },
 ] as const
 
+/** The context has reached the wind-down trigger; false when it is off or unknown. */
+const isPastTrigger = (h: Handover, tokens: number) => Boolean(h.thresholds?.trigger) && tokens >= (h.thresholds?.trigger ?? 0)
+
 export type HandoverPhase = 'winding' | 'writing' | 'ready'
 
 /** Where a handover under way stands: winding down, being written, or written; null before it starts or once it failed. */
@@ -283,7 +288,7 @@ export const handoverPhase = (h: Handover, tokens: number): HandoverPhase | null
   if (h.error) return null
   if (h.written) return 'ready'
   if (h.isWriting) return 'writing'
-  if (h.isWindingDown || (h.trigger > 0 && tokens >= h.trigger)) return 'winding'
+  if (h.isWindingDown || isPastTrigger(h, tokens)) return 'winding'
   return null
 }
 
@@ -600,11 +605,36 @@ const HANDOVER_READ = `d="$HOME/.claude/plugins/data/handover-fundrivendev"
 test -d "$d" || d="$HOME/.claude/plugins/data/handover-fundriven"
 test -e "$d/live/$1" && echo on
 echo "@@"; cat "$d/sessions/$1.json" 2>/dev/null
-echo "@@"; cat "$d/options.json" 2>/dev/null`
+echo "@@"; cat "$d/options.json" 2>/dev/null || echo "missing $d/options.json"`
 
 /** A handover's first lines, for its title, then its line count and last change (`date -r` works on macOS and GNU). */
 const HANDOVER_FILE = `head -n 40 "$1" || exit 1
 printf '\\n@@\\n'; wc -l < "$1"; date -r "$1" +%s`
+
+/** The handover plugin's saved thresholds, from its options.json, or why they could not be read: never a default of the pane's own. */
+export const readThresholds = (opts: string): { thresholds: HandoverThresholds | null; thresholdsError: string | null } => {
+  const failed = (thresholdsError: string) => ({ thresholds: null, thresholdsError })
+  const missing = /^missing (.*)/.exec(opts.trim())
+  if (missing) return failed(`${missing[1]} not found; the handover plugin writes it at session start`)
+  let opt: unknown
+  try {
+    opt = JSON.parse(opts)
+  } catch {
+    return failed("the handover plugin's options.json is not valid JSON")
+  }
+  const saved = (opt as { thresholds?: unknown } | null)?.thresholds
+  if (typeof saved !== 'object' || saved === null) {
+    return failed("the handover plugin's options.json has no thresholds; handover 0.19.0 and later write them at session start")
+  }
+  const values: Record<string, unknown> = { ...saved }
+  const keys = { suggest: 'suggest_tokens', warnAt: 'warn_at_tokens', trigger: 'trigger_tokens' } as const
+  const bad = Object.values(keys).filter(key => typeof values[key] !== 'number')
+  if (bad.length) return failed(`in the handover plugin's options.json, not a number: thresholds.${bad.join(', thresholds.')}`)
+  return {
+    thresholds: { suggest: values.suggest_tokens as number, warnAt: values.warn_at_tokens as number, trigger: values.trigger_tokens as number },
+    thresholdsError: null,
+  }
+}
 
 /** Reads the handover plugin's state for this session, as its status line does. */
 async function readHandover($: EngineInterface) {
@@ -620,7 +650,6 @@ async function readHandover($: EngineInterface) {
   }
   const st = parse(state)
   const opt = parse(opts)
-  const num = (key: string, fallback: number) => (typeof opt[key] === 'number' ? (opt[key] as number) : fallback)
   const titled = async (path: unknown): Promise<HandoverFile | null> => {
     if (typeof path !== 'string' || !path) return null
     const out = await $.process.run(['sh', '-c', HANDOVER_FILE, 'sh', path])
@@ -639,9 +668,7 @@ async function readHandover($: EngineInterface) {
     isOn: live.trim() === 'on',
     loaded: await titled(st.loaded_from),
     written: written?.ok ? await titled(st.path) : null,
-    suggest: num('suggest_tokens', 150_000),
-    trigger: num('trigger_tokens', 185_000),
-    warn: num('warn_tokens', 20_000),
+    ...readThresholds(opts),
     isWriting: typeof writer?.since === 'number' && now - writer.since < 660,
     isWindingDown: Boolean(st.wind_down),
     error: typeof st.error === 'string' ? st.error : null,
@@ -1152,7 +1179,7 @@ export const registerPanel = (on: On) => {
       const phase = handoverPhase(ho, usage.context.tokens ?? 0)
       const isStopped = ho.written !== null && current === null
       if (ho.written || ho.isWriting) triggered = false
-      const isTriggerable = !ho.written && !ho.isWriting && !triggered && !(ho.trigger && (usage.context.tokens ?? 0) >= ho.trigger)
+      const isTriggerable = !ho.written && !ho.isWriting && !triggered && !isPastTrigger(ho, usage.context.tokens ?? 0)
       const launch = async (isSent: boolean, surface: UiCopyArgs['surface']) => {
         if (!ho.written || launched === ho.written.path) return
         launched = ho.written.path
@@ -1718,6 +1745,18 @@ export const registerPanel = (on: On) => {
         </Box>,
         `${does} Default: ${fallback}.`,
       )
+    /** A token threshold as the handover plugin resolved it, defaults included, or why it is unknown. */
+    const thresholdRow = (key: string, name: string, value: number | undefined, does: string) =>
+      helpRow(
+        `config:${key}`,
+        <Box flexDirection="column">
+          <Text bold>{name}</Text>
+          <Text wrap="truncate-end" color={value === undefined ? '#e78284' : '#8caaee'}>
+            {value !== undefined ? kilo(value) : `unknown · ${ho ? ho.thresholdsError : 'not read yet'}`}
+          </Text>
+        </Box>,
+        does,
+      )
     const whereSet = (text: string) => (
       <Box marginBottom={1}>
         <Text dimColor italic wrap="wrap">
@@ -1734,9 +1773,9 @@ export const registerPanel = (on: On) => {
         {section('handover plugin')}
         {whereSet('Its options: pluginConfigs["handover@fundrivendev"].options in settings.json.')}
         {configRow('handover-dir', 'handover_dir', conf.handoverDir && tilde(conf.handoverDir, docHome), HANDOVER_DIR, 'Where handovers are written: listed under Agent handovers in Documents.')}
-        {configRow('suggest', 'suggest_tokens', ho && ho.suggest !== 150_000 ? kilo(ho.suggest) : null, '150k', 'Context size from which a handover is suggested at the next boundary.')}
-        {configRow('trigger', 'trigger_tokens', ho && ho.trigger !== 185_000 ? kilo(ho.trigger) : null, '185k', 'Context size at which the session winds down and hands over; 0 turns it off.')}
-        {configRow('warn', 'warn_tokens', ho && ho.warn !== 20_000 ? kilo(ho.warn) : null, '20k', 'How far before the trigger the Handover line turns yellow.')}
+        {thresholdRow('suggest', 'suggest_tokens', ho?.thresholds?.suggest, 'Context size from which a handover is suggested at the next boundary.')}
+        {thresholdRow('warn', 'thresholds.warn_at_tokens', ho?.thresholds?.warnAt, 'Context size at which the Handover line turns yellow, computed by the handover plugin.')}
+        {thresholdRow('trigger', 'trigger_tokens', ho?.thresholds?.trigger, 'Context size at which the session winds down and hands over; 0 turns it off.')}
       </Box>
     )
 

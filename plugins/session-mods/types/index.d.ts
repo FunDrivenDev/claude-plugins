@@ -78,15 +78,19 @@ export type Repo = { common: string; slug: string | null; name: string; worktree
 /** A handover file, with its length and last change (epoch ms) as read, null when unread. */
 export type HandoverFile = { path: string; title: string | null; lines: number | null; modifiedAt: number | null }
 
+/** Context sizes, in tokens: the handover is suggested, the status line turns yellow, the wind-down starts (0: off). */
+export type HandoverThresholds = { suggest: number; warnAt: number; trigger: number }
+
 export type Handover = {
   /** The handover plugin runs in this session. */
   isOn: boolean
   /** The handover this session started from, and the one it wrote. */
   loaded: HandoverFile | null
   written: HandoverFile | null
-  suggest: number
-  trigger: number
-  warn: number
+  /** The token thresholds the handover plugin resolved, as it saved them in its options.json; null when they could not be read. */
+  thresholds: HandoverThresholds | null
+  /** Why the thresholds could not be read, when they could not. */
+  thresholdsError: string | null
   isWriting: boolean
   /** The wind-down has started (the trigger, a request or /handover:trigger): no new task, those in progress finish. */
   isWindingDown: boolean
