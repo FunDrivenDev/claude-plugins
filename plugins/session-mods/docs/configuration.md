@@ -10,9 +10,9 @@ It is a mod: a plugin of function hooks, drawn by the engine (no shell script, n
 
 ## Settings
 
-The bar's one option, `cacheTtl`, is described in [Bar](bar.md#configuration). The pane has no option of its own. It reads Claude Code's `plansDirectory` and the handover plugin's `handover_dir` and token thresholds. The **Config** tab lists each one as in effect, with what it does and its default.
+The bar's one option, `cacheTtl`, is described in [Bar](bar.md#configuration). The pane has no option of its own. It reads Claude Code's `plansDirectory` and the handover plugin's `handover_dir` and token thresholds. The **Config** tab lists each one as in effect, with what it does, and its default for the first two.
 
 ## Limits
 
 - Steps and sub-agents are recorded from the moment the plugin loads; the first prompt is read back from the transcript.
-- The handover thresholds come from the handover plugin's `options.json` or its defaults (150k suggested, 185k trigger), not from `CLAUDE_PLUGIN_OPTION_*` overrides.
+- The handover thresholds come from the `thresholds` the handover plugin saves in its `options.json` (handover 0.19.0 and later), the point where its line turns yellow included. The pane has no default of its own: when it cannot read them, the Handover row and the Config tab say why.

@@ -128,6 +128,16 @@ OPTIONS = (
     "notifier",
     "notify_command",
 )
+NUMBER_OPTIONS = (
+    "suggest_tokens",
+    "trigger_tokens",
+    "await_minutes",
+    "handover_chars",
+    "refresh_tokens",
+    "compact_reserve_tokens",
+    "relay_limit",
+)
+BOOLEAN_OPTIONS = ("delegate",)
 
 
 def option(key, default):
@@ -135,22 +145,44 @@ def option(key, default):
     v = os.environ.get(f"CLAUDE_PLUGIN_OPTION_{key.upper()}", "").strip()
     if v:
         return v
-    return read_json(os.path.join(data_dir(), "options.json"), {}).get(key) or default
+    v = read_json(os.path.join(data_dir(), "options.json"), {}).get(key)
+    return default if v is None or v == "" else v
+
+
+def typed(key, value):
+    """An option's value as its plugin.json type: a number or a boolean; a string the type does not parse stays
+    as it is."""
+    if key in BOOLEAN_OPTIONS:
+        return str(value).strip().lower() not in ("false", "0", "no", "off")
+    if key in NUMBER_OPTIONS:
+        try:
+            n = float(value)
+        except ValueError:
+            return value
+        return int(n) if n.is_integer() else n
+    return value
 
 
 def save_options():
-    """Keep the options the hooks see, for the status line and the commands run outside hooks."""
+    """Keep the options the hooks see, typed, for the status line and the commands run outside hooks, with the
+    token thresholds they resolve to, defaults included: the one place other plugins read them from."""
     seen = {
-        k: os.environ[f"CLAUDE_PLUGIN_OPTION_{k.upper()}"]
+        k: typed(k, os.environ[f"CLAUDE_PLUGIN_OPTION_{k.upper()}"])
         for k in OPTIONS
         if os.environ.get(f"CLAUDE_PLUGIN_OPTION_{k.upper()}")
+    }
+    cfg = config(lambda key, default: seen.get(key, default))
+    seen["thresholds"] = {
+        "suggest_tokens": cfg["suggest"],
+        "trigger_tokens": cfg["trigger"],
+        "warn_at_tokens": warn_point(cfg["suggest"], cfg["trigger"]),
     }
     path = os.path.join(data_dir(), "options.json")
     if read_json(path) != seen:
         write_json(path, seen)
 
 
-def config():
+def config(option=option):
     """The plugin options; the defaults repeat those of plugin.json."""
 
     def number(key, default):
@@ -350,7 +382,7 @@ def compact_window():
 
 def warn_point(suggest, trigger):
     """Where the status line turns yellow: halfway from the suggestion to the trigger, or WARN_TOKENS before the
-    trigger without a suggestion below it."""
+    trigger without a suggestion below it. Saved in options.json as thresholds.warn_at_tokens, for the other readers."""
     return (suggest + trigger) // 2 if 0 < suggest < trigger else trigger - WARN_TOKENS
 
 

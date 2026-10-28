@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { ago, cleanTitle, clockTime, handoverPhase, phaseLine, describeCall, duration, fileMeta, handoverStatus, handoverTitle, headline, lastSentence, prettyModel, previousPrompts, promptText, recolor, resumeMessage } from '../hooks/panel'
+import { ago, cleanTitle, clockTime, handoverPhase, phaseLine, describeCall, duration, fileMeta, handoverStatus, handoverTitle, headline, lastSentence, prettyModel, previousPrompts, promptText, readThresholds, recolor, resumeMessage } from '../hooks/panel'
 
 const PANE = {
   component: 'Pane',
@@ -37,9 +37,21 @@ describe('helpers', () => {
     expect(previousPrompts(0)).toBe('no previous prompt')
     expect(clockTime(new Date(2026, 9, 8, 9, 5).getTime())).toBe('09:05')
     expect(fileMeta(null, null)).toBeNull()
-    const ho = { isOn: true, loaded: null, written: null, suggest: 150_000, trigger: 185_000, warn: 20_000, isWriting: false, isWindingDown: false, error: null, resume: null }
+    const thresholds = { suggest: 150_000, warnAt: 167_500, trigger: 185_000 }
+    const ho = { isOn: true, loaded: null, written: null, thresholds, thresholdsError: null, isWriting: false, isWindingDown: false, error: null, resume: null }
     expect(handoverStatus(ho, 92_000).text).toBe('triggers at 185k · now 92k')
-    expect(handoverStatus(ho, 170_000).color).toBe('#e5c890')
+    expect(handoverStatus(ho, 167_000).color).toBe('#a5adce')
+    expect(handoverStatus(ho, 167_500).color).toBe('#e5c890')
+    expect(handoverStatus({ ...ho, thresholds: null, thresholdsError: 'why' }, 92_000)).toEqual({ text: 'thresholds unknown · why', color: '#e78284' })
+    expect(handoverPhase({ ...ho, thresholds: null, thresholdsError: 'why' }, 190_000)).toBeNull()
+    expect(readThresholds(JSON.stringify({ thresholds: { suggest_tokens: 200_000, warn_at_tokens: 225_000, trigger_tokens: 250_000 } }))).toEqual({
+      thresholds: { suggest: 200_000, warnAt: 225_000, trigger: 250_000 },
+      thresholdsError: null,
+    })
+    expect(readThresholds('missing /d/options.json\n').thresholdsError).toBe('/d/options.json not found; the handover plugin writes it at session start')
+    expect(readThresholds('{"trigger_tokens": "250000"}').thresholdsError).toContain('has no thresholds')
+    expect(readThresholds('{"thresholds": {"suggest_tokens": 1, "warn_at_tokens": 2, "trigger_tokens": "3"}}').thresholdsError).toContain('not a number: thresholds.trigger_tokens')
+    expect(readThresholds('{').thresholdsError).toContain('not valid JSON')
     expect(handoverPhase(ho, 92_000)).toBeNull()
     expect(handoverPhase({ ...ho, isWindingDown: true }, 92_000)).toBe('winding')
     expect(handoverPhase(ho, 190_000)).toBe('winding')
