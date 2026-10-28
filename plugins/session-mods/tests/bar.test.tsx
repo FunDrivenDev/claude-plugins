@@ -93,7 +93,7 @@ test('the bar shows the running time, cache and context, and the model and effor
   on('session.model', () => ({ value: 'opus' }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('env.get', () => ({ value: undefined }))
-  on('settings.read', () => ({ value: { effortLevel: 'medium' } }))
+  on('settings.read', () => ({ value: { effortLevel: 'high', modelSettings: { 'claude-opus-5-5': { effortLevel: 'medium' } } } }))
   on('process.run', () => ok('Dark'))
 
   engineHint(on)
