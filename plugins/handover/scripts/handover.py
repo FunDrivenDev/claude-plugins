@@ -798,13 +798,17 @@ def watch_wake(sid, transcript):
     )
 
 
-def turn_since(transcript, offset):
-    """Whether a new turn (a message, the notice of a command's end) reached the transcript past `offset`."""
+def turn_since(transcript, offset, types=("user", "assistant")):
+    """Whether a new turn (a message, the notice of a command's end) reached the transcript past `offset`.
+
+    With `types=("user",)`, whether anything came in for the session to answer: a prompt, a notice, a tool's result.
+    """
     with contextlib.suppress(OSError), open(transcript, "rb") as f:
         f.seek(offset)
         for line in f.read().decode("utf-8", "replace").splitlines():
             with contextlib.suppress(ValueError):
-                if json.loads(line).get("type") in ("user", "assistant"):
+                e = json.loads(line)
+                if e.get("type") in types and not e.get("isSidechain"):
                     return True
     return False
 
@@ -1099,7 +1103,7 @@ def request_handover(st, sid, cause, cfg, reason=None, focus=None, relay=False, 
         start_wind_down(st, sid, cause, tokens, cfg)
     # The session knows: only the handover and its closing reply are left, due again after an earlier handover.
     st["user_notified"] = st["wind_down_sent"] = True
-    for k in ("closing_reply", "reply_due", "reply_reminded", "held_since"):
+    for k in ("closing_reply", "reply_due", "reply_reminded", "held_since", "reply_offset"):
         st.pop(k, None)
     reset_commands(st, sid)
 
@@ -1456,6 +1460,10 @@ def close(sid, cfg, last):
         if outcome is None:
             outcome = "slow" if writer_running(st) else "failed" if st.get("write_failed") else "written"
         st["write_failed"] = outcome == "failed"
+        # The closing reply (2K to 4K tokens) reaches the transcript after this hook: `reply_only` tells it from a
+        # session that went on.
+        with contextlib.suppress(OSError):
+            st["reply_offset"] = os.path.getsize(st["transcript"])
         return hand_over(st, sid, tokens, cfg, resume_message(last), outcome)
 
 
@@ -2582,6 +2590,13 @@ def audit_post(inp):
         audit_write(afk, inp, verdict, why)
 
 
+def reply_only(st, transcript):
+    """Whether the session ends on its closing reply, nothing having come in since: its handover is as fresh as it
+    gets, the reply being for the user, so the next session loads it at once rather than wait for a rewrite."""
+    offset = st.get("reply_offset")
+    return offset is not None and (st.get("written") or {}).get("ok") and not turn_since(transcript, offset, ("user",))
+
+
 def on_session_end(inp):
     sid = inp["session_id"]
     if not os.path.exists(state_path(sid)):
@@ -2594,7 +2609,7 @@ def on_session_end(inp):
             return
         tokens, _ = T.context_tokens(inp["transcript_path"])
         record("session_ended", sid, tokens=tokens, reason=inp.get("reason"))
-        if needs_refresh(st, tokens):
+        if needs_refresh(st, tokens) and not reply_only(st, inp["transcript_path"]):
             start_writer(st, sid, "session_end")
         project = st.get("project") or project_of(inp)
     write_json(
@@ -2789,6 +2804,7 @@ def after_compact(inp):
             "held_since",
             "write_failed",
             "closing_reply",
+            "reply_offset",
             "written",
             "compacting",
         ):

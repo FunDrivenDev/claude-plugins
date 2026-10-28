@@ -42,7 +42,7 @@ The rules that tie them:
 | `handover_dir` | `~/Notes/claude/agent-handovers` | Base folder of the handovers, written as `YYYY/MM/DD/HHhMM-<topic>.md` | — |
 | `handover_chars` | 8000 | Length the writer aims for, 2,000 to 9,500 characters | — |
 | `warn_tokens` | 20000 | How far below the trigger the status line turns yellow | No yellow warning |
-| `refresh_tokens` | 2000 | A handover this far behind the session is rewritten before it is used | Rewrite on any change |
+| `refresh_tokens` | 2000 | A handover this far behind the session is rewritten before it is used; the closing reply alone never counts | Rewrite on any change |
 | `relay_limit` | 5 | Handovers in a chain before it halts for you | — |
 | `compact_reserve_tokens` | 33000 | How far below `autoCompactWindow` compaction fires, for `/handover:stats` until real compactions are measured | — |
 | `notifier` | `auto` | How an alert calls you back, on top of the terminal bell: `auto` (the desktop notification of the environment, plus `notify_command` when set), `macos`, `linux`, `command` or `bell` ([Notifications](notifications.md)) | — |
