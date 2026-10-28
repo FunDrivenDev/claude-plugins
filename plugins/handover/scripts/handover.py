@@ -99,6 +99,8 @@ MAX_RENDER_CHARS = 800_000
 # How long a new session waits for a handover still being written: the refresh of a session that went on
 # after its closing reply, a pre-compaction handover, a writer slower than STOP_WRITE_SECONDS.
 WAIT_SECONDS = 150
+# Claude Code's autoCompactWindow when the settings leave it unset.
+DEFAULT_COMPACT_WINDOW = 200_000
 # How long the Stop hook holds the session while the writer works, within the hook's timeout in hooks.json.
 STOP_WRITE_SECONDS = 240
 WRITER_TIMEOUT = 600
@@ -156,7 +158,7 @@ def config():
     return {
         "dir": os.path.expanduser(option("handover_dir", "~/Notes/claude/agent-handovers")),
         "suggest": number("suggest_tokens", "200000"),
-        "trigger": number("trigger_tokens", "235000"),
+        "trigger": number("trigger_tokens", "250000"),
         # How long the wind-down waits for each [await] background command before stopping it.
         "await": number("await_minutes", "10") * 60,
         "writer_model": option("writer_model", "sonnet"),
@@ -345,6 +347,34 @@ def record(event, sid, **fields):
 def compact_window():
     v = read_json(os.path.expanduser("~/.claude/settings.json"), {}).get("autoCompactWindow")
     return v if isinstance(v, int) else None
+
+
+def compaction_conflict(cfg, cwd):
+    """A warning when auto-compaction fires before the trigger, so the automatic handover never does; None when
+    the thresholds fit or auto-compaction is off. Settings layer as in Claude Code: user, project, local."""
+    layers = [os.path.expanduser("~/.claude/settings.json")]
+    if cwd:
+        layers += [os.path.join(cwd, ".claude", f) for f in ("settings.json", "settings.local.json")]
+    window, enabled = None, read_json(os.path.expanduser("~/.claude.json"), {}).get("autoCompactEnabled")
+    for path in layers:
+        s = read_json(path, {})
+        window = s.get("autoCompactWindow", window)
+        enabled = s.get("autoCompactEnabled", enabled)
+    if enabled is False:
+        return None
+    where = f"autoCompactWindow {window // 1000}K" if isinstance(window, int) else "autoCompactWindow unset"
+    window = window if isinstance(window, int) else DEFAULT_COMPACT_WINDOW
+    point = window - cfg["reserve"]
+    limit = cfg["trigger"] or cfg["suggest"]
+    if not limit or point > limit:
+        return None
+    name = "trigger_tokens" if cfg["trigger"] else "suggest_tokens"
+    return (
+        f"handover: auto-compaction fires near {point // 1000}K ({where}), before {name} at {limit // 1000}K, "
+        "so the automatic handover never fires. Set autoCompactWindow above "
+        f"{(limit + cfg['reserve']) // 1000}K in ~/.claude/settings.json, or lower {name} under {point // 1000}K "
+        "with /handover:config."
+    )
 
 
 @contextlib.contextmanager
@@ -2865,14 +2895,21 @@ def cmd_guidance(_args):
     injected context."""
     if os.environ.get("HANDOVER_CHILD"):
         return 0
-    with (
-        contextlib.suppress(ValueError, KeyError, OSError),
-        locked_json(tasks_path(json.load(sys.stdin)["session_id"])) as tasks,
-    ):
+    try:
+        inp = json.load(sys.stdin)
+    except ValueError:
+        inp = {}
+    with contextlib.suppress(KeyError, OSError), locked_json(tasks_path(inp["session_id"])) as tasks:
         # Recorded with each untagged command: was the session told the tags?
         tasks["guided"] = True
-    text = TAGS + ("\n\n" + DELEGATE if config()["delegate"] else "")
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}))
+    cfg = config()
+    text = TAGS + ("\n\n" + DELEGATE if cfg["delegate"] else "")
+    out = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}
+    warning = compaction_conflict(cfg, inp.get("cwd"))
+    if warning:
+        out["systemMessage"] = warning
+        out["hookSpecificOutput"]["additionalContext"] += f"\n\n{warning} Tell the user in your first reply."
+    print(json.dumps(out))
     return 0
 
 

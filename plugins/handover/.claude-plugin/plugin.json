@@ -25,7 +25,7 @@
       "type": "number",
       "title": "Trigger (tokens)",
       "description": "Context size at which the session is told to start no new task, finish those in progress (the current step, its subagents, its [await] commands) and hand over; the handover is written once it has. 0 turns the trigger off: handovers are then written only when the session asks for one (the handover skill) and before compaction",
-      "default": 235000,
+      "default": 250000,
       "min": 0
     },
     "await_minutes": {
