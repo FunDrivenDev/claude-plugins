@@ -49,13 +49,6 @@
       "min": 2000,
       "max": 9500
     },
-    "warn_tokens": {
-      "type": "number",
-      "title": "Status line warning (tokens before the trigger)",
-      "description": "How far below trigger_tokens the status line turns yellow",
-      "default": 20000,
-      "min": 0
-    },
     "refresh_tokens": {
       "type": "number",
       "title": "Refresh tolerance (tokens)",

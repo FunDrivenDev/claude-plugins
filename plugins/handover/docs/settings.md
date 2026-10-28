@@ -7,7 +7,7 @@ The token thresholds, how they relate, and every option. [Back to the README](..
 With the defaults and a 500K `autoCompactWindow`:
 
 ```
-0 ──────── 200K ──── 230K ──── 250K ──────────────── ~467K ──── 500K
+0 ──────── 200K ──── 225K ──── 250K ──────────────── ~467K ──── 500K
            suggest   status    trigger:              auto-      window
            (nudge)   turns     finish tasks,         compaction
                      yellow    hand over
@@ -18,7 +18,7 @@ Each step escalates the one before:
 | Context reaches | Option | What happens |
 |---|---|---|
 | 200K | `suggest_tokens` | The session is told, once, to hand over at its next scope boundary. |
-| 230K | `trigger_tokens` − `warn_tokens` | The status line turns yellow. |
+| 225K | halfway from `suggest_tokens` to `trigger_tokens` | The status line turns yellow. |
 | 250K | `trigger_tokens` | The session is told to start no new task, finish those in progress and hand over; the handover is written once it has. |
 | ~467K | `autoCompactWindow` − `compact_reserve_tokens` | Claude Code compacts; the plugin loads a handover next to the summary. |
 
@@ -41,7 +41,6 @@ The rules that tie them:
 | `writer_model` | `sonnet` | Model that writes the handover (`claude --model` value). `claude -p` runs its default model on a name it does not know: the plugin tells you once, and `metrics.jsonl` records the model used | — |
 | `handover_dir` | `~/Notes/claude/agent-handovers` | Base folder of the handovers, written as `YYYY/MM/DD/HHhMM-<topic>.md` | — |
 | `handover_chars` | 8000 | Length the writer aims for, 2,000 to 9,500 characters | — |
-| `warn_tokens` | 20000 | How far below the trigger the status line turns yellow | No yellow warning |
 | `refresh_tokens` | 2000 | A handover this far behind the session is rewritten before it is used; the closing reply alone never counts | Rewrite on any change |
 | `relay_limit` | 10 | Handovers in a chain before it halts for you | — |
 | `compact_reserve_tokens` | 33000 | How far below `autoCompactWindow` compaction fires, for `/handover:stats` until real compactions are measured | — |

@@ -6,8 +6,8 @@ The one-line handover state a status line can print. [Back to the README](../REA
 
 | Line | Colour | When |
 |---|---|---|
-| `✋ Handover will trigger at 185k` | gray, yellow within `warn_tokens` | Before the trigger |
-| `✋ Handover suggested · will trigger at 185k` | gray, yellow within `warn_tokens` | Past `suggest_tokens` |
+| `✋ Handover will trigger at 250k` | gray, yellow from halfway between `suggest_tokens` and `trigger_tokens` (20K before the trigger without a suggestion) | Before the trigger |
+| `✋ Handover suggested · will trigger at 250k` | gray, yellow from halfway between `suggest_tokens` and `trigger_tokens` | Past `suggest_tokens` |
 | `✋ Wind-down on the next tool call` | orange | Past the trigger, the wind-down not started yet |
 | `✋ Winding down · finishing tasks` | orange | The session finishes its tasks in progress, then hands over |
 | `✋ Handover writing · 3.2k/8.0k chars ▓▓▓▓░░░░░░ · 41s` | orange | The writer at work, the `Stop` hook holding the session: starting, reading, thinking, then drafting against `handover_chars` |

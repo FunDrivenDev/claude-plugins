@@ -1,4 +1,4 @@
-"""Unit tests of the handover plugin's check of auto-compaction against its thresholds (scripts/handover.py): a
+"""Unit tests of the handover plugin's thresholds (scripts/handover.py): where the status line turns yellow, and a
 compaction window that fires before the trigger gets a warning, one that leaves room or is turned off does not."""
 
 import json
@@ -65,6 +65,15 @@ class CompactionConflict(unittest.TestCase):
         user(autoCompactWindow=200_000)
         warning = H.compaction_conflict({**CFG, "trigger": 0}, PROJECT)
         self.assertIn("before suggest_tokens at 200K", warning)
+
+
+class YellowPoint(unittest.TestCase):
+    def test_halfway_between_the_suggestion_and_the_trigger(self):
+        self.assertEqual(H.warn_point(200_000, 250_000), 225_000)
+
+    def test_without_a_suggestion_below_the_trigger(self):
+        self.assertEqual(H.warn_point(0, 250_000), 230_000)
+        self.assertEqual(H.warn_point(260_000, 250_000), 230_000)
 
 
 if __name__ == "__main__":

@@ -99,6 +99,8 @@ MAX_RENDER_CHARS = 800_000
 # How long a new session waits for a handover still being written: the refresh of a session that went on
 # after its closing reply, a pre-compaction handover, a writer slower than STOP_WRITE_SECONDS.
 WAIT_SECONDS = 150
+# How far below the trigger the status line turns yellow when no suggestion comes before it.
+WARN_TOKENS = 20_000
 # Claude Code's autoCompactWindow when the settings leave it unset.
 DEFAULT_COMPACT_WINDOW = 200_000
 # How long the Stop hook holds the session while the writer works, within the hook's timeout in hooks.json.
@@ -118,7 +120,6 @@ OPTIONS = (
     "await_minutes",
     "writer_model",
     "handover_chars",
-    "warn_tokens",
     "refresh_tokens",
     "compact_reserve_tokens",
     "relay_limit",
@@ -164,8 +165,6 @@ def config():
         "writer_model": option("writer_model", "sonnet"),
         # Target length of the handover; loading cuts it at INJECT_CHARS.
         "chars": min(number("handover_chars", "8000"), INJECT_CHARS),
-        # The status line warns this far below the trigger.
-        "warn": number("warn_tokens", "20000"),
         # A handover this many tokens behind the session is refreshed before it is used.
         "refresh": number("refresh_tokens", "2000"),
         # Auto-compaction fires about this far below autoCompactWindow; `stats` uses it
@@ -347,6 +346,12 @@ def record(event, sid, **fields):
 def compact_window():
     v = read_json(os.path.expanduser("~/.claude/settings.json"), {}).get("autoCompactWindow")
     return v if isinstance(v, int) else None
+
+
+def warn_point(suggest, trigger):
+    """Where the status line turns yellow: halfway from the suggestion to the trigger, or WARN_TOKENS before the
+    trigger without a suggestion below it."""
+    return (suggest + trigger) // 2 if 0 < suggest < trigger else trigger - WARN_TOKENS
 
 
 def compaction_conflict(cfg, cwd):
@@ -3006,7 +3011,7 @@ def status_line(st, prog, tokens, cfg):
         return "gray", f"Handover {'suggested' if suggested else 'trigger off'}{loaded}"
     if tokens >= trig:
         return "orange", f"Wind-down on the next tool call{loaded}"
-    colour = "yellow" if tokens >= trig - cfg["warn"] else "gray"
+    colour = "yellow" if tokens >= warn_point(suggest, trig) else "gray"
     head = "Handover suggested · will trigger" if suggested else "Handover will trigger"
     return colour, f"{head} at {kfmt(trig)}{loaded}"
 
