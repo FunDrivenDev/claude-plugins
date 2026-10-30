@@ -2014,10 +2014,67 @@ def own_command(command):
     return bool(rest) and rest[0] in OWN_COMMANDS
 
 
+# Interpreters an installed plugin script may be run with; none of their own flags (`bash -c`) is let through.
+SCRIPT_RUNNERS = {"bash", "sh", "zsh", "python3", "python"}
+
+
+def plain_command(command):
+    """True when the command is one simple command whose words expand to nothing but themselves: no chaining,
+    redirection, subshell, glob, brace or line break outside quotes, and no `$` or backtick outside single ones.
+    Single quotes keep anything literal, so a JSON argument with `$` or line breaks in it passes."""
+    quote, escaped = None, False
+    for c in command:
+        if escaped:
+            escaped = False
+        elif quote == "'":
+            quote = None if c == "'" else quote
+        elif quote == '"':
+            if c in "$`\\":
+                return False
+            quote = None if c == '"' else quote
+        elif c == "\\":
+            escaped = True
+        elif c in "'\"":
+            quote = c
+        elif c in ";&|<>()$`\n*?[]{}":
+            return False
+    return quote is None and not escaped
+
+
+def installed_script(command):
+    """The arguments of a Bash command that is one plain call of a script installed under
+    ~/.claude/plugins/cache or ~/.claude/plugins/marketplaces (gs-dev-toolkit's `qgate.sh`), run directly or
+    through an interpreter; None for anything else, this plugin's own scripts included. The script's path is
+    the guarded part of such a call: the guard still checks its arguments."""
+    if not plain_command(command):
+        return None
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return None
+    if argv and argv[0] in SCRIPT_RUNNERS:
+        argv = argv[1:]
+    if not argv or argv[0].startswith("-"):
+        return None
+    script = os.path.expanduser(argv[0])
+    if not os.path.isabs(script):
+        return None
+    script = os.path.realpath(script)
+    plugins = os.path.realpath(os.path.join(os.path.expanduser("~"), ".claude", "plugins"))
+    rel = os.path.relpath(script, plugins).split(os.sep)
+    own = plugin_json().get("name") or "handover"
+    if rel[0] not in ("cache", "marketplaces") or own in rel or not os.path.isfile(script):
+        return None
+    if script.startswith(os.path.realpath(plugin_root()) + os.sep):
+        return None
+    return argv[1:]
+
+
 def guard_hit(inp):
     """The guarded path or word a tool call names, if any. Bash commands are matched as text, so a path
     spelled `~/.claude/plugins` or `$HOME/.claude/plugins` counts too; reading tools and the plugin's own
-    commands (own_command) stay free."""
+    commands (own_command) stay free, and a plain call of an installed plugin script (installed_script) is
+    matched on its arguments alone."""
     tool, ti = inp.get("tool_name") or "", inp.get("tool_input") or {}
     if tool in ("Read", "Glob", "Grep", "LS"):
         return None
@@ -2025,6 +2082,9 @@ def guard_hit(inp):
         return None
     home = os.path.expanduser("~")
     text = " ".join(str(ti.get(k) or "") for k in ("command", "file_path", "notebook_path", "path"))
+    args = installed_script(str(ti.get("command") or "")) if tool == "Bash" else None
+    if args is not None:
+        text = " ".join(args)
     if not text.strip():
         return None
     for p in guarded_paths(project_of(inp)):
