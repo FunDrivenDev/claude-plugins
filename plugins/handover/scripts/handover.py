@@ -2070,6 +2070,16 @@ def installed_script(command):
     return argv[1:]
 
 
+def names_path(text, path):
+    """True when the text names the path, spelled from / or from the home folder (`~`, `$HOME`, `${HOME}`)."""
+    home = os.path.expanduser("~")
+    forms = {path}
+    if path.startswith(home + os.sep):
+        rest = path[len(home) :]
+        forms |= {"~" + rest, "$HOME" + rest, "${HOME}" + rest}
+    return any(f in text for f in forms)
+
+
 def guard_hit(inp):
     """The guarded path or word a tool call names, if any. Bash commands are matched as text, so a path
     spelled `~/.claude/plugins` or `$HOME/.claude/plugins` counts too; reading tools and the plugin's own
@@ -2080,7 +2090,6 @@ def guard_hit(inp):
         return None
     if tool == "Bash" and own_command(str(ti.get("command") or "")):
         return None
-    home = os.path.expanduser("~")
     text = " ".join(str(ti.get(k) or "") for k in ("command", "file_path", "notebook_path", "path"))
     args = installed_script(str(ti.get("command") or "")) if tool == "Bash" else None
     if args is not None:
@@ -2088,14 +2097,41 @@ def guard_hit(inp):
     if not text.strip():
         return None
     for p in guarded_paths(project_of(inp)):
-        forms = {p}
-        if p.startswith(home + os.sep):
-            rest = p[len(home) :]
-            forms |= {"~" + rest, "$HOME" + rest, "${HOME}" + rest}
-        if any(f in text for f in forms):
+        if names_path(text, p):
             return p
     m = GUARD_WORDS.search(text) if tool == "Bash" else None
     return m.group(0) if m else None
+
+
+GUARD_DENIED = (
+    "Denied: this YOLO run must leave {0} alone (the handover plugin, its audit log and the settings that load "
+    "them). Do the work another way, or note it for the user."
+)
+
+PLUGINS_READ_HINT = (
+    "Denied: a Bash command may not name {0} in a YOLO run. To read files there, use the Read, Glob or Grep "
+    "tool: the guard lets them through. Writes stay refused."
+)
+
+
+def guard_reason(inp, hit):
+    """Why the guard refuses a call that names `hit`. A Bash command that names other plugins' files under
+    ~/.claude/plugins, and nothing else the guard protects, is told how to read them with the reading tools."""
+    tool, ti = inp.get("tool_name") or "", inp.get("tool_input") or {}
+    command = str(ti.get("command") or "")
+    own = own_call_attempt(command) if tool == "Bash" else None
+    if own:
+        return OWN_COMMAND_ALONE.format(own)
+    plugins = os.path.join(os.path.expanduser("~"), ".claude", "plugins")
+    dirs = {os.path.abspath(plugins), os.path.realpath(plugins)}
+    if (
+        tool == "Bash"
+        and hit in dirs
+        and not GUARD_WORDS.search(command)
+        and not any(names_path(command, p) for p in guarded_paths(project_of(inp)) if p not in dirs)
+    ):
+        return PLUGINS_READ_HINT.format(hit)
+    return GUARD_DENIED.format(hit)
 
 
 def on_pre_tool_use(inp):
@@ -2130,13 +2166,7 @@ def on_pre_tool_use(inp):
     if not reason and afk and yolo_on(afk, inp):
         hit = guard_hit(inp)
         if hit:
-            own = own_call_attempt(str((inp.get("tool_input") or {}).get("command") or "")) if tool == "Bash" else None
-            reason = (
-                OWN_COMMAND_ALONE.format(own)
-                if own
-                else f"Denied: this YOLO run must leave {hit} alone (the handover plugin, its audit log and the "
-                "settings that load them). Do the work another way, or note it for the user."
-            )
+            reason = guard_reason(inp, hit)
             audit_write(afk, inp, "guarded", hit)
     if not reason:
         return None

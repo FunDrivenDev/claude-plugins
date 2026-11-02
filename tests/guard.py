@@ -122,6 +122,52 @@ class Guard(unittest.TestCase):
 
     def test_reading_stays_free(self):
         self.assertIsNone(hit(SCRIPT, tool="Read"))
+        for tool in ("Read", "Glob", "Grep"):
+            self.assertIsNone(hit(INDEX, tool=tool), tool)
+
+
+INDEX = os.path.join(HOME, ".claude", "plugins", "cache", "x", "y", "index.json")
+
+
+def reason(command, tool="Bash"):
+    key = "command" if tool == "Bash" else "file_path"
+    inp = {"tool_name": tool, "tool_input": {key: command}, "cwd": HOME}
+    found = H.guard_hit(inp)
+    return found and H.guard_reason(inp, found)
+
+
+class Refusal(unittest.TestCase):
+    def test_a_bash_read_of_another_plugins_file_is_pointed_to_the_reading_tools(self):
+        # As a gs-knowledge-loading run once sent it: refused with "do the work another way", the agent gave up.
+        for command in ("jq '.routes' ~/.claude/plugins/cache/x/y/index.json", f"ls {os.path.dirname(INDEX)}"):
+            got = reason(command)
+            self.assertIsNotNone(got, command)
+            self.assertIn("use the Read, Glob or Grep tool", got, command)
+            self.assertIn("Writes stay refused", got, command)
+
+    def test_the_plugins_own_files_its_audit_log_and_the_settings_keep_the_plain_refusal(self):
+        audit = os.path.join(DATA, "audit.jsonl")
+        for command in (
+            f"cat {audit}",
+            "jq . ~/.claude/settings.json",
+            f"grep x {SCRIPT}",
+            "ls ~/.claude/hooks",
+            f"jq . {INDEX} {audit}",
+            f"cat {INDEX}; claude plugin disable handover",
+        ):
+            got = reason(command)
+            self.assertIsNotNone(got, command)
+            self.assertNotIn("Read, Glob or Grep", got, command)
+            self.assertIn("must leave", got, command)
+
+    def test_an_edit_of_another_plugins_file_keeps_the_plain_refusal(self):
+        got = reason(INDEX, tool="Edit")
+        self.assertIsNotNone(got)
+        self.assertNotIn("Read, Glob or Grep", got)
+
+    def test_a_denied_own_command_keeps_its_own_refusal(self):
+        got = reason(f"{CALL} request --cause model --session abc --reason 'done'; echo rc=$?")
+        self.assertTrue(got.startswith("Denied: in this YOLO run, the plugin's own `request`"), got)
 
 
 if __name__ == "__main__":
