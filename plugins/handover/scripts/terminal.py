@@ -9,6 +9,10 @@ The plugin depends on the port alone: `Terminal`, whose verbs are
     ring()               ring the terminal's bell
     report_status(state, message)  show a status on the session's tab: a state of STATES, and one line
 
+An adapter whose host can end a session and restore its pane sets `recovers`, and answers `instance()`, what
+identifies its server now, and `survey(instance)`: "gone", the server does not answer; "restarted", another
+server than `instance` holds the pane; "ended", anything else.
+
 `detect()` picks the adapter from the `terminal` option and the environment, innermost host first, and
 `adapter()` rebuilds one from its name and address, for the detached half of the relay:
 
@@ -54,6 +58,7 @@ class Terminal:
 
     name = "none"
     verbs = ("ring",)
+    recovers = False
 
     def __init__(self, address=""):
         self.address = address
@@ -84,6 +89,12 @@ class Terminal:
 
     def report_status(self, state, message=""):
         return False
+
+    def instance(self):
+        return ""
+
+    def survey(self, instance):
+        return "ended"
 
     def describe(self):
         return {"adapter": self.name, "address": self.address, "relays": self.relays, "verbs": list(self.verbs)}
@@ -138,6 +149,7 @@ class Rex(Terminal):
 
     name = "rex"
     verbs = VERBS
+    recovers = True
 
     def __init__(self, address=""):
         super().__init__(address)
@@ -174,6 +186,17 @@ class Rex(Terminal):
             ).stdout.strip()
             return f"/dev/{tty}" if tty else None
         return None
+
+    def instance(self):
+        return self._json("whoami", "--json").get("instance_id", "")
+
+    def survey(self, instance):
+        now = self.instance()
+        if not now:
+            return "gone"
+        blocks = self._json("block", "ls", "-s", self.session, "--json").get("blocks") or []
+        held = any(b.get("block_id") == self.block for b in blocks)
+        return "restarted" if held and now != instance else "ended"
 
     def type_text(self, text):
         # By stdin: as an argument, a leading dash would read as a flag.

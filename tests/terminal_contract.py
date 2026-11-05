@@ -165,7 +165,7 @@ class RexHost:
         ).stdout
 
     def start(self):
-        os.makedirs(os.path.join(self.lab, "state"))
+        os.makedirs(os.path.join(self.lab, "state"), exist_ok=True)
         config = os.path.join(self.lab, "empty.lua")
         open(config, "w").close()
         self.server = subprocess.Popen(
@@ -185,12 +185,15 @@ class RexHost:
             self.stop()
             raise AssertionError("the throwaway Rex server did not start, or is not the one answering")
 
+    def crash(self):
+        self.server.kill()
+        self.server.wait()
+
     def stop(self):
         for watcher in self.watchers.values():
             watcher.kill()
             watcher.wait()
-        self.server.kill()
-        self.server.wait()
+        self.crash()
         shutil.rmtree(self.lab, True)
 
     def spawn(self, command):
@@ -208,6 +211,15 @@ class RexHost:
         # The stream announces itself: a bell before that would be missed.
         wait_until(lambda: os.path.getsize(log))
         return session, block
+
+    def persisted(self, pane):
+        """A server saves its sessions after a while: one crashed before that restores nothing."""
+        for directory, _, files in os.walk(os.path.join(self.lab, "state")):
+            for name in files:
+                with open(os.path.join(directory, name), "rb") as f:
+                    if pane[1].encode() in f.read():
+                        return True
+        return False
 
     def close(self, pane):
         self.rex("kill", pane[0])
@@ -459,6 +471,107 @@ class Command(Contract, unittest.TestCase):
     def test_a_verb_the_command_refuses_is_not_done(self):
         self.subject()
         self.assertFalse(self.verb("report_status", "--state=done")["done"])
+
+
+# Stands for toolbox in the restored pane, by absolute path: a run of the real one would start a real claude. The
+# pane's login shell holds none of this test's environment, so the script carries what it needs.
+FAKE_TOOLBOX = """#!/bin/sh
+printf '%s\\n' "$@" >'{root}/toolbox.args'
+printf '{{"hook_event_name":"SessionStart","session_id":"s1","source":"resume"}}' |
+  CLAUDE_PLUGIN_DATA='{data}' '{python}' '{handover}' hook
+"""
+
+
+@unittest.skipUnless(shutil.which("rex"), "rex is not installed")
+class Recovery(unittest.TestCase):
+    """An AFK session the host ended: on a throwaway Rex server, resumed after a crash, lost after a closed tab."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="hc")
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.data = os.path.join(self.root, "data")
+        os.makedirs(os.path.join(self.data, "sessions"))
+        toolbox = os.path.join(self.root, "toolbox")
+        with open(toolbox, "w", encoding="utf-8") as f:
+            f.write(FAKE_TOOLBOX.format(root=self.root, data=self.data, python=sys.executable, handover=HANDOVER))
+        os.chmod(toolbox, 0o755)
+        self.host = RexHost()
+        self.host.env.update(
+            HOME=self.root,
+            SHELL="/bin/sh",
+            CLAUDE_PLUGIN_DATA=self.data,
+            CLAUDE_PLUGIN_OPTION_NOTIFIER="bell",
+            HANDOVER_TOOLBOX=toolbox,
+        )
+        self.host.start()
+        self.addCleanup(self.host.stop)
+        self.pane = self.host.spawn("sleep 600")
+        self.env = {**self.host.env, "REX_SESSION": self.pane[0], "REX_BLOCK": self.pane[1]}
+        goal = "ship it's goal"
+        state = {"afk": {"goal": goal, "until": None, "run": "r1", "since": time.time(), "yolo": True}}
+        state["afk"]["instance"] = json.loads(self.host.rex("whoami", "--json"))["instance_id"]
+        with open(os.path.join(self.data, "sessions", "s1.json"), "w", encoding="utf-8") as f:
+            json.dump(state, f)
+
+    def state(self):
+        with open(os.path.join(self.data, "sessions", "s1.json"), encoding="utf-8") as f:
+            return json.load(f)
+
+    def session_end(self):
+        inp = {
+            "hook_event_name": "SessionEnd",
+            "session_id": "s1",
+            "reason": "other",
+            "transcript_path": os.path.join(self.root, "none.jsonl"),
+        }
+        p = subprocess.run(
+            [sys.executable, HANDOVER, "hook"],
+            input=json.dumps(inp),
+            capture_output=True,
+            text=True,
+            timeout=20,
+            env=self.env,
+            check=False,
+        )
+        self.assertEqual(p.returncode, 0, p.stderr)
+
+    def events(self):
+        try:
+            with open(os.path.join(self.data, "metrics.jsonl"), encoding="utf-8") as f:
+                return [json.loads(line)["event"] for line in f]
+        except FileNotFoundError:
+            return []
+
+    def test_a_restart_resumes_the_run_in_the_restored_pane(self):
+        self.assertTrue(wait_until(lambda: self.host.persisted(self.pane), 15), "the server never saved the pane")
+        self.host.crash()
+        self.session_end()
+        self.assertIn("recovering", self.state())
+        self.host.start()
+        self.assertTrue(wait_until(lambda: "afk_recovered" in self.events(), 30), self.events())
+        with open(os.path.join(self.root, "toolbox.args"), encoding="utf-8") as f:
+            args = f.read().splitlines()
+        self.assertEqual(args, ["session", "run", "--afk", "ship it's goal", "--yolo", "--resume", "s1"])
+        self.assertNotIn("recovering", self.state())
+        self.assertNotIn("ended", self.state()["afk"])
+
+    def test_a_closed_tab_ends_the_run_and_says_how_to_resume(self):
+        self.host.close(self.pane)
+        self.session_end()
+        self.assertTrue(wait_until(lambda: "ended" in self.state()["afk"], 20))
+        afk = self.state()["afk"]
+        self.assertEqual(afk["ended"], "lost")
+        self.assertIn("the tab closed", afk["reason"])
+        self.assertIn("claude --resume s1", afk["reason"])
+
+    def test_an_ordinary_exit_is_no_recovery(self):
+        inp = {"hook_event_name": "SessionEnd", "session_id": "s1", "reason": "prompt_input_exit"}
+        inp["transcript_path"] = os.path.join(self.root, "none.jsonl")
+        subprocess.run(
+            [sys.executable, HANDOVER, "hook"], input=json.dumps(inp), text=True, env=self.env, timeout=20, check=True
+        )
+        self.assertEqual(self.state()["afk"]["ended"], "exit")
+        self.assertNotIn("recovering", self.state())
 
 
 class Selection(unittest.TestCase):

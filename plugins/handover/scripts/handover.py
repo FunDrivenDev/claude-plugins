@@ -16,6 +16,7 @@ transcript, never by the session whose context is full.
     handover.py wake-timeout ...       the detached safety net of a kill or a notice that should wake the session
     handover.py statusline             the session's handover state, status-line payload on stdin
     handover.py relay-drive ...        the relay's detached second half, started by the hooks
+    handover.py relay-recover ...      detached, after a host ended the session: resume the AFK run in the restored pane
     handover.py terminal <verb> ...    run a verb of the session's terminal (terminal.py), as JSON
     handover.py afk --session ID ...   turn AFK mode on (or --off) in a running session
     handover.py until <when>           resolve an AFK deadline: epoch on stdout, the date on stderr
@@ -101,6 +102,14 @@ MAX_RENDER_CHARS = 800_000
 # How long a new session waits for a handover still being written: the refresh of a session that went on
 # after its closing reply, a pre-compaction handover, a writer slower than STOP_WRITE_SECONDS.
 WAIT_SECONDS = 150
+# After a host ended an AFK session: how long its server may stay away, how often it is asked, how many answers
+# in a row say the pane is gone (a restarted server restores its panes shortly after it answers), how long the
+# restored pane's shell gets to start, and how long the resumed session gets to start.
+RECOVER_SECONDS = 300
+RECOVER_POLL_SECONDS = 2
+RECOVER_ENDED_SURVEYS = 3
+RECOVER_SHELL_SECONDS = 3
+RESUME_SECONDS = 90
 # How far below the trigger the status line turns yellow when no suggestion comes before it.
 WARN_TOKENS = 20_000
 # Claude Code's autoCompactWindow when the settings leave it unset.
@@ -1752,6 +1761,7 @@ def afk_start(st, sid, goal, until, how, yolo=False):
         "run": f"{time.strftime('%y%m%d-%H%M')}-{sid[:4]}",
         "since": time.time(),
         "yolo": yolo,
+        "instance": terminal().instance(),
     }
     st["relay_on"] = True
     st.setdefault("relay_start", relay_start())
@@ -2642,6 +2652,43 @@ def cmd_relay_drive(args):
     return 0
 
 
+def resume_command(sid, afk):
+    """Typed into a login shell, which has none of the run's environment: toolbox sets it up again."""
+    toolbox = os.environ.get("HANDOVER_TOOLBOX") or "toolbox"
+    return shlex.join(
+        [toolbox, "session", "run", "--afk", afk["goal"], *["--yolo"] * bool(afk.get("yolo")), "--resume", sid]
+    )
+
+
+def cmd_relay_recover(args):
+    """The AFK session ended with the host's server or its pane. A restart restores the pane, with a shell in it:
+    the run is resumed there. Anything else ends the run, with the command to resume it by hand."""
+    term = TERM.adapter(args.terminal, args.address)
+    deadline, seen, ended = time.time() + RECOVER_SECONDS, "gone", 0
+    while time.time() < deadline and seen != "restarted" and ended < RECOVER_ENDED_SURVEYS:
+        time.sleep(RECOVER_POLL_SECONDS)
+        seen = term.survey(args.instance)
+        ended = ended + 1 if seen == "ended" else 0
+    typed = False
+    afk = afk_active(read_json(state_path(args.session), {}))
+    if seen == "restarted" and afk:
+        time.sleep(RECOVER_SHELL_SECONDS)
+        typed = term.clear_input() and term.type_text(resume_command(args.session, afk)) and term.press_enter()
+    deadline = time.time() + RESUME_SECONDS
+    while typed and time.time() < deadline:
+        if not read_json(state_path(args.session), {}).get("recovering"):
+            return 0
+        time.sleep(1)
+    with locked_state(args.session) as st:
+        if not st.pop("recovering", None) or not afk_active(st):
+            return 0
+        why = "the tab closed" if seen == "ended" else "the terminal server did not come back"
+        if typed:
+            why = "the resumed session did not start"
+        afk_end(st, args.session, "lost", f"{why}. To resume: claude --resume {args.session}")
+    return 1
+
+
 def cmd_terminal(args):
     """A verb of this session's terminal, for the contract tests and by hand: the result as JSON, exit 1 if not done."""
     term = terminal()
@@ -2762,8 +2809,24 @@ def on_session_end(inp):
         return
     with locked_state(sid) as st:
         if afk_active(st) and not st.get("relay_outcome"):
-            # Not a handover: the run ends with this session (an exit, a /clear by hand, a crash of claude).
-            afk_end(st, sid, "exit", f"session ended ({inp.get('reason') or 'unknown'})")
+            term = terminal()
+            if inp.get("reason") == "other" and term.recovers:
+                # A tab closed or a host restarted: relay-recover tells them apart, and resumes after a restart.
+                st["recovering"] = time.time()
+                record("afk_recovering", sid, run=st["afk"]["run"])
+                detach(
+                    [
+                        "relay-recover",
+                        "--session",
+                        sid,
+                        f"--terminal={term.name}",
+                        f"--address={term.address}",
+                        f"--instance={st['afk'].get('instance') or ''}",
+                    ]
+                )
+            else:
+                # Not a handover: the run ends with this session (an exit, a /clear by hand, a crash of claude).
+                afk_end(st, sid, "exit", f"session ended ({inp.get('reason') or 'unknown'})")
         if not (st.get("wind_down") or st.get("keep_fresh")):
             return
         tokens, _ = T.context_tokens(inp["transcript_path"])
@@ -2778,10 +2841,30 @@ def on_session_end(inp):
     return
 
 
+def after_recovery(inp):
+    """The AFK run relay-recover resumed: same session id, so its state is there; the agent gets its rules back."""
+    sid = inp["session_id"]
+    with locked_state(sid) as st:
+        afk = afk_active(st)
+        if not (afk and st.pop("recovering", None)):
+            return None
+        afk["instance"] = terminal().instance()
+        record("afk_recovered", sid, run=afk["run"])
+    return {
+        "systemMessage": f"handover: AFK run resumed after a restart of the terminal{afk_texts(afk)['until']}",
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": AFK_RULES.format(**afk_texts(afk)),
+        },
+    }
+
+
 def on_session_start(inp):
     source = inp.get("source")
     if source == "compact":
         return after_compact(inp)
+    if source == "resume":
+        return after_recovery(inp)
     if source not in ("clear", "startup"):
         return None
     relayed = take_relay(inp)
@@ -3733,6 +3816,11 @@ def main():
     c.add_argument(
         "--set", metavar="JSON", help="save these option values, a JSON object; options left out keep theirs"
     )
+    rr = sub.add_parser("relay-recover")
+    rr.add_argument("--session", required=True)
+    rr.add_argument("--terminal", required=True, help="adapter of the terminal to resume in (terminal.py)")
+    rr.add_argument("--address", required=True, help="where that adapter finds the session")
+    rr.add_argument("--instance", default="", help="the terminal's server when the run last checked")
     r = sub.add_parser("relay-drive")
     r.add_argument("--session", required=True)
     r.add_argument("--terminal", help="adapter of the terminal to type /clear and the message into (terminal.py)")
@@ -3766,6 +3854,7 @@ def main():
         "stats": cmd_stats,
         "statusline": cmd_statusline,
         "relay-drive": cmd_relay_drive,
+        "relay-recover": cmd_relay_recover,
         "terminal": cmd_terminal,
         "afk": cmd_afk,
         "until": cmd_until,
