@@ -1,7 +1,7 @@
 """The contract of the handover plugin's terminal port (scripts/terminal.py), black box.
 
-The same cases run against every adapter, on a real host: a pane of a private tmux server. The subject in
-the pane is a fake `claude`, this file run with --fake: a raw-mode prompt with the editing rules measured on
+The same cases run against every adapter, on a real host: a pane of a private tmux server, a pane of a
+throwaway Rex server. A host whose tool is missing is skipped. The subject in the pane is a fake `claude`, this file run with --fake: a raw-mode prompt with the editing rules measured on
 the real one (2026-11-05), which logs what it is sent. The cases go through `handover.py terminal <verb>` and
 `handover.py relay-drive`, run with the environment the pane really has, as a hook would be.
 """
@@ -138,6 +138,89 @@ class TmuxHost:
         return self.tmux("display-message", "-p", "-t", pane, "#{window_bell_flag}") == "1"
 
 
+class RexHost:
+    """A throwaway Rex server, on its own socket and state, never the user's: its pid is checked, and it is stopped
+    by signal because `rex server stop` could reach another one. A pane is a (session, block) pair."""
+
+    def __init__(self):
+        # The socket's path has to fit in sockaddr_un, so not in the long temporary directory of macOS.
+        self.lab = os.path.expanduser(f"~/.cache/hc{os.getpid()}")
+        self.endpoint = f"unix://{self.lab}/s.sock"
+        # A pane's rex finds this server by REX_SERVER, and a pane inherits the server's environment.
+        self.env = {**{k: v for k, v in os.environ.items() if not k.startswith(LEAKS)}, "REX_SERVER": self.endpoint}
+        self.watchers = {}
+
+    def rex(self, *args):
+        return subprocess.run(
+            ["rex", "-S", self.endpoint, "--autostart=false", *args],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+            env=self.env,
+        ).stdout
+
+    def start(self):
+        os.makedirs(os.path.join(self.lab, "state"))
+        config = os.path.join(self.lab, "empty.lua")
+        open(config, "w").close()
+        self.server = subprocess.Popen(
+            ["rex", "server", "run", "--listen", self.endpoint, "--state-dir", f"{self.lab}/state", "--config", config],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=self.env,
+        )
+
+        def serving():
+            try:
+                return json.loads(self.rex("whoami", "--json"))["pid"] == self.server.pid
+            except (subprocess.SubprocessError, ValueError):
+                return False
+
+        if not wait_until(serving):
+            self.stop()
+            raise AssertionError("the throwaway Rex server did not start, or is not the one answering")
+
+    def stop(self):
+        for watcher in self.watchers.values():
+            watcher.kill()
+            watcher.wait()
+        self.server.kill()
+        self.server.wait()
+        shutil.rmtree(self.lab, True)
+
+    def spawn(self, command):
+        session = json.loads(self.rex("new", f"s{len(self.watchers)}", "--json", "--", "sh", "-c", command))
+        session, block = session["session_id"], session["initial_windows"][0]["block_ids"][0]
+        log = os.path.join(self.lab, f"events{len(self.watchers)}")
+        with open(log, "w") as f:
+            self.watchers[session, block] = subprocess.Popen(
+                ["rex", "-S", self.endpoint, "--autostart=false", "events", "-s", session, "--json"],
+                stdout=f,
+                stderr=subprocess.DEVNULL,
+                env=self.env,
+            )
+        self.logs = {**getattr(self, "logs", {}), (session, block): log}
+        # The stream announces itself: a bell before that would be missed.
+        wait_until(lambda: os.path.getsize(log))
+        return session, block
+
+    def close(self, pane):
+        self.rex("kill", pane[0])
+
+    def title(self, pane):
+        windows = json.loads(self.rex("window", "ls", "-s", pane[0], "--json"))["windows"]
+        return windows[0]["label"]
+
+    def belled(self, pane):
+        with open(self.logs[pane], encoding="utf-8") as f:
+            return any('"name":"bell"' in line and pane[1] in line for line in f)
+
+    def status(self, pane):
+        records = json.loads(self.rex("block", "call", "-s", pane[0], "-b", pane[1], "program_status"))["records"]
+        return (records[0].get("id"), records[0].get("state")) if records else None
+
+
 class Contract:
     """The cases every adapter passes; a subclass per host names the adapter it expects."""
 
@@ -151,13 +234,14 @@ class Contract:
         cls.addClassCleanup(cls.host.stop)
 
     def setUp(self):
-        self.dir = tempfile.mkdtemp(prefix="hc")
-        self.addCleanup(shutil.rmtree, self.dir, True)
-        self.data = os.path.join(self.dir, "data")
+        self.root = tempfile.mkdtemp(prefix="hc")
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.data = os.path.join(self.root, "data")
         os.makedirs(os.path.join(self.data, "relay"))
 
     def subject(self, **config):
         """Starts the fake claude in a new pane; the pane, and the environment a hook would have in it."""
+        self.dir = tempfile.mkdtemp(dir=self.root)
         with open(os.path.join(self.dir, "config.json"), "w", encoding="utf-8") as f:
             json.dump(config, f)
         python = shutil.which("python3") or sys.executable
@@ -165,7 +249,7 @@ class Contract:
         path = os.path.join(self.dir, "env.json")
         self.assertTrue(wait_until(lambda: os.path.exists(path)), "the fake claude did not start")
         with open(path, encoding="utf-8") as f:
-            self.env = {**json.load(f), "CLAUDE_PLUGIN_DATA": self.data}
+            self.env = {**json.load(f), "CLAUDE_PLUGIN_DATA": self.data, "CLAUDE_PLUGIN_OPTION_NOTIFIER": "bell"}
 
     def handover(self, *args):
         return subprocess.run(
@@ -209,7 +293,7 @@ class Contract:
         self.subject(draft="kept")
         lacking = set(ALL_VERBS) - set(self.verb("describe")["verbs"])
         for verb in lacking:
-            p = self.handover("terminal", verb, "x")
+            p = self.handover("terminal", verb, "--text=x")
             self.assertEqual((p.returncode, json.loads(p.stdout)["done"]), (1, False), verb)
         self.assertBuffer("kept")
 
@@ -217,7 +301,7 @@ class Contract:
         self.subject()
         for text in TRICKY:
             with self.subTest(text):
-                self.assertTrue(self.verb("type_text", "--", text)["done"])
+                self.assertTrue(self.verb("type_text", f"--text={text}")["done"])
                 self.assertBuffer(text)
                 self.verb("clear_input")
                 self.assertBuffer("")
@@ -225,7 +309,7 @@ class Contract:
 
     def test_enter_submits_what_was_typed(self):
         self.subject()
-        self.verb("type_text", "--", "/clear")
+        self.verb("type_text", "--text=/clear")
         self.assertBuffer("/clear")
         self.assertTrue(self.verb("press_enter")["done"])
         self.assertSubmitted(["/clear"])
@@ -262,8 +346,17 @@ class Contract:
         self.subject()
         if "set_title" not in self.verb("describe")["verbs"]:
             self.skipTest("no title on this adapter")
-        self.assertTrue(self.verb("set_title", "--", "port the relay #3")["done"])
+        self.assertTrue(self.verb("set_title", "--text=port the relay #3")["done"])
         self.assertTrue(wait_until(lambda: self.host.title(self.pane) == "port the relay #3"))
+
+    def test_report_status_reaches_the_tab(self):
+        self.subject()
+        if "report_status" not in self.verb("describe")["verbs"]:
+            self.skipTest("no status on this adapter")
+        self.assertTrue(self.verb("report_status", "--state=blocked", "--message=needs you, é")["done"])
+        self.assertTrue(wait_until(lambda: self.host.status(self.pane) == ("handover", "blocked")))
+        self.assertTrue(self.verb("report_status", "--state=clear")["done"])
+        self.assertTrue(wait_until(lambda: self.host.status(self.pane) is None))
 
     def relay_drive(self, message="Continue the work"):
         d = self.verb("describe")
@@ -314,12 +407,20 @@ class Tmux(Contract, unittest.TestCase):
     adapter = "tmux"
 
 
+@unittest.skipUnless(shutil.which("rex"), "rex is not installed")
+class Rex(Contract, unittest.TestCase):
+    Host = RexHost
+    adapter = "rex"
+
+
 class Selection(unittest.TestCase):
     """Which adapter a session gets, by the environment it runs in."""
 
     def test_the_innermost_host_wins(self):
-        env = {"TMUX_PANE": "%1", "HANDOVER_RELAY_FILE": "/f"}
-        self.assertEqual(T.detect(env).describe()["adapter"], "tmux")
+        env = {"TMUX_PANE": "%1", "REX_SESSION": "s", "REX_BLOCK": "b", "HANDOVER_RELAY_FILE": "/f"}
+        self.assertEqual(T.detect(env).name, "tmux")
+        del env["TMUX_PANE"]
+        self.assertEqual(T.detect(env).name, "rex")
 
     def test_the_restart_loop_relays_without_typing(self):
         loop = T.detect({"HANDOVER_RELAY_FILE": "/f"})

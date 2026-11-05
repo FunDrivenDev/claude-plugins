@@ -7,12 +7,13 @@ The plugin depends on the port alone: `Terminal`, whose verbs are
     clear_input()        empty the prompt, so that what is typed next does not merge with a draft
     set_title(title)     name the session's tab
     ring()               ring the terminal's bell
-    report_status(text)  show a status on the session's tab
+    report_status(state, message)  show a status on the session's tab: a state of STATES, and one line
 
 `detect()` picks the adapter from the environment, innermost host first, and `adapter()` rebuilds one from
 its name and address, for the detached half of the relay:
 
     tmux  TMUX_PANE, the session's pane
+    rex   REX_SESSION and REX_BLOCK, the session's pane in Rex; REX_SERVER tells the rex CLI which server
     loop  HANDOVER_RELAY_FILE, the `toolbox session run` loop: nothing to type into, the relay restarts claude
     none  neither: no relay
 
@@ -21,7 +22,9 @@ required for the relay to type. A verb never raises: it returns False when it co
 is tests/terminal_contract.py, which every adapter passes.
 """
 
+import base64
 import contextlib
+import json
 import subprocess
 
 TIMEOUT = 5
@@ -29,13 +32,18 @@ TIMEOUT = 5
 # text after the cursor survives ctrl+u: both, once per line, and a draft longer than this keeps its head.
 CLEAR_LINES = 64
 VERBS = ("type_text", "press_enter", "clear_input", "set_title", "ring", "report_status")
+STATES = ("idle", "working", "done", "blocked", "error", "clear")
+
+
+def _write(tty, text):
+    with contextlib.suppress(OSError), open(tty, "w") as f:
+        f.write(text)
+        return True
+    return False
 
 
 def _ring(tty="/dev/tty"):
-    with contextlib.suppress(OSError), open(tty, "w") as f:
-        f.write("\a")
-        return True
-    return False
+    return _write(tty, "\a")
 
 
 class Terminal:
@@ -71,7 +79,7 @@ class Terminal:
     def ring(self):
         return _ring()
 
-    def report_status(self, status):
+    def report_status(self, state, message=""):
         return False
 
     def describe(self):
@@ -121,7 +129,77 @@ class Tmux(Terminal):
         return _ring((tty or "").strip() or "/dev/tty")
 
 
-ADAPTERS = {a.name: a for a in (Terminal, Loop, Tmux)}
+class Rex(Terminal):
+    """A pane of Rex, the address its session and block ids. --autostart=false: a server gone stays gone, a new one
+    would hold none of these ids."""
+
+    name = "rex"
+    verbs = VERBS
+
+    def __init__(self, address=""):
+        super().__init__(address)
+        self.session, _, self.block = address.partition(" ")
+
+    def _rex(self, *args, stdin=None):
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
+            return subprocess.run(
+                ["rex", "--autostart=false", *args],
+                input=stdin,
+                capture_output=True,
+                text=True,
+                timeout=TIMEOUT,
+                check=True,
+            ).stdout
+        return None
+
+    def _keys(self, *keys):
+        return self._rex("send-key", "-s", self.session, "-b", self.block, *keys) is not None
+
+    def _json(self, *args):
+        with contextlib.suppress(TypeError, ValueError):
+            return json.loads(self._rex(*args))
+        return {}
+
+    def _tty(self):
+        """The pane's tty, for what only a program in the pane can send. Rex does not name it: the foreground
+        process does."""
+        process = self._json("block", "call", "-s", self.session, "-b", self.block, "process")
+        pid = (process.get("foreground") or {}).get("pid")
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
+            tty = subprocess.run(
+                ["ps", "-o", "tty=", "-p", str(pid)], capture_output=True, text=True, timeout=TIMEOUT, check=True
+            ).stdout.strip()
+            return f"/dev/{tty}" if tty else None
+        return None
+
+    def type_text(self, text):
+        # By stdin: as an argument, a leading dash would read as a flag.
+        return self._rex("send", "-s", self.session, "-b", self.block, stdin=text) is not None
+
+    def press_enter(self):
+        return self._keys("enter")
+
+    def clear_input(self):
+        return self._keys(*["ctrl+k"] * CLEAR_LINES, *["ctrl+u"] * CLEAR_LINES)
+
+    def set_title(self, title):
+        block = self._json("block", "inspect", "-s", self.session, self.block, "--json").get("block") or {}
+        window = block.get("window_id")
+        return bool(window) and self._rex("window", "rename", "-s", self.session, window, title) is not None
+
+    def ring(self):
+        tty = self._tty()
+        return _ring(tty) if tty else False
+
+    def report_status(self, state, message=""):
+        tty = self._tty()
+        if not tty or state not in STATES:
+            return False
+        msg = base64.b64encode(message.encode()).decode()
+        return _write(tty, f"\x1b]7501;state={state}:id=handover:app=handover:msg={msg}\x1b\\")
+
+
+ADAPTERS = {a.name: a for a in (Terminal, Loop, Tmux, Rex)}
 
 
 def adapter(name, address=""):
@@ -133,6 +211,8 @@ def detect(environ):
     """The adapter for the host this session runs in: the innermost one, so tmux inside another terminal is tmux."""
     if environ.get("TMUX_PANE"):
         return Tmux(environ["TMUX_PANE"])
+    if environ.get("REX_SESSION") and environ.get("REX_BLOCK"):
+        return Rex(f"{environ['REX_SESSION']} {environ['REX_BLOCK']}")
     if environ.get("HANDOVER_RELAY_FILE"):
         return Loop(environ["HANDOVER_RELAY_FILE"])
     return Terminal()

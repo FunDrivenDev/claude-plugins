@@ -46,8 +46,8 @@ With the relay on (HANDOVER_RELAY=1, set by `toolbox session run`, which scripts
 execs, or `request --relay`
 from the relay skill, or a session the relay started), the handover runs
 without the user: once the session has written its closing reply, /clear and the
-resume message are typed into its tmux pane, or, outside tmux, the `toolbox session run` loop
-restarts claude with that message. The handovers of a chain are numbered, and the chain
+resume message are typed into its terminal (terminal.py), or, with none to type into, the
+`toolbox session run` loop restarts claude with that message. The handovers of a chain are numbered, and the chain
 halts for the user at `relay_limit` of them.
 
 AFK mode (`toolbox session run --afk`, or the afk skill) runs a relay toward a goal while the
@@ -1605,8 +1605,8 @@ def relay(st, sid, tokens, cfg, message):
     if not term.types and not pid:
         st["relay_outcome"] = {"failed": True, "n": n}
         record("relay_failed", sid, chain=chain.get("base"), n=n, tokens=tokens)
-        alert("Relay impossible: this session runs neither in tmux nor under toolbox session run. Run /clear.")
-        return "handover: cannot relay outside tmux or toolbox session run. Run /clear."
+        alert("Relay impossible: this session runs in no terminal the plugin can type into. Run /clear.")
+        return "handover: cannot relay here: no terminal to type into, no toolbox session run. Run /clear."
     from_reply = bool(message)
     message = message or "Continue the work from the handover loaded above."
     write_json(
@@ -1864,7 +1864,9 @@ def cmd_afk(args):
             print("handover: AFK mode off. The relay stays on, within relay_limit.")
             return 0
         if not terminal().relays:
-            print("handover: AFK mode needs tmux (start Claude Code with toolbox session create).", file=sys.stderr)
+            print(
+                "handover: AFK mode needs a relay: run in tmux or Rex, or under toolbox session run.", file=sys.stderr
+            )
             return 1
         try:
             until = parse_until(args.until).timestamp() if args.until else None
@@ -2637,7 +2639,10 @@ def cmd_terminal(args):
     if args.verb == "describe":
         print(json.dumps(term.describe(), ensure_ascii=False))
         return 0
-    done = bool(getattr(term, args.verb)(*args.text))
+    given = () if args.text is None else (args.text,)
+    if args.verb == "report_status":
+        given = (args.state, args.message)
+    done = bool(getattr(term, args.verb)(*given))
     print(json.dumps({"adapter": term.name, "verb": args.verb, "done": done}))
     return 0 if done else 1
 
@@ -3724,7 +3729,9 @@ def main():
     r.add_argument("--kill", type=int, help="claude process to end, for the claude-relay loop to restart")
     tm = sub.add_parser("terminal", help="run a verb of this session's terminal, the result as JSON")
     tm.add_argument("verb", choices=("describe", *TERM.VERBS))
-    tm.add_argument("text", nargs="*")
+    tm.add_argument("--text", help="what type_text types, or the set_title title: --text=<text>")
+    tm.add_argument("--state", choices=TERM.STATES, default="idle", help="the report_status state")
+    tm.add_argument("--message", default="", help="the report_status line: --message=<text>")
     a = sub.add_parser("afk")
     a.add_argument("--session", required=True)
     a.add_argument("--goal", help="what the run works toward, until it is met")
