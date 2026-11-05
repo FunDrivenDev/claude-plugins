@@ -44,6 +44,8 @@ The rules that tie them:
 | `refresh_tokens` | 2000 | A handover this far behind the session is rewritten before it is used; the closing reply alone never counts | Rewrite on any change |
 | `relay_limit` | 10 | Handovers in a chain before it halts for you | — |
 | `compact_reserve_tokens` | 33000 | How far below `autoCompactWindow` compaction fires, for `/handover:stats` until real compactions are measured | — |
+| `terminal` | `auto` | The terminal the relay types into and the alerts ring: `auto` (the innermost host: tmux, then Rex), `tmux`, `rex`, `command` or `none`: [Terminals](relay.md#terminals) | — |
+| `terminal_command` | (none) | With `terminal` set to `command`, what `sh` runs for each terminal verb: [Any other terminal](relay.md#any-other-terminal) | — |
 | `notifier` | `auto` | How an alert calls you back, on top of the terminal bell: `auto` (the desktop notification of the environment, plus `notify_command` when set), `macos`, `linux`, `command` or `bell` ([Notifications](notifications.md)) | — |
 | `notify_command` | (none) | A command `sh` runs for each alert, `HANDOVER_TITLE` and `HANDOVER_MESSAGE` in its environment | — |
 

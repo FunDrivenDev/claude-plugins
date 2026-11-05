@@ -1,6 +1,6 @@
 ---
 name: relay
-description: Hand this session over now and relay it - a fresh session resumes from the handover without the user, and keeps handing over by itself, up to relay_limit handovers. Needs the session to run in tmux. Optional argument, what the next session will focus on.
+description: Hand this session over now and relay it - a fresh session resumes from the handover without the user, and keeps handing over by itself, up to relay_limit handovers. Needs the session to run in tmux, in Rex or in the terminal command. Optional argument, what the next session will focus on.
 argument-hint: "[focus of the next session]"
 disable-model-invocation: true
 allowed-tools: Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/handover.py *)
