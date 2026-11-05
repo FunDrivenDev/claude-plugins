@@ -12,11 +12,14 @@ import unittest
 HOME = tempfile.mkdtemp()
 DATA = os.path.join(HOME, ".claude", "plugins", "data", "handover-fundrivendev")
 os.environ.update(HOME=HOME, CLAUDE_PLUGIN_DATA=DATA)
+# An AFK run names its tab: not the tab these tests run in.
+for key in ("TMUX", "TMUX_PANE", "REX_SESSION", "REX_BLOCK", "REX_SERVER"):
+    os.environ.pop(key, None)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "plugins", "handover", "scripts"))
 
 import handover as H
 
-H.alert = lambda message: None
+H.alert = lambda message, *a, **k: None
 TRANSCRIPT = os.path.join(HOME, "transcript.jsonl")
 with open(TRANSCRIPT, "w") as f:
     f.write('{"type": "user", "message": {"role": "user", "content": "hi"}}\n')

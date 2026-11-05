@@ -16,6 +16,8 @@ transcript, never by the session whose context is full.
     handover.py wake-timeout ...       the detached safety net of a kill or a notice that should wake the session
     handover.py statusline             the session's handover state, status-line payload on stdin
     handover.py relay-drive ...        the relay's detached second half, started by the hooks
+    handover.py relay-recover ...      detached, after a host ended the session: resume the AFK run in the restored pane
+    handover.py terminal <verb> ...    run a verb of the session's terminal (terminal.py), as JSON
     handover.py afk --session ID ...   turn AFK mode on (or --off) in a running session
     handover.py until <when>           resolve an AFK deadline: epoch on stdout, the date on stderr
     handover.py yolo-settings [--merge S]  the deny rules a YOLO run starts with, as a --settings JSON,
@@ -45,8 +47,8 @@ With the relay on (HANDOVER_RELAY=1, set by `toolbox session run`, which scripts
 execs, or `request --relay`
 from the relay skill, or a session the relay started), the handover runs
 without the user: once the session has written its closing reply, /clear and the
-resume message are typed into its tmux pane, or, outside tmux, the `toolbox session run` loop
-restarts claude with that message. The handovers of a chain are numbered, and the chain
+resume message are typed into its terminal (terminal.py), or, with none to type into, the
+`toolbox session run` loop restarts claude with that message. The handovers of a chain are numbered, and the chain
 halts for the user at `relay_limit` of them.
 
 AFK mode (`toolbox session run --afk`, or the afk skill) runs a relay toward a goal while the
@@ -89,6 +91,7 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import notify as N
+import terminal as TERM
 import transcript as T
 import writer_prompt as P
 
@@ -99,6 +102,14 @@ MAX_RENDER_CHARS = 800_000
 # How long a new session waits for a handover still being written: the refresh of a session that went on
 # after its closing reply, a pre-compaction handover, a writer slower than STOP_WRITE_SECONDS.
 WAIT_SECONDS = 150
+# After a host ended an AFK session: how long its server may stay away, how often it is asked, how many answers
+# in a row say the pane is gone (a restarted server restores its panes shortly after it answers), how long the
+# restored pane's shell gets to start, and how long the resumed session gets to start.
+RECOVER_SECONDS = 300
+RECOVER_POLL_SECONDS = 2
+RECOVER_ENDED_SURVEYS = 3
+RECOVER_SHELL_SECONDS = 3
+RESUME_SECONDS = 90
 # How far below the trigger the status line turns yellow when no suggestion comes before it.
 WARN_TOKENS = 20_000
 # Claude Code's autoCompactWindow when the settings leave it unset.
@@ -1578,9 +1589,9 @@ def chain_n(st):
 def relay(st, sid, tokens, cfg, message):
     """Hand the session over without the user, once its closing reply is written; returns a note for the user.
 
-    In tmux, a detached `relay-drive` types /clear into the session's pane; the new session waits for the
-    writer and loads the handover, then the resume message is typed. Under the claude-relay loop, outside
-    tmux, it leaves the message for the loop and ends claude, which the loop restarts. A chain stops at
+    On a terminal it can type into (terminal.py), a detached `relay-drive` types /clear into the session's prompt;
+    the new session waits for the writer and loads the handover, then the resume message is typed. Under the
+    claude-relay loop, it leaves the message for the loop and ends claude, which the loop restarts. A chain stops at
     `relay_limit`.
     """
     if not relay_on(st) or st.get("relay_outcome"):
@@ -1598,29 +1609,28 @@ def relay(st, sid, tokens, cfg, message):
         record("relay_limit_reached", sid, chain=chain.get("base"), n=n, tokens=tokens)
         alert(f"Relay halted at {n} handovers. Run /clear to continue from the last one.")
         return f"handover: relay halted at its limit of {limit} handovers. Run /clear to continue from the last one."
-    pane = os.environ.get("TMUX_PANE")
-    loop = os.environ.get("HANDOVER_RELAY_FILE")
-    pid = None if pane or not loop else claude_pid()
-    if not pane and not pid:
+    term = terminal()
+    pid = None if term.types or not term.relays else claude_pid()
+    if not term.types and not pid:
         st["relay_outcome"] = {"failed": True, "n": n}
         record("relay_failed", sid, chain=chain.get("base"), n=n, tokens=tokens)
-        alert("Relay impossible: this session runs neither in tmux nor under toolbox session run. Run /clear.")
-        return "handover: cannot relay outside tmux or toolbox session run. Run /clear."
+        alert("Relay impossible: this session runs in no terminal the plugin can type into. Run /clear.")
+        return "handover: cannot relay here: no terminal to type into, no toolbox session run. Run /clear."
     from_reply = bool(message)
     message = message or "Continue the work from the handover loaded above."
     write_json(
         relay_path(st.get("project") or os.getcwd()),
-        {"session": sid, "at": time.time(), "mode": "tmux" if pane else "loop"},
+        {"session": sid, "at": time.time(), "mode": term.name},
     )
     cmd = ["relay-drive", "--session", sid]
-    if pane:
-        cmd += ["--pane", pane, "--message", message]
+    if term.types:
+        cmd += [f"--terminal={term.name}", f"--address={term.address}", f"--message={message}"]
     else:
-        with open(loop, "w", encoding="utf-8") as f:
+        with open(term.address, "w", encoding="utf-8") as f:
             f.write(message)
         cmd += ["--kill", str(pid)]
     detach(cmd)
-    st["relay_outcome"] = {"at": time.time(), "n": n, "mode": "tmux" if pane else "loop"}
+    st["relay_outcome"] = {"at": time.time(), "n": n, "mode": term.name}
     record(
         "relay_launched",
         sid,
@@ -1751,6 +1761,7 @@ def afk_start(st, sid, goal, until, how, yolo=False):
         "run": f"{time.strftime('%y%m%d-%H%M')}-{sid[:4]}",
         "since": time.time(),
         "yolo": yolo,
+        "instance": terminal().instance(),
     }
     st["relay_on"] = True
     st.setdefault("relay_start", relay_start())
@@ -1760,6 +1771,7 @@ def afk_start(st, sid, goal, until, how, yolo=False):
         st["afk"]["baseline"] = extra["baseline"] = baseline_mode(st.get("project"))
         extra.update(plugin_root=plugin_root(), plugin_sha=plugin_sha())
     record("afk_started", sid, run=st["afk"]["run"], how=how, until=until, goal=goal[:200], yolo=yolo, **extra)
+    terminal().set_title(tab_title(st.get("chain") or {}, st["afk"]))
     return st["afk"]
 
 
@@ -1778,7 +1790,7 @@ def afk_end(st, sid, kind, reason):
         hours=round((time.time() - afk["since"]) / 3600, 1),
         **({"audit_lines": lines, "audit_head": head} if lines else {}),
     )
-    alert(f"AFK run {kind}: {reason}"[:200])
+    alert(f"AFK run {kind}: {reason}"[:200], state="done" if kind in ("done", "off") else "error")
 
 
 AFK_NOT_BLOCKED = (
@@ -1862,8 +1874,10 @@ def cmd_afk(args):
             afk_end(st, args.session, "off", "turned off by the user")
             print("handover: AFK mode off. The relay stays on, within relay_limit.")
             return 0
-        if not os.environ.get("TMUX_PANE") and not os.environ.get("HANDOVER_RELAY_FILE"):
-            print("handover: AFK mode needs tmux (start Claude Code with toolbox session create).", file=sys.stderr)
+        if not terminal().relays:
+            print(
+                "handover: AFK mode needs a relay: run in tmux or Rex, or under toolbox session run.", file=sys.stderr
+            )
             return 1
         try:
             until = parse_until(args.until).timestamp() if args.until else None
@@ -2542,7 +2556,7 @@ def on_afk_signal(inp, event):
         ):
             return
         record("afk_user_needed", sid, kind=kind, detail=(inp.get("message") or "")[:200], **fields)
-        alert(f"AFK run waiting: {kind.replace('_', ' ')}. {inp.get('message') or ''}"[:200])
+        alert(f"AFK run waiting: {kind.replace('_', ' ')}. {inp.get('message') or ''}"[:200], state=None)
     elif event == "PermissionRequest":
         record("afk_user_needed", sid, kind="permission", tool=tool, detail=tool_target(tool, ti), **fields)
     elif event == "PermissionDenied":
@@ -2580,22 +2594,26 @@ def claude_pid():
     return None
 
 
-def alert(message):
-    """Calls the user back to the keyboard: the notifier the options pick (notify.py) and a bell."""
-    tty = "/dev/tty"
-    if os.environ.get("TMUX_PANE"):
-        with contextlib.suppress(OSError, subprocess.SubprocessError):
-            tty = (
-                subprocess.run(
-                    ["tmux", "display-message", "-p", "-t", os.environ["TMUX_PANE"], "#{pane_tty}"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                    check=False,
-                ).stdout.strip()
-                or tty
-            )
-    N.notifier(option("notifier"), option("notify_command"), tty=tty).notify("Claude Code handover", message)
+def terminal():
+    """The terminal this session runs in (terminal.py)."""
+    return TERM.detect(os.environ, option("terminal"), option("terminal_command"))
+
+
+def alert(message, term=None, state="error"):
+    """Calls the user back to the keyboard: the notifier the options pick (notify.py), the terminal's bell, and a
+    status left on the tab. `state` None leaves none: a run that waits goes on, and its status would go stale."""
+    term = term or terminal()
+    N.notifier(option("notifier"), option("notify_command"), ring=term.ring).notify("Claude Code handover", message)
+    if state:
+        term.report_status(state, message)
+
+
+def tab_title(chain, afk):
+    """The tab of a session: the chain's name without the handover's folder and time, or on a chain's first
+    session the AFK goal, and its rank."""
+    name = re.sub(r"^\d+h\d+-", "", os.path.basename(chain.get("base") or "")).replace("-", " ").strip()
+    name = name or " ".join((afk or {}).get("goal", "").split())[:40] or "relay"
+    return f"{'AFK ' if afk else ''}{name} #{(chain.get('n') or 0) + 1}"
 
 
 def cmd_relay_drive(args):
@@ -2605,14 +2623,22 @@ def cmd_relay_drive(args):
         with contextlib.suppress(OSError):
             os.kill(args.kill, signal.SIGTERM)
         return 0
+    term = TERM.adapter(args.terminal, args.address)
 
-    def keys(*k):
-        subprocess.run(["tmux", "send-keys", "-t", args.pane, *k], check=True, timeout=5)
+    def submit(text):
+        term.clear_input()
+        typed = term.type_text(text)
+        time.sleep(0.5)
+        return typed and term.press_enter()
+
+    def stalled(seconds):
+        record("relay_stalled", args.session, seconds=seconds)
+        alert("Relay stalled: the new session did not load the handover. Check the session.", term)
+        return 1
 
     t0 = time.time()
-    keys("-l", "/clear")
-    time.sleep(0.5)
-    keys("Enter")
+    if not submit("/clear"):
+        return stalled(0)
     marker = relay_marker(args.session)
     deadline = time.time() + WAIT_SECONDS + 60
     while not os.path.exists(marker) and time.time() < deadline:
@@ -2621,16 +2647,63 @@ def cmd_relay_drive(args):
     with contextlib.suppress(FileNotFoundError):
         os.remove(marker)
     if not loaded.get("ok"):
-        record("relay_stalled", args.session, seconds=round(time.time() - t0))
-        os.environ["TMUX_PANE"] = args.pane
-        alert("Relay stalled: the new session did not load the handover. Check the session.")
-        return 1
+        return stalled(round(time.time() - t0))
     time.sleep(1)
-    keys("-l", args.message)
-    time.sleep(0.5)
-    keys("Enter")
-    record("relay_resumed", args.session, mode="tmux", seconds=round(time.time() - t0))
+    if not submit(args.message):
+        return stalled(round(time.time() - t0))
+    record("relay_resumed", args.session, mode=term.name, seconds=round(time.time() - t0))
     return 0
+
+
+def resume_command(sid, afk):
+    """Typed into a login shell, which has none of the run's environment: toolbox sets it up again."""
+    toolbox = os.environ.get("HANDOVER_TOOLBOX") or "toolbox"
+    return shlex.join(
+        [toolbox, "session", "run", "--afk", afk["goal"], *["--yolo"] * bool(afk.get("yolo")), "--resume", sid]
+    )
+
+
+def cmd_relay_recover(args):
+    """The AFK session ended with the host's server or its pane. A restart restores the pane, with a shell in it:
+    the run is resumed there. Anything else ends the run, with the command to resume it by hand."""
+    term = TERM.adapter(args.terminal, args.address)
+    deadline, seen, ended = time.time() + RECOVER_SECONDS, "gone", 0
+    while time.time() < deadline and seen != "restarted" and ended < RECOVER_ENDED_SURVEYS:
+        time.sleep(RECOVER_POLL_SECONDS)
+        seen = term.survey(args.instance)
+        ended = ended + 1 if seen == "ended" else 0
+    typed = False
+    afk = afk_active(read_json(state_path(args.session), {}))
+    if seen == "restarted" and afk:
+        time.sleep(RECOVER_SHELL_SECONDS)
+        typed = term.clear_input() and term.type_text(resume_command(args.session, afk)) and term.press_enter()
+    deadline = time.time() + RESUME_SECONDS
+    while typed and time.time() < deadline:
+        if not read_json(state_path(args.session), {}).get("recovering"):
+            return 0
+        time.sleep(1)
+    with locked_state(args.session) as st:
+        if not st.pop("recovering", None) or not afk_active(st):
+            return 0
+        why = "the tab closed" if seen == "ended" else "the terminal server did not come back"
+        if typed:
+            why = "the resumed session did not start"
+        afk_end(st, args.session, "lost", f"{why}. To resume: claude --resume {args.session}")
+    return 1
+
+
+def cmd_terminal(args):
+    """A verb of this session's terminal, for the contract tests and by hand: the result as JSON, exit 1 if not done."""
+    term = terminal()
+    if args.verb == "describe":
+        print(json.dumps(term.describe(), ensure_ascii=False))
+        return 0
+    given = () if args.text is None else (args.text,)
+    if args.verb == "report_status":
+        given = (args.state, args.message)
+    done = bool(getattr(term, args.verb)(*given))
+    print(json.dumps({"adapter": term.name, "verb": args.verb, "done": done}))
+    return 0 if done else 1
 
 
 CLOSING_FORMAT = (
@@ -2739,8 +2812,24 @@ def on_session_end(inp):
         return
     with locked_state(sid) as st:
         if afk_active(st) and not st.get("relay_outcome"):
-            # Not a handover: the run ends with this session (an exit, a /clear by hand, a crash of claude).
-            afk_end(st, sid, "exit", f"session ended ({inp.get('reason') or 'unknown'})")
+            term = terminal()
+            if inp.get("reason") == "other" and term.recovers:
+                # A tab closed or a host restarted: relay-recover tells them apart, and resumes after a restart.
+                st["recovering"] = time.time()
+                record("afk_recovering", sid, run=st["afk"]["run"])
+                detach(
+                    [
+                        "relay-recover",
+                        "--session",
+                        sid,
+                        f"--terminal={term.name}",
+                        f"--address={term.address}",
+                        f"--instance={st['afk'].get('instance') or ''}",
+                    ]
+                )
+            else:
+                # Not a handover: the run ends with this session (an exit, a /clear by hand, a crash of claude).
+                afk_end(st, sid, "exit", f"session ended ({inp.get('reason') or 'unknown'})")
         if not (st.get("wind_down") or st.get("keep_fresh")):
             return
         tokens, _ = T.context_tokens(inp["transcript_path"])
@@ -2755,10 +2844,32 @@ def on_session_end(inp):
     return
 
 
+def after_recovery(inp):
+    """The AFK run relay-recover resumed: same session id, so its state is there; the agent gets its rules back."""
+    sid = inp["session_id"]
+    with locked_state(sid) as st:
+        afk = afk_active(st)
+        if not (afk and st.pop("recovering", None)):
+            return None
+        afk["instance"] = terminal().instance()
+        record("afk_recovered", sid, run=afk["run"])
+        chain = st.get("chain") or {}
+    terminal().set_title(tab_title(chain, afk))
+    return {
+        "systemMessage": f"handover: AFK run resumed after a restart of the terminal{afk_texts(afk)['until']}",
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": AFK_RULES.format(**afk_texts(afk)),
+        },
+    }
+
+
 def on_session_start(inp):
     source = inp.get("source")
     if source == "compact":
         return after_compact(inp)
+    if source == "resume":
+        return after_recovery(inp)
     if source not in ("clear", "startup"):
         return None
     relayed = take_relay(inp)
@@ -2875,6 +2986,9 @@ def take_relay(inp):
         # The loop starts claude with the message: it is resumed as soon as it loads.
         record("relay_resumed", pending["session"], mode="loop", seconds=round(time.time() - pending["at"]))
     afk = afk_active(st)
+    term = terminal()
+    term.report_status("clear")
+    term.set_title(tab_title(chain, afk))
     with locked_state(inp["session_id"]) as new:
         new.update(
             transcript=inp.get("transcript_path"), project=project_of(inp), loaded_from=st["path"], relayed_from=chain
@@ -3707,11 +3821,22 @@ def main():
     c.add_argument(
         "--set", metavar="JSON", help="save these option values, a JSON object; options left out keep theirs"
     )
+    rr = sub.add_parser("relay-recover")
+    rr.add_argument("--session", required=True)
+    rr.add_argument("--terminal", required=True, help="adapter of the terminal to resume in (terminal.py)")
+    rr.add_argument("--address", required=True, help="where that adapter finds the session")
+    rr.add_argument("--instance", default="", help="the terminal's server when the run last checked")
     r = sub.add_parser("relay-drive")
     r.add_argument("--session", required=True)
-    r.add_argument("--pane", help="tmux pane to type /clear and the message into")
+    r.add_argument("--terminal", help="adapter of the terminal to type /clear and the message into (terminal.py)")
+    r.add_argument("--address", help="where that adapter finds the session")
     r.add_argument("--message")
     r.add_argument("--kill", type=int, help="claude process to end, for the claude-relay loop to restart")
+    tm = sub.add_parser("terminal", help="run a verb of this session's terminal, the result as JSON")
+    tm.add_argument("verb", choices=("describe", *TERM.VERBS))
+    tm.add_argument("--text", help="what type_text types, or the set_title title: --text=<text>")
+    tm.add_argument("--state", choices=TERM.STATES, default="idle", help="the report_status state")
+    tm.add_argument("--message", default="", help="the report_status line: --message=<text>")
     a = sub.add_parser("afk")
     a.add_argument("--session", required=True)
     a.add_argument("--goal", help="what the run works toward, until it is met")
@@ -3734,6 +3859,8 @@ def main():
         "stats": cmd_stats,
         "statusline": cmd_statusline,
         "relay-drive": cmd_relay_drive,
+        "relay-recover": cmd_relay_recover,
+        "terminal": cmd_terminal,
         "afk": cmd_afk,
         "until": cmd_until,
         "guidance": cmd_guidance,

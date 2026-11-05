@@ -1,6 +1,6 @@
 ---
 name: afk
-description: Turn AFK mode on in this session - work toward a goal while the user is away, relaying to fresh sessions with no relay_limit, until the goal is met, nothing can move without the user, or an optional deadline passes. Needs tmux. Argument, the goal, optionally followed by a deadline; `off` turns it off.
+description: Turn AFK mode on in this session - work toward a goal while the user is away, relaying to fresh sessions with no relay_limit, until the goal is met, nothing can move without the user, or an optional deadline passes. Needs tmux, Rex or the terminal command. Argument, the goal, optionally followed by a deadline; `off` turns it off.
 argument-hint: "<goal> [until <when>] | off"
 disable-model-invocation: true
 allowed-tools: Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/handover.py *)

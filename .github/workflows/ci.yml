@@ -47,6 +47,10 @@ jobs:
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           install_args: just jq
+      # The handover terminal contract skips the hosts it does not find.
+      - name: Install tmux
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get install -y tmux; else brew install tmux; fi
       - run: just test
 
   ci-ok:

@@ -21,7 +21,7 @@ Coming from `handover@fundriven` or `handoff`: see [Migrating from older version
 - **Load on `/clear`**: the next session starts with the handover already in its context.
 - **Background commands**: `[await]` and `[endless]` tags tell the wind-down which commands to wait for and which to stop.
 - **Compaction safety net**: an auto-compaction still gets a handover loaded next to its summary.
-- **Relay**: under tmux, the plugin types `/clear` and the resume message itself, up to 5 handovers in a chain.
+- **Relay**: under tmux, in Rex or in a terminal you plug in, the plugin types `/clear` and the resume message itself, up to 5 handovers in a chain.
 - **AFK mode**: a relay that works through a goal while you are away, until done, blocked or a deadline, optionally in YOLO with guards and an audit log.
 - **Status line**: a one-line handover state for your status line, from the threshold to `Handover ready`.
 - **Notifications**: a desktop notification on macOS and Linux, or your own command (Slack, ntfy) when away or headless; `handover.py notifier --test` checks it.
@@ -30,7 +30,7 @@ Coming from `handover@fundriven` or `handoff`: see [Migrating from older version
 ## Documentation
 
 - [How it works](docs/how-it-works.md): the wind-down, the writer, `/clear`, sub-agents and background commands
-- [Relay](docs/relay.md): automatic `/clear` under tmux, started with the `toolbox session` commands
+- [Relay](docs/relay.md): automatic `/clear` under tmux, in Rex or in any terminal, started with the `toolbox session` commands
 - [AFK mode](docs/afk.md): unattended runs on a goal, deadlines, YOLO
 - [Settings](docs/settings.md): the thresholds, how they relate, and every option
 - [Notifications](docs/notifications.md): how alerts reach you on macOS, a Linux desktop, a headless server or Slack

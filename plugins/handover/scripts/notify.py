@@ -74,14 +74,17 @@ class Command:
 
 
 class Bell:
-    """The terminal bell, on the terminal `tty` names (the session's tmux pane, or /dev/tty)."""
+    """The terminal bell: `ring`, the session's own terminal (terminal.py), or the terminal `tty` names."""
 
     name = "bell"
 
-    def __init__(self, tty="/dev/tty"):
+    def __init__(self, tty="/dev/tty", ring=None):
         self.tty = tty
+        self.ring = ring
 
     def notify(self, title, message):
+        if self.ring:
+            return self.ring()
         with contextlib.suppress(OSError), open(self.tty, "w") as f:
             f.write("\a")
             return True
@@ -179,10 +182,10 @@ def _pick(choice, command, env):
     return [*([found] if found else []), *cmd]
 
 
-def notifier(choice="auto", command="", tty="/dev/tty", env=None):
+def notifier(choice="auto", command="", ring=None, env=None):
     """The notifier for the `notifier` and `notify_command` options; an unknown choice is auto."""
     env = env or environment()
-    return Fanout(*_pick(_choice(choice), (command or "").strip(), env), Bell(tty))
+    return Fanout(*_pick(_choice(choice), (command or "").strip(), env), Bell(ring=ring))
 
 
 def _choice(choice):

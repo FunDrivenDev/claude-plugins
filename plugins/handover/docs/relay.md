@@ -1,15 +1,15 @@
 # Relay
 
-Hand over without typing `/clear` yourself, under tmux. [Back to the README](../README.md)
+Hand over without typing `/clear` yourself, under tmux, in Rex, or in any terminal a command can type into. [Back to the README](../README.md)
 
 Two ways to turn the relay on:
 
-- **For a whole session:** start it with `toolbox session create` or `toolbox session run` (below), which set `HANDOVER_RELAY=1` and run `claude` inside a tmux session of their own when not already in tmux. Arguments go to `claude`. Every handover of that session relays: the one the session asks for, and the automatic one at `trigger_tokens`.
-- **From a running session:** type `/handover:relay [focus]`. The session hands over at the end of its turn, and the handover is relayed; the session must already run in tmux.
+- **For a whole session:** start it with `toolbox session create` or `toolbox session run` (below), which set `HANDOVER_RELAY=1` and run `claude` inside a tmux session of their own when in neither tmux nor Rex. Arguments go to `claude`. Every handover of that session relays: the one the session asks for, and the automatic one at `trigger_tokens`.
+- **From a running session:** type `/handover:relay [focus]`. The session hands over at the end of its turn, and the handover is relayed; the session must already run in a terminal the plugin can type into.
 
 Either way, every session the relay starts relays in turn, until the chain reaches `relay_limit`. The handover is written first, as for any handover; once the session has then written its closing reply (`Ready to hand over: run /clear.` and the resume message), the `Stop` hook hands over without you:
 
-1. A detached helper types `/clear` into the session's tmux pane.
+1. A detached helper empties the session's prompt, so a draft does not merge with what it types (a draft stays in Claude Code's kill ring: `Ctrl+Y`), and types `/clear`.
 2. The new session loads the handover, already written, like any `/clear`, and is told the relay started it.
 3. The helper then types the resume message the old session wrote in its code block, and the new session starts right away.
 
@@ -19,7 +19,7 @@ At `relay_limit` handovers (10) the chain halts: the last handover is written, b
 
 Without tmux, `toolbox session run` falls back to a loop: the relay leaves the resume message in `$HANDOVER_RELAY_FILE` and ends `claude` with SIGTERM, and the loop starts `claude` again with the same arguments plus that message. There, give flags only and type the first prompt in the session.
 
-The launcher is the [toolbox](https://github.com/FunDrivenDev/toolbox) CLI (`brew install fundrivendev/tap/toolbox`), which finds `handover.py` through the plugin's install path on every call, so it keeps working across plugin versions. `/handover:relay` and `/handover:afk` need a session already in tmux, which these commands give every Claude Code they start:
+The launcher is the [toolbox](https://github.com/FunDrivenDev/toolbox) CLI (`brew install fundrivendev/tap/toolbox`), which finds `handover.py` through the plugin's install path on every call, so it keeps working across plugin versions. `/handover:relay` and `/handover:afk` need a session the plugin can type into: in Rex or a `command` terminal any session, otherwise one in tmux, which these commands give every Claude Code they start:
 
 ```zsh
 toolbox session create                      # Claude Code with the relay; outside tmux, in a session that closes with the tab; inside tmux, in the current pane
@@ -31,5 +31,44 @@ toolbox session run [claude args]           # the relay itself, arguments passed
 ```
 
 `scripts/claude-relay` remains as a shim for older callers: it runs `toolbox session run` with its arguments, and fails with an install hint when toolbox is missing. The contract between toolbox and `handover.py` (the `HANDOVER_*` variables, `handover.py until` and `yolo-settings`) is documented in toolbox's [`docs/handover-relay.md`](https://github.com/FunDrivenDev/toolbox/blob/main/docs/handover-relay.md).
+
+## Terminals
+
+Everything the plugin does to a terminal goes through one port, `scripts/terminal.py`. The `terminal` option picks the adapter; `auto` takes the innermost host it finds:
+
+| Adapter | Found by | Relay | Tab title | Bell | Status on the tab |
+| --- | --- | --- | --- | --- | --- |
+| `tmux` | `TMUX_PANE` | types | window name | yes | no |
+| `rex` | `REX_SESSION`, `REX_BLOCK` | types | tab label | yes | OSC 7501, record `handover` |
+| `command` | `terminal` set to `command` | through `terminal_command` | what your command does | what your command does | what your command does |
+| loop | `HANDOVER_RELAY_FILE` | restarts `claude` | no | no | no |
+
+`handover.py terminal describe` prints what was found here. A relayed session names its tab `<chain> #<n>`, with `AFK` in front on a run; an AFK run's first session, before any chain, takes the start of its goal. The bell rings when a run ends, when it needs you, when a relay stalls and when a run is lost, never on an ordinary handover.
+
+### Rex
+
+Rex's own status on the tab needs `claude` directly in the pane, as it does not cross tmux. So in Rex, `toolbox session run` starts no tmux.
+
+A pane program dies with its tab and with the Rex server, and a Rex update restarts the server. An AFK run comes back from a restart: Rex restores the pane with a shell, and the plugin types `toolbox session run --afk <goal> --resume <session>` there, within 5 minutes of the server's return. A closed tab ends the run, with an alert giving the resume command. A reboot sends Claude Code no `SessionEnd`, so it is not covered. A relay outside AFK mode is not resumed.
+
+### Any other terminal
+
+Set `terminal` to `command` and `terminal_command` to a command. `sh` runs it for each verb, with `HANDOVER_VERB` (`type_text`, `press_enter`, `clear_input`, `set_title`, `ring`, `report_status`), `HANDOVER_TEXT` and `HANDOVER_STATE` in its environment. It exits non-zero on a verb it cannot do; the relay needs `type_text` and `press_enter`. Keep it in a script, and set `terminal_command` to its path.
+
+[AImux](https://github.com/rdavaillaud/aimux), whose tiles export `AIMUX_CLI` and `AIMUX_TASK_ID`:
+
+```sh
+#!/bin/sh
+aimux=${AIMUX_CLI:-aimux}
+case $HANDOVER_VERB in
+  type_text) "$aimux" task send "$AIMUX_TASK_ID" "$HANDOVER_TEXT" --no-enter ;;
+  press_enter) "$aimux" task send "$AIMUX_TASK_ID" "" ;;
+  *) exit 1 ;;
+esac
+```
+
+`aimux task send` holds the text until the agent is idle. This script has not been run on AImux yet.
+
+## tmux
 
 Inside tmux, Claude Code wants `extended-keys` on (Shift+Enter) and `mouse` on (the wheel scrolls tmux's history rather than Claude Code's prompt history).
