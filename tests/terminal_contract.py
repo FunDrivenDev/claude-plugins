@@ -1,7 +1,8 @@
 """The contract of the handover plugin's terminal port (scripts/terminal.py), black box.
 
 The same cases run against every adapter, on a real host: a pane of a private tmux server, a pane of a
-throwaway Rex server. A host whose tool is missing is skipped. The subject in the pane is a fake `claude`, this file run with --fake: a raw-mode prompt with the editing rules measured on
+throwaway Rex server, or the private tmux again, reached through a terminal_command script. A host whose
+tool is missing is skipped. The subject in the pane is a fake `claude`, this file run with --fake: a raw-mode prompt with the editing rules measured on
 the real one (2026-11-05), which logs what it is sent. The cases go through `handover.py terminal <verb>` and
 `handover.py relay-drive`, run with the environment the pane really has, as a hook would be.
 """
@@ -21,6 +22,7 @@ SCRIPTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "plugin
 HANDOVER = os.path.join(SCRIPTS, "handover.py")
 sys.path.insert(0, SCRIPTS)
 
+import handover as H
 import terminal as T
 
 ALL_VERBS = ("type_text", "press_enter", "clear_input", "set_title", "ring", "report_status")
@@ -106,6 +108,7 @@ class TmuxHost:
 
     def __init__(self):
         self.socket = f"handover-contract-{os.getpid()}"
+        self.options = {}
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(LEAKS)}
 
     def tmux(self, *args):
@@ -149,6 +152,7 @@ class RexHost:
         # A pane's rex finds this server by REX_SERVER, and a pane inherits the server's environment.
         self.env = {**{k: v for k, v in os.environ.items() if not k.startswith(LEAKS)}, "REX_SERVER": self.endpoint}
         self.watchers = {}
+        self.options = {}
 
     def rex(self, *args):
         return subprocess.run(
@@ -221,6 +225,35 @@ class RexHost:
         return (records[0].get("id"), records[0].get("state")) if records else None
 
 
+# What a user writes for the command adapter; tmux here only because it gives the suite a real prompt to reach.
+COMMAND = r"""#!/bin/sh
+tmux_keys() { tmux send-keys -t "$TMUX_PANE" "$@"; }
+case $HANDOVER_VERB in
+  type_text) printf %s "$HANDOVER_TEXT" | tmux load-buffer - && tmux paste-buffer -t "$TMUX_PANE" ;;
+  press_enter) tmux_keys Enter ;;
+  clear_input) i=0; while [ $i -lt 8 ]; do tmux_keys C-k C-u; i=$((i + 1)); done ;;
+  set_title) tmux rename-window -t "$TMUX_PANE" -- "$HANDOVER_TEXT" ;;
+  ring) printf '\a' >"$(tmux display-message -p -t "$TMUX_PANE" '#{pane_tty}')" ;;
+  *) exit 1 ;;
+esac
+"""
+
+
+class CommandHost(TmuxHost):
+    def start(self):
+        super().start()
+        self.lab = tempfile.mkdtemp(prefix="hc")
+        script = os.path.join(self.lab, "terminal.sh")
+        with open(script, "w", encoding="utf-8") as f:
+            f.write(COMMAND)
+        os.chmod(script, 0o755)
+        self.options = {"CLAUDE_PLUGIN_OPTION_TERMINAL": "command", "CLAUDE_PLUGIN_OPTION_TERMINAL_COMMAND": script}
+
+    def stop(self):
+        super().stop()
+        shutil.rmtree(self.lab, True)
+
+
 class Contract:
     """The cases every adapter passes; a subclass per host names the adapter it expects."""
 
@@ -249,7 +282,12 @@ class Contract:
         path = os.path.join(self.dir, "env.json")
         self.assertTrue(wait_until(lambda: os.path.exists(path)), "the fake claude did not start")
         with open(path, encoding="utf-8") as f:
-            self.env = {**json.load(f), "CLAUDE_PLUGIN_DATA": self.data, "CLAUDE_PLUGIN_OPTION_NOTIFIER": "bell"}
+            self.env = {
+                **json.load(f),
+                "CLAUDE_PLUGIN_DATA": self.data,
+                "CLAUDE_PLUGIN_OPTION_NOTIFIER": "bell",
+                **self.host.options,
+            }
 
     def handover(self, *args):
         return subprocess.run(
@@ -351,8 +389,8 @@ class Contract:
 
     def test_report_status_reaches_the_tab(self):
         self.subject()
-        if "report_status" not in self.verb("describe")["verbs"]:
-            self.skipTest("no status on this adapter")
+        if "report_status" not in self.verb("describe")["verbs"] or not hasattr(self.host, "status"):
+            self.skipTest("no status to read on this host")
         self.assertTrue(self.verb("report_status", "--state=blocked", "--message=needs you, é")["done"])
         self.assertTrue(wait_until(lambda: self.host.status(self.pane) == ("handover", "blocked")))
         self.assertTrue(self.verb("report_status", "--state=clear")["done"])
@@ -413,6 +451,16 @@ class Rex(Contract, unittest.TestCase):
     adapter = "rex"
 
 
+@unittest.skipUnless(shutil.which("tmux"), "tmux is not installed")
+class Command(Contract, unittest.TestCase):
+    Host = CommandHost
+    adapter = "command"
+
+    def test_a_verb_the_command_refuses_is_not_done(self):
+        self.subject()
+        self.assertFalse(self.verb("report_status", "--state=done")["done"])
+
+
 class Selection(unittest.TestCase):
     """Which adapter a session gets, by the environment it runs in."""
 
@@ -421,6 +469,17 @@ class Selection(unittest.TestCase):
         self.assertEqual(T.detect(env).name, "tmux")
         del env["TMUX_PANE"]
         self.assertEqual(T.detect(env).name, "rex")
+
+    def test_the_option_overrides_the_environment(self):
+        env = {"TMUX_PANE": "%1", "REX_SESSION": "s", "REX_BLOCK": "b"}
+        self.assertEqual(T.detect(env, "rex").name, "rex")
+        self.assertEqual(T.detect(env, "command", "script").address, "script")
+        self.assertEqual(T.detect(env, "none").name, "none")
+
+    def test_a_choice_the_environment_cannot_serve_types_nowhere(self):
+        self.assertFalse(T.detect({"TMUX_PANE": "%1"}, "command", " ").types)
+        self.assertFalse(T.detect({"TMUX_PANE": "%1"}, "rex").types)
+        self.assertEqual(T.detect({"HANDOVER_RELAY_FILE": "/f"}, "tmux").name, "loop")
 
     def test_the_restart_loop_relays_without_typing(self):
         loop = T.detect({"HANDOVER_RELAY_FILE": "/f"})
@@ -433,6 +492,42 @@ class Selection(unittest.TestCase):
     def test_the_detached_relay_rebuilds_the_adapter_from_its_description(self):
         d = T.detect({"TMUX_PANE": "%7"}).describe()
         self.assertEqual(T.adapter(d["adapter"], d["address"]).describe(), d)
+
+
+class Signals(unittest.TestCase):
+    """What the plugin tells the terminal, whatever the adapter: a recording one."""
+
+    class Recorder(T.Terminal):
+        def __init__(self):
+            super().__init__()
+            self.calls = []
+
+        def ring(self):
+            self.calls.append(("ring",))
+            return True
+
+        def report_status(self, state, message=""):
+            self.calls.append((state, message))
+            return True
+
+    def setUp(self):
+        os.environ["CLAUDE_PLUGIN_OPTION_NOTIFIER"] = "bell"
+        self.addCleanup(os.environ.pop, "CLAUDE_PLUGIN_OPTION_NOTIFIER")
+        self.term = self.Recorder()
+
+    def test_an_alert_rings_and_leaves_a_status(self):
+        H.alert("run lost", self.term)
+        self.assertEqual(self.term.calls, [("ring",), ("error", "run lost")])
+
+    def test_a_waiting_run_rings_without_a_status(self):
+        H.alert("waiting", self.term, state=None)
+        self.assertEqual(self.term.calls, [("ring",)])
+
+    def test_the_tab_names_the_chain_and_its_rank(self):
+        chain = {"base": "15h17-plugin-terminal-port", "n": 2}
+        self.assertEqual(H.tab_title(chain, None), "plugin terminal port #3")
+        self.assertEqual(H.tab_title(chain, {"goal": "x"}), "AFK plugin terminal port #3")
+        self.assertEqual(H.tab_title({}, None), "relay #1")
 
 
 class Prompts(unittest.TestCase):

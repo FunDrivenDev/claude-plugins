@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 import handover as H
 
-H.alert = lambda message: None
+H.alert = lambda message, *a, **k: None
 TRANSCRIPT = os.path.join(HOME, "transcript.jsonl")
 with open(TRANSCRIPT, "w") as f:
     f.write('{"type": "user", "message": {"role": "user", "content": "hi"}}\n')

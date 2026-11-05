@@ -93,6 +93,18 @@
       "title": "Notify command",
       "description": "A command sh runs for each alert, with HANDOVER_TITLE and HANDOVER_MESSAGE in its environment: for instance curl -d \"$HANDOVER_MESSAGE\" ntfy.sh/<topic> to reach a phone. Used by notifier auto (with the desktop notification) and command (alone). Slack: docs/notifications.md",
       "default": ""
+    },
+    "terminal": {
+      "type": "string",
+      "title": "Terminal",
+      "description": "The terminal the relay types into and the alerts ring: auto (the innermost host found: tmux, then Rex), tmux, rex, command (terminal_command, for any other terminal) or none (no typing: only the toolbox session run loop relays). See docs/relay.md",
+      "default": "auto"
+    },
+    "terminal_command": {
+      "type": "string",
+      "title": "Terminal command",
+      "description": "With terminal set to command: what sh runs for each terminal verb, with HANDOVER_VERB (type_text, press_enter, clear_input, set_title, ring, report_status), HANDOVER_TEXT and HANDOVER_STATE in its environment; a non-zero exit means not done. AImux example: docs/relay.md",
+      "default": ""
     }
   }
 }

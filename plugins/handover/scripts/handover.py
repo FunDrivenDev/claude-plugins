@@ -1779,7 +1779,7 @@ def afk_end(st, sid, kind, reason):
         hours=round((time.time() - afk["since"]) / 3600, 1),
         **({"audit_lines": lines, "audit_head": head} if lines else {}),
     )
-    alert(f"AFK run {kind}: {reason}"[:200])
+    alert(f"AFK run {kind}: {reason}"[:200], state="done" if kind in ("done", "off") else "error")
 
 
 AFK_NOT_BLOCKED = (
@@ -2545,7 +2545,7 @@ def on_afk_signal(inp, event):
         ):
             return
         record("afk_user_needed", sid, kind=kind, detail=(inp.get("message") or "")[:200], **fields)
-        alert(f"AFK run waiting: {kind.replace('_', ' ')}. {inp.get('message') or ''}"[:200])
+        alert(f"AFK run waiting: {kind.replace('_', ' ')}. {inp.get('message') or ''}"[:200], state=None)
     elif event == "PermissionRequest":
         record("afk_user_needed", sid, kind="permission", tool=tool, detail=tool_target(tool, ti), **fields)
     elif event == "PermissionDenied":
@@ -2585,13 +2585,22 @@ def claude_pid():
 
 def terminal():
     """The terminal this session runs in (terminal.py)."""
-    return TERM.detect(os.environ)
+    return TERM.detect(os.environ, option("terminal"), option("terminal_command"))
 
 
-def alert(message, term=None):
-    """Calls the user back to the keyboard: the notifier the options pick (notify.py) and the terminal's bell."""
-    ring = (term or terminal()).ring
-    N.notifier(option("notifier"), option("notify_command"), ring=ring).notify("Claude Code handover", message)
+def alert(message, term=None, state="error"):
+    """Calls the user back to the keyboard: the notifier the options pick (notify.py), the terminal's bell, and a
+    status left on the tab. `state` None leaves none: a run that waits goes on, and its status would go stale."""
+    term = term or terminal()
+    N.notifier(option("notifier"), option("notify_command"), ring=term.ring).notify("Claude Code handover", message)
+    if state:
+        term.report_status(state, message)
+
+
+def tab_title(chain, afk):
+    """The tab of a relayed session: the chain's name without the handover's time, and its rank."""
+    name = re.sub(r"^\d+h\d+-", "", chain.get("base") or "").replace("-", " ").strip() or "relay"
+    return f"{'AFK ' if afk else ''}{name} #{(chain.get('n') or 0) + 1}"
 
 
 def cmd_relay_drive(args):
@@ -2889,6 +2898,9 @@ def take_relay(inp):
         # The loop starts claude with the message: it is resumed as soon as it loads.
         record("relay_resumed", pending["session"], mode="loop", seconds=round(time.time() - pending["at"]))
     afk = afk_active(st)
+    term = terminal()
+    term.report_status("clear")
+    term.set_title(tab_title(chain, afk))
     with locked_state(inp["session_id"]) as new:
         new.update(
             transcript=inp.get("transcript_path"), project=project_of(inp), loaded_from=st["path"], relayed_from=chain

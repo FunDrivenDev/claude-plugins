@@ -9,11 +9,13 @@ The plugin depends on the port alone: `Terminal`, whose verbs are
     ring()               ring the terminal's bell
     report_status(state, message)  show a status on the session's tab: a state of STATES, and one line
 
-`detect()` picks the adapter from the environment, innermost host first, and `adapter()` rebuilds one from
-its name and address, for the detached half of the relay:
+`detect()` picks the adapter from the `terminal` option and the environment, innermost host first, and
+`adapter()` rebuilds one from its name and address, for the detached half of the relay:
 
     tmux  TMUX_PANE, the session's pane
     rex   REX_SESSION and REX_BLOCK, the session's pane in Rex; REX_SERVER tells the rex CLI which server
+    command  the terminal_command option, only when `terminal` is command: sh runs it for each verb, with
+          HANDOVER_VERB, HANDOVER_TEXT and HANDOVER_STATE in its environment (docs/relay.md)
     loop  HANDOVER_RELAY_FILE, the `toolbox session run` loop: nothing to type into, the relay restarts claude
     none  neither: no relay
 
@@ -25,6 +27,7 @@ is tests/terminal_contract.py, which every adapter passes.
 import base64
 import contextlib
 import json
+import os
 import subprocess
 
 TIMEOUT = 5
@@ -199,7 +202,40 @@ class Rex(Terminal):
         return _write(tty, f"\x1b]7501;state={state}:id=handover:app=handover:msg={msg}\x1b\\")
 
 
-ADAPTERS = {a.name: a for a in (Terminal, Loop, Tmux, Rex)}
+class Command(Terminal):
+    """The user's own command, the address: it gets every verb, and fails on those it has no way to do."""
+
+    name = "command"
+    verbs = VERBS
+
+    def _run(self, verb, text="", state=""):
+        env = dict(os.environ, HANDOVER_VERB=verb, HANDOVER_TEXT=text, HANDOVER_STATE=state)
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
+            p = subprocess.run(["sh", "-c", self.address], capture_output=True, timeout=TIMEOUT, check=False, env=env)
+            return p.returncode == 0
+        return False
+
+    def type_text(self, text):
+        return self._run("type_text", text)
+
+    def press_enter(self):
+        return self._run("press_enter")
+
+    def clear_input(self):
+        return self._run("clear_input")
+
+    def set_title(self, title):
+        return self._run("set_title", title)
+
+    def ring(self):
+        return self._run("ring") or _ring()
+
+    def report_status(self, state, message=""):
+        return self._run("report_status", message, state)
+
+
+ADAPTERS = {a.name: a for a in (Terminal, Loop, Tmux, Rex, Command)}
+CHOICES = ("auto", "tmux", "rex", "command", "none")
 
 
 def adapter(name, address=""):
@@ -207,11 +243,16 @@ def adapter(name, address=""):
     return ADAPTERS.get(name, Terminal)(address)
 
 
-def detect(environ):
-    """The adapter for the host this session runs in: the innermost one, so tmux inside another terminal is tmux."""
-    if environ.get("TMUX_PANE"):
+def detect(environ, choice="auto", command=""):
+    """The adapter for the host this session runs in: `choice`, or under auto the innermost one, so that tmux
+    inside another terminal is tmux. A choice the environment cannot serve gives no terminal to type into."""
+    choice = (choice or "auto").strip().lower()
+    command = (command or "").strip()
+    if choice == "command" and command:
+        return Command(command)
+    if choice in ("auto", "tmux") and environ.get("TMUX_PANE"):
         return Tmux(environ["TMUX_PANE"])
-    if environ.get("REX_SESSION") and environ.get("REX_BLOCK"):
+    if choice in ("auto", "rex") and environ.get("REX_SESSION") and environ.get("REX_BLOCK"):
         return Rex(f"{environ['REX_SESSION']} {environ['REX_BLOCK']}")
     if environ.get("HANDOVER_RELAY_FILE"):
         return Loop(environ["HANDOVER_RELAY_FILE"])
