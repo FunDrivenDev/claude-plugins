@@ -554,6 +554,7 @@ class Recovery(unittest.TestCase):
         self.assertEqual(args, ["session", "run", "--afk", "ship it's goal", "--yolo", "--resume", "s1"])
         self.assertNotIn("recovering", self.state())
         self.assertNotIn("ended", self.state()["afk"])
+        self.assertEqual(self.host.title(self.pane), "AFK ship it's goal #1")
 
     def test_a_closed_tab_ends_the_run_and_says_how_to_resume(self):
         self.host.close(self.pane)
@@ -637,10 +638,14 @@ class Signals(unittest.TestCase):
         self.assertEqual(self.term.calls, [("ring",)])
 
     def test_the_tab_names_the_chain_and_its_rank(self):
-        chain = {"base": "15h17-plugin-terminal-port", "n": 2}
+        chain = {"base": "2026/11/05/15h17-plugin-terminal-port", "n": 2}
         self.assertEqual(H.tab_title(chain, None), "plugin terminal port #3")
         self.assertEqual(H.tab_title(chain, {"goal": "x"}), "AFK plugin terminal port #3")
         self.assertEqual(H.tab_title({}, None), "relay #1")
+
+    def test_a_first_afk_session_is_named_after_its_goal(self):
+        self.assertEqual(H.tab_title({}, {"goal": "ship the\nport"}), "AFK ship the port #1")
+        self.assertEqual(len(H.tab_title({}, {"goal": "x" * 200})), len("AFK  #1") + 40)
 
 
 class Prompts(unittest.TestCase):

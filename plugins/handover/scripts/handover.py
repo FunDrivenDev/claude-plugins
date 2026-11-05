@@ -1771,6 +1771,7 @@ def afk_start(st, sid, goal, until, how, yolo=False):
         st["afk"]["baseline"] = extra["baseline"] = baseline_mode(st.get("project"))
         extra.update(plugin_root=plugin_root(), plugin_sha=plugin_sha())
     record("afk_started", sid, run=st["afk"]["run"], how=how, until=until, goal=goal[:200], yolo=yolo, **extra)
+    terminal().set_title(tab_title(st.get("chain") or {}, st["afk"]))
     return st["afk"]
 
 
@@ -2608,8 +2609,10 @@ def alert(message, term=None, state="error"):
 
 
 def tab_title(chain, afk):
-    """The tab of a relayed session: the chain's name without the handover's time, and its rank."""
-    name = re.sub(r"^\d+h\d+-", "", chain.get("base") or "").replace("-", " ").strip() or "relay"
+    """The tab of a session: the chain's name without the handover's folder and time, or on a chain's first
+    session the AFK goal, and its rank."""
+    name = re.sub(r"^\d+h\d+-", "", os.path.basename(chain.get("base") or "")).replace("-", " ").strip()
+    name = name or " ".join((afk or {}).get("goal", "").split())[:40] or "relay"
     return f"{'AFK ' if afk else ''}{name} #{(chain.get('n') or 0) + 1}"
 
 
@@ -2850,6 +2853,7 @@ def after_recovery(inp):
             return None
         afk["instance"] = terminal().instance()
         record("afk_recovered", sid, run=afk["run"])
+        terminal().set_title(tab_title(st.get("chain") or {}, afk))
     return {
         "systemMessage": f"handover: AFK run resumed after a restart of the terminal{afk_texts(afk)['until']}",
         "hookSpecificOutput": {

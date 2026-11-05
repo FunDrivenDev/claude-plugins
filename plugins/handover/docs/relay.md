@@ -4,7 +4,7 @@ Hand over without typing `/clear` yourself, under tmux, in Rex, or in any termin
 
 Two ways to turn the relay on:
 
-- **For a whole session:** start it with `toolbox session create` or `toolbox session run` (below), which set `HANDOVER_RELAY=1` and run `claude` inside a tmux session of their own when not already in tmux. Arguments go to `claude`. Every handover of that session relays: the one the session asks for, and the automatic one at `trigger_tokens`.
+- **For a whole session:** start it with `toolbox session create` or `toolbox session run` (below), which set `HANDOVER_RELAY=1` and run `claude` inside a tmux session of their own when in neither tmux nor Rex. Arguments go to `claude`. Every handover of that session relays: the one the session asks for, and the automatic one at `trigger_tokens`.
 - **From a running session:** type `/handover:relay [focus]`. The session hands over at the end of its turn, and the handover is relayed; the session must already run in a terminal the plugin can type into.
 
 Either way, every session the relay starts relays in turn, until the chain reaches `relay_limit`. The handover is written first, as for any handover; once the session has then written its closing reply (`Ready to hand over: run /clear.` and the resume message), the `Stop` hook hands over without you:
@@ -19,7 +19,7 @@ At `relay_limit` handovers (10) the chain halts: the last handover is written, b
 
 Without tmux, `toolbox session run` falls back to a loop: the relay leaves the resume message in `$HANDOVER_RELAY_FILE` and ends `claude` with SIGTERM, and the loop starts `claude` again with the same arguments plus that message. There, give flags only and type the first prompt in the session.
 
-The launcher is the [toolbox](https://github.com/FunDrivenDev/toolbox) CLI (`brew install fundrivendev/tap/toolbox`), which finds `handover.py` through the plugin's install path on every call, so it keeps working across plugin versions. `/handover:relay` and `/handover:afk` need a session already in tmux, which these commands give every Claude Code they start:
+The launcher is the [toolbox](https://github.com/FunDrivenDev/toolbox) CLI (`brew install fundrivendev/tap/toolbox`), which finds `handover.py` through the plugin's install path on every call, so it keeps working across plugin versions. `/handover:relay` and `/handover:afk` need a session the plugin can type into: in Rex or a `command` terminal any session, otherwise one in tmux, which these commands give every Claude Code they start:
 
 ```zsh
 toolbox session create                      # Claude Code with the relay; outside tmux, in a session that closes with the tab; inside tmux, in the current pane
@@ -43,7 +43,7 @@ Everything the plugin does to a terminal goes through one port, `scripts/termina
 | `command` | `terminal` set to `command` | through `terminal_command` | what your command does | what your command does | what your command does |
 | loop | `HANDOVER_RELAY_FILE` | restarts `claude` | no | no | no |
 
-`handover.py terminal describe` prints what was found here. A relayed session names its tab `<chain> #<n>`, with `AFK` in front on a run. The bell rings when a run ends, when it needs you, when a relay stalls and when a run is lost, never on an ordinary handover.
+`handover.py terminal describe` prints what was found here. A relayed session names its tab `<chain> #<n>`, with `AFK` in front on a run; an AFK run's first session, before any chain, takes the start of its goal. The bell rings when a run ends, when it needs you, when a relay stalls and when a run is lost, never on an ordinary handover.
 
 ### Rex
 
