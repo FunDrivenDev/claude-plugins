@@ -2853,7 +2853,8 @@ def after_recovery(inp):
             return None
         afk["instance"] = terminal().instance()
         record("afk_recovered", sid, run=afk["run"])
-        terminal().set_title(tab_title(st.get("chain") or {}, afk))
+        chain = st.get("chain") or {}
+    terminal().set_title(tab_title(chain, afk))
     return {
         "systemMessage": f"handover: AFK run resumed after a restart of the terminal{afk_texts(afk)['until']}",
         "hookSpecificOutput": {

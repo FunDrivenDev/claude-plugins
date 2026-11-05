@@ -548,13 +548,13 @@ class Recovery(unittest.TestCase):
         self.session_end()
         self.assertIn("recovering", self.state())
         self.host.start()
-        self.assertTrue(wait_until(lambda: "afk_recovered" in self.events(), 30), self.events())
+        self.assertTrue(wait_until(lambda: "recovering" not in self.state(), 30), self.events())
+        self.assertIn("afk_recovered", self.events())
         with open(os.path.join(self.root, "toolbox.args"), encoding="utf-8") as f:
             args = f.read().splitlines()
         self.assertEqual(args, ["session", "run", "--afk", "ship it's goal", "--yolo", "--resume", "s1"])
-        self.assertNotIn("recovering", self.state())
         self.assertNotIn("ended", self.state()["afk"])
-        self.assertEqual(self.host.title(self.pane), "AFK ship it's goal #1")
+        self.assertTrue(wait_until(lambda: self.host.title(self.pane) == "AFK ship it's goal #1"))
 
     def test_a_closed_tab_ends_the_run_and_says_how_to_resume(self):
         self.host.close(self.pane)
