@@ -2125,7 +2125,8 @@ GUARD_DENIED = (
 
 PLUGINS_READ_HINT = (
     "Denied: a Bash command may not name {0} in a YOLO run. To read files there, use the Read, Glob or Grep "
-    "tool: the guard lets them through. Writes stay refused."
+    "tool: the guard lets them through. To run a script installed there, make it one plain call: nothing "
+    "chained, redirected or substituted, and no `$` outside single quotes. Writes stay refused."
 )
 
 

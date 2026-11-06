@@ -145,6 +145,15 @@ class Refusal(unittest.TestCase):
             self.assertIn("use the Read, Glob or Grep tool", got, command)
             self.assertIn("Writes stay refused", got, command)
 
+    def test_a_call_of_an_installed_script_that_is_not_plain_is_told_how_to_run_it(self):
+        # As a review launcher once sent it: the refusal named only the reading tools, so the script looked off limits.
+        script = "~/.claude/plugins/cache/x/y/scripts/qgate.sh"
+        for command in (f"bash {script} state-check --repo /r; echo done", f'bash {script} state-check --repo "$PWD"'):
+            got = reason(command)
+            self.assertIsNotNone(got, command)
+            self.assertIn("one plain call", got, command)
+            self.assertIn("use the Read, Glob or Grep tool", got, command)
+
     def test_the_plugins_own_files_its_audit_log_and_the_settings_keep_the_plain_refusal(self):
         audit = os.path.join(DATA, "audit.jsonl")
         for command in (
