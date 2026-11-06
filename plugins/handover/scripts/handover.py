@@ -58,8 +58,8 @@ and a Stop hook that sends the session back to work until it ends a reply with
 permission prompts: every tool call goes to an audit log, tagged by whether it would have
 run without YOLO, and the plugin, its data and the settings files are off limits to it.
 
-Subagents: every session is told to give self-contained tasks to subagents, so its own
-context fills more slowly. From the suggestion point no new subagent starts, and while one
+Subagents: every session is told to implement by itself and give typed subagents the tasks
+whose result alone matters, so its own context fills more slowly. From the suggestion point no new subagent starts, and while one
 runs the handover is neither written nor relayed: its result belongs in the handover.
 
 Every step is also appended to metrics.jsonl in the data directory: token
@@ -168,7 +168,7 @@ def config(option=option):
         "reserve": number("compact_reserve_tokens"),
         # Handovers in a relay chain before it stops for the user.
         "relay_limit": number("relay_limit"),
-        # Tell each session to give self-contained tasks to subagents.
+        # Tell each session to delegate result-only tasks to typed subagents and implement itself.
         "delegate": option("delegate").lower() not in ("false", "0", "no", "off"),
     }
 
@@ -1655,8 +1655,9 @@ AFK_RULES = (
 )
 
 AFK_DELEGATE = (
-    " Hand each item, or each self-contained part of one, to a subagent with a complete brief, and check "
-    "its report and its diff before you commit: this session's context then lasts across many items."
+    " Implement each item yourself, and hand what only needs a result (an exploration, a diagnosis, a scoped "
+    "script) to a specialised typed subagent with a complete brief: this session's context then lasts "
+    "across many items."
 )
 
 AFK_CONTINUE = (
@@ -2759,13 +2760,14 @@ STOP_ENDLESS = (
 )
 
 DELEGATE = (
-    "Context budget: this session hands over to a fresh one once its context fills up, so keep your own "
-    "context for steering: the user's intent, decisions, integration, verification. Give a subagent each "
-    "self-contained task whose working detail you will not need afterwards (an investigation across many "
-    "files, a well-specified change, a test-and-fix loop, a review), and run independent ones in parallel. "
-    "Brief it fully, since it starts without your context (goal, constraints, files, how to verify, what to "
-    "report), and ask for a short report: conclusions, paths, what was verified. Do quick tasks yourself: a "
-    "subagent costs a brief and a report."
+    "Context budget: this session hands over to a fresh one once its context fills up. Delegate the tasks "
+    "where only the result matters to you: an exploration, a diagnosis, writing a scoped script and the like. "
+    "The tokens spent reaching that result stay out of your context. Implement yourself: your context is "
+    "what lets you meet the goal, so the change, its tests and their fixes stay in this session. Pick the "
+    "specialised typed subagent that fits the task, and avoid general-purpose, whose starting context is "
+    "large. Run independent ones in parallel. Brief each fully, since it starts without your context (goal, "
+    "constraints, files, how to verify, what to report), and ask for a short report: conclusions, paths, "
+    "what was verified. Do quick tasks yourself: a subagent costs a brief and a report."
 )
 
 

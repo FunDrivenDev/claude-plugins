@@ -1,7 +1,7 @@
 {
   "name": "handover",
   "description": "Hand a session over to a fresh one before its context fills up: a separate model writes the handover from the transcript, /clear loads it",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "author": {
     "name": "Raphaël Louvradoux",
     "url": "https://github.com/rlvdx"
@@ -73,7 +73,7 @@
     "delegate": {
       "type": "boolean",
       "title": "Delegate to subagents",
-      "description": "Tell each session, as it starts on a fresh context, to keep its own context for steering and give self-contained tasks to subagents, so it fills more slowly",
+      "description": "Tell each session, as it starts on a fresh context, to implement by itself and give specialised typed subagents the tasks whose result alone matters (an exploration, a diagnosis, a scoped script), so it fills more slowly",
       "default": true
     },
     "yolo_guard_paths": {
