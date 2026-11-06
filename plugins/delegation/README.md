@@ -1,6 +1,6 @@
 # delegation
 
-Measures how Claude Code sessions delegate to subagents, and where the main session's context goes, so a change to agents, rules or hooks is judged on data: a baseline window, the change, the same window length after it.
+Typed read-only subagents for Claude Code, and a measure of how sessions delegate to them. The main session plans, writes and decides; a subagent reads, runs read-only commands and brings back a conclusion, so the tokens it spends stay out of the main context. The measure judges a change to agents, rules or hooks on data: a baseline window, the change, the same window length after it.
 
 ## Install
 
@@ -9,9 +9,22 @@ Measures how Claude Code sessions delegate to subagents, and where the main sess
 /plugin install delegation@fundrivendev
 ```
 
-Installing it changes no behaviour: the plugin only reads transcripts when asked.
+Installing it adds four agents the main session can delegate to; the measure only reads transcripts when asked.
 
-## Use
+## Agents
+
+Each is called as `delegation:<role>`, beside the built-in `Explore`, which stays the scout (locating code). Each has a tool allow-list with no edit, write or delegation tool, a model and effort fit for its job, and `omitClaudeMd: true`: it starts on its own instructions and the brief, not on your CLAUDE.md, so its starting context stays small. Whatever it needs goes in the brief.
+
+| Role | Job | Tools | Model, effort |
+|---|---|---|---|
+| `investigator` | diagnose a bug, a red test, a failed run; survey a system's state | Read, Grep, Glob, Bash | opus, high |
+| `researcher` | answer from docs and the web, primary sources first | Read, Grep, Glob, Bash, WebSearch, WebFetch | sonnet, high |
+| `reviewer` | review a diff without the briefing session's reasoning; verified findings at `file:line` | Read, Grep, Glob, Bash | opus, high |
+| `skeptic` | try to break a plan or a design; the objections that hold, or none | Read, Grep, Glob, Bash, WebSearch, WebFetch | fable, high |
+
+Every report opens with `Status` (`done`, `partial`, `blocked`) and closes with `Unverified` and `Verify` (the one check that lets the briefing session trust it); the fields between depend on the role and are written in full in each agent file. Bash stays read-only by instruction, not by the allow-list: to enforce it, deny the write commands in your `permissions.deny`. A plugin agent ignores `permissionMode`, `hooks` and `mcpServers` in its frontmatter.
+
+## Measure
 
 `/delegation:measure` with a date range, or with two snapshot files to compare. The script runs alone too:
 

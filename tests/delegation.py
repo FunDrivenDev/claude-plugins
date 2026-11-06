@@ -374,6 +374,42 @@ class EvalCases(unittest.TestCase):
         self.assertGreaterEqual(len(kinds), 6)
 
 
+class Agents(unittest.TestCase):
+    """The plugin's agents are read-only roles with an allow-list, a set model and effort, no CLAUDE.md, and a report
+    that opens on Status and closes on Unverified then Verify."""
+
+    AGENTS = SCRIPT.parent.parent / "agents"
+    ROLES = (("investigator", "opus"), ("researcher", "sonnet"), ("reviewer", "opus"), ("skeptic", "fable"))
+    WRITE_TOOLS = frozenset({"Edit", "Write", "NotebookEdit", "Agent", "Task", "Workflow"})
+
+    def parse(self, name):
+        text = (self.AGENTS / f"{name}.md").read_text()
+        head, body = text.split("\n---\n", 1)
+        meta = dict(line.split(": ", 1) for line in head.removeprefix("---\n").splitlines())
+        return meta, body
+
+    def test_the_four_roles_and_no_other(self):
+        self.assertEqual(sorted(p.stem for p in self.AGENTS.glob("*.md")), [n for n, _ in self.ROLES])
+
+    def test_each_role_is_read_only_with_its_model_effort_and_no_claude_md(self):
+        for name, model in self.ROLES:
+            meta, _ = self.parse(name)
+            self.assertEqual(meta["name"], name)
+            tools = {t.strip() for t in meta["tools"].split(",")}
+            self.assertFalse(tools & self.WRITE_TOOLS, f"{name} can write or delegate: {tools & self.WRITE_TOOLS}")
+            self.assertTrue({"Read", "Grep", "Glob"} <= tools, name)
+            self.assertEqual(meta["model"], model, name)
+            self.assertEqual(meta["effort"], "high", name)
+            self.assertEqual(meta["omitClaudeMd"], "true", name)
+
+    def test_each_report_opens_on_status_and_closes_on_unverified_then_verify(self):
+        for name, _ in self.ROLES:
+            _, body = self.parse(name)
+            fields = re.findall(r"^- \*\*(\w+)\*\*", body.split("Report in this format", 1)[1], re.MULTILINE)
+            self.assertEqual(fields[0], "Status", name)
+            self.assertEqual(fields[-2:], ["Unverified", "Verify"], name)
+
+
 class Cli(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

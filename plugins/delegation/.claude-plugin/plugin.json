@@ -1,7 +1,7 @@
 {
   "name": "delegation",
-  "description": "Measure how sessions delegate to subagents and where the main session's context goes: typed share of agent calls, delegated writes, subagent starting context, peak context, large results, MCP volume; snapshots and a before/after compare",
-  "version": "0.1.0",
+  "description": "Typed read-only subagents (investigator, researcher, reviewer, skeptic), and a measure of how sessions delegate to subagents and where the main session's context goes: typed share of agent calls, delegated writes, subagent starting context, peak context, large results, MCP volume; snapshots and a before/after compare",
+  "version": "0.2.0",
   "author": {
     "name": "FunDrivenDev",
     "url": "https://github.com/FunDrivenDev"
