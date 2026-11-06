@@ -342,14 +342,20 @@ def session(path):
 
 
 def guard_events(path, since, until):
-    """Catch-all calls the guard-agent-type hook caught: would-block events (log mode, the call went through) and
-    blocked ones (block mode, refused), and both together by caller skill and agent type."""
+    """Calls the guard-agent-type hook caught: would-block events (log mode, the call went through) and blocked ones
+    (block mode, refused). Catch-all Agent calls (M9) by caller skill and agent type; a delegation: agent's Bash
+    writes (M9b, `bash`) by agent type."""
     by_skill, by_type, n = Counter(), Counter(), Counter()
+    bash_type, bash_n = Counter(), Counter()
     if not path or not pathlib.Path(path).exists():
         return None
     for r in records(path):
         decision = r.get("decision")
         if decision not in ("would-block", "block") or not in_window(local_date(r.get("ts", "")), since, until):
+            continue
+        if r.get("tool") == "Bash":
+            bash_n[decision] += 1
+            bash_type[r.get("agent_type") or "(untyped)"] += 1
             continue
         n[decision] += 1
         by_skill[r.get("skill") or "(none)"] += 1
@@ -359,6 +365,11 @@ def guard_events(path, since, until):
         "blocked": n["block"],
         "by_skill": dict(by_skill.most_common()),
         "by_type": dict(by_type.most_common()),
+        "bash": {
+            "would_block": bash_n["would-block"],
+            "blocked": bash_n["block"],
+            "by_type": dict(bash_type.most_common()),
+        },
     }
 
 
@@ -535,6 +546,9 @@ def markdown(s):
     if s.get("guard") is not None:
         g = s["guard"]
         out.append(f"| M9 | Hook events: would-block {g['would_block']}, blocked {g.get('blocked', 0)} |")
+        if g.get("bash") is not None:
+            b = g["bash"]
+            out.append(f"| M9b | Agents' Bash writes: would-block {b['would_block']}, blocked {b['blocked']} |")
     out += [
         "",
         "## Agent calls by type",
@@ -599,6 +613,9 @@ def markdown(s):
             "",
             "By agent type: " + (", ".join(f"{n} {c}" for n, c in g["by_type"].items()) or "none"),
         ]
+        if g.get("bash") is not None:
+            bash_types = ", ".join(f"{n} {c}" for n, c in g["bash"]["by_type"].items()) or "none"
+            out += ["", "Agents' Bash writes by agent type: " + bash_types]
     out += ["", "## Skills invoked", "", ", ".join(f"{n} {c}" for n, c in s["skills"].items()) or "None."]
     return "\n".join(out) + "\n"
 
@@ -619,6 +636,8 @@ HEADLINES = [
     ("M7 MCP share", ("mcp", "share")),
     ("M9 would-block", ("guard", "would_block")),
     ("M9 blocked", ("guard", "blocked")),
+    ("M9b Bash would-block", ("guard", "bash", "would_block")),
+    ("M9b Bash blocked", ("guard", "bash", "blocked")),
     ("main sessions", ("sessions", "main")),
 ]
 

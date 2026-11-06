@@ -1,6 +1,6 @@
 {
   "name": "delegation",
-  "description": "Typed read-only subagents (investigator, researcher, reviewer, skeptic), a guard on catch-all ones (off, log, block), and a measure of how sessions delegate to subagents and where the main session's context goes: typed share of agent calls, delegated writes, subagent starting context, peak context, large results, MCP volume; snapshots and a before/after compare",
+  "description": "Typed read-only subagents (investigator, researcher, reviewer, skeptic), a guard on catch-all ones and on the agents' Bash writes (off, log, block), and a measure of how sessions delegate to subagents and where the main session's context goes: typed share of agent calls, delegated writes, subagent starting context, peak context, large results, MCP volume; snapshots and a before/after compare",
   "version": "0.3.0",
   "author": {
     "name": "FunDrivenDev",
@@ -10,8 +10,8 @@
   "userConfig": {
     "guard_mode": {
       "type": "string",
-      "title": "Guard mode for catch-all subagents",
-      "description": "What the guard-agent-type hook does with an Agent call of no type, general-purpose, claude or fork: off (nothing), log (let it through and record a would-block event, which measure counts as M9), block (refuse it and name the typed roles). DELEGATION_GUARD_MODE overrides it for one session",
+      "title": "Guard mode for catch-all subagents and the agents' Bash writes",
+      "description": "What the guard-agent-type hook does with an Agent call of no type, general-purpose, claude or fork, and with a Bash write of a delegation: agent outside a temporary folder: off (nothing), log (let it through and record a would-block event, which measure counts as M9 or M9b), block (refuse it and say what to do instead). DELEGATION_GUARD_MODE overrides it for one session",
       "default": "off"
     }
   }

@@ -168,6 +168,7 @@ class Snapshot(unittest.TestCase):
                 "blocked": 1,
                 "by_skill": {"s": 2},
                 "by_type": {"general-purpose": 1, "(untyped)": 1},
+                "bash": {"would_block": 0, "blocked": 0, "by_type": {}},
             },
         )
 

@@ -22,7 +22,7 @@ SYSTEM_PYTHON = pathlib.Path("/usr/bin/python3")
 HOOK_PYTHON = str(SYSTEM_PYTHON) if SYSTEM_PYTHON.exists() else sys.executable
 
 
-class Guard(unittest.TestCase):
+class Hook(unittest.TestCase):
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp())
         self.data = self.tmp / "data" / "delegation-market"
@@ -66,6 +66,8 @@ class Guard(unittest.TestCase):
     def denied(self, out):
         return out is not None and out["hookSpecificOutput"]["permissionDecision"] == "deny"
 
+
+class Guard(Hook):
     def test_off_by_default_lets_everything_through_and_logs_nothing(self):
         for t in (None, "general-purpose", "claude", "fork", "Explore"):
             self.assertIsNone(self.run_hook(t))
@@ -83,7 +85,7 @@ class Guard(unittest.TestCase):
             self.assertIsNone(self.run_hook(t, CLAUDE_PLUGIN_OPTION_GUARD_MODE="block"), t)
 
     def test_another_tool_is_never_touched(self):
-        self.assertIsNone(self.run_hook(None, tool="Bash", CLAUDE_PLUGIN_OPTION_GUARD_MODE="block"))
+        self.assertIsNone(self.run_hook(None, tool="Read", CLAUDE_PLUGIN_OPTION_GUARD_MODE="block"))
 
     def test_log_lets_the_call_through_and_records_a_would_block_event(self):
         self.assertIsNone(self.run_hook("general-purpose", CLAUDE_PLUGIN_OPTION_GUARD_MODE="log"))
@@ -184,11 +186,108 @@ class Guard(unittest.TestCase):
         self.assertEqual(g["by_type"], {"general-purpose": 1, "(untyped)": 1, "fork": 1})
 
 
+class BashGuard(Hook):
+    """The same hook on Bash: a delegation: agent is read-only, so its writing commands are caught, except in a
+    temporary folder (the agents' throwaway reproductions)."""
+
+    def run_bash(self, command, agent_type="delegation:investigator", cwd="/work/repo", **env):
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": command},
+            "transcript_path": str(self.transcript),
+            "cwd": cwd,
+            "session_id": "s-1",
+        }
+        if agent_type is not None:
+            payload.update(agent_type=agent_type, agent_id="a1")
+        r = subprocess.run(
+            [HOOK_PYTHON, "-B", str(HOOK)],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            env={**self.env, **env},
+            check=False,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout) if r.stdout.strip() else None
+
+    def blocks(self, command, **kw):
+        return self.denied(self.run_bash(command, CLAUDE_PLUGIN_OPTION_GUARD_MODE="block", **kw))
+
+    def test_block_refuses_a_delegation_agents_writes_and_says_where_to_write(self):
+        for c in (
+            "echo x > notes.md",
+            "git commit -am wip",
+            "git -C /work/repo push origin main",
+            "sed -i '' s/a/b/ f.py",
+            "rm -rf build",
+            "gh pr comment 3 --body hi",
+            "python3 -c \"open('f', 'w').write('x')\"",
+            "cd /work/repo && cp a b",
+            "d=$(mktemp -d); cp a.py /work/repo/b.py",
+        ):
+            out = self.run_bash(c, CLAUDE_PLUGIN_OPTION_GUARD_MODE="block")
+            self.assertTrue(self.denied(out), c)
+            self.assertIn("mktemp -d", out["hookSpecificOutput"]["permissionDecisionReason"])
+
+    def test_block_lets_reads_through(self):
+        for c in ("git status && git log -3", "grep -rn foo . 2>/dev/null | head", "cat a > /dev/null", "ls -la"):
+            self.assertFalse(self.blocks(c), c)
+
+    def test_writes_in_a_temporary_folder_go_through(self):
+        for c in (
+            'd=$(mktemp -d) && cd "$d" && git init -q && echo x > f && git add f && git commit -qm x',
+            'd=$(mktemp -d); cp src/a.py "$d/" && python3 "$d/a.py" > "$d/out.txt"; rm -rf "$d"',
+            "cd $(mktemp -d) && touch f && mkdir g",
+            'echo x > "$TMPDIR/probe.txt"',
+            "echo x > /tmp/probe/out.txt",
+        ):
+            self.assertFalse(self.blocks(c), c)
+        self.assertFalse(self.blocks("echo x > f && rm f", cwd="/private/var/folders/ab/T/tmp.x1"))
+
+    def test_a_temporary_folder_does_not_cover_a_push_a_gh_write_or_a_way_out(self):
+        for c in (
+            'd=$(mktemp -d) && cd "$d" && git push origin main',
+            "cd $(mktemp -d) && gh pr merge 3",
+            'd=$(mktemp -d) && cd "$d" && echo x > ../../work/f',
+            "echo x > /tmp/../work/f",
+        ):
+            self.assertTrue(self.blocks(c), c)
+
+    def test_the_main_session_and_other_agents_are_never_touched(self):
+        self.assertIsNone(self.run_bash("git push", agent_type=None, CLAUDE_PLUGIN_OPTION_GUARD_MODE="block"))
+        for t in ("Explore", "general-purpose", "other:writer"):
+            self.assertFalse(self.blocks("git push", agent_type=t), t)
+
+    def test_off_lets_writes_through_and_log_records_them_with_the_tool(self):
+        self.assertIsNone(self.run_bash("git push"))
+        self.assertIsNone(self.run_bash("git push", agent_type="delegation:reviewer", DELEGATION_GUARD_MODE="log"))
+        self.assertIsNone(self.run_bash("ls", DELEGATION_GUARD_MODE="log"))
+        [e] = self.events()
+        self.assertEqual((e["decision"], e["agent_type"], e["tool"]), ("would-block", "delegation:reviewer", "Bash"))
+
+    def test_measure_counts_bash_events_apart_from_the_catch_all_ones(self):
+        self.run_bash("git push", DELEGATION_GUARD_MODE="log")
+        self.run_bash("rm f", agent_type="delegation:skeptic", DELEGATION_GUARD_MODE="block")
+        self.run_hook("fork", CLAUDE_PLUGIN_OPTION_GUARD_MODE="log")
+        g = M.guard_events(str(self.data / "guard-agent-type.jsonl"), None, None)
+        self.assertEqual((g["would_block"], g["blocked"], g["by_type"]), (1, 0, {"fork": 1}))
+        self.assertEqual(
+            g["bash"],
+            {
+                "would_block": 1,
+                "blocked": 1,
+                "by_type": {"delegation:investigator": 1, "delegation:skeptic": 1},
+            },
+        )
+
+
 class Registration(unittest.TestCase):
-    def test_the_plugin_registers_the_hook_on_the_agent_tool(self):
+    def test_the_plugin_registers_the_hook_on_the_agent_tool_and_bash(self):
         hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]["PreToolUse"]
         [entry] = [h for h in hooks if any("guard_agent_type.py" in c["command"] for c in h["hooks"])]
-        self.assertEqual(entry["matcher"], "Agent|Task")
+        self.assertEqual(entry["matcher"], "Agent|Task|Bash")
 
     def test_the_mode_option_defaults_to_off(self):
         option = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())["userConfig"]["guard_mode"]

@@ -1,21 +1,32 @@
 #!/usr/bin/env python3
-"""PreToolUse hook on the Agent tool: a catch-all subagent (no type, general-purpose, claude, fork) starts on a large
-context with every tool, so the plugin's typed read-only roles are named instead.
+"""PreToolUse hook on the Agent and Bash tools.
+- Agent: a catch-all subagent (no type, general-purpose, claude, fork) starts on a large context with every tool, so
+  the plugin's typed read-only roles are named instead.
+- Bash: the plugin's own agents (agent_type delegation:*) are read-only, so a command that writes (measure's
+  bash_writes, the definition M2 uses) is caught, unless every write lands in a temporary folder (a `mktemp -d`
+  one, $TMPDIR, /tmp): the agents' throwaway reproductions. A push or a gh write is caught even there. The main
+  session's commands (no agent_type) and other agents' are never touched.
 
 Mode, from DELEGATION_GUARD_MODE (a session's override), else the plugin's guard_mode option (the hook environment,
 then settings.json), else off:
 - off: nothing happens;
 - log: the call goes through, and a would-block event is appended to <plugin data>/guard-agent-type.jsonl;
-- block: the call is refused with the roles to pick, and the refusal is logged.
-An event holds the time, the decision, the agent type and the skill running in the current turn, nothing else. Any
-error lets the call through: the hook never blocks by mistake."""
+- block: the call is refused with what to do instead, and the refusal is logged.
+An event holds the time, the decision, the tool, the agent type and, for an Agent call, the skill running in the
+current turn, nothing else. Any error before the decision lets the call through: the hook never blocks by mistake."""
 
 import datetime as dt
 import json
 import os
 import pathlib
 import re
+import shlex
 import sys
+
+try:  # measure's bash_writes, the definition of a write M2 counts; without it the Bash guard lets every call through
+    import measure
+except Exception:  # noqa: BLE001
+    measure = None
 
 CATCH_ALL = {"", "general-purpose", "claude", "fork"}
 MODES = {"off", "log", "block"}
@@ -25,6 +36,20 @@ Delegate read-only, result-only work to a typed agent: Explore (locate code), de
 delegation:reviewer (findings at file:line), delegation:researcher (web or docs), delegation:skeptic (objections to \
 a plan), claude-code-guide (Claude Code), or another plugin's read-only agent.
 Writing (edits, tests, commits) stays in this session: do it here."""
+BASH_REASON = """Bash write refused: {type} is read-only, and this command changes a file, the repo or a remote.
+Run a throwaway reproduction in a fresh folder: d=$(mktemp -d) && cd "$d" && ..., removed before you report.
+Anything else goes into your report (under Repro or Verify) for the main session to run."""
+# A temporary folder: /tmp, macOS's per-user /var/folders, $TMPDIR; `mktemp -d` and the variables set from it are
+# rewritten to /tmp/mktemp before the check.
+TEMP_ROOT = re.compile(r"^(?:/private)?/(?:tmp|var/folders)(?:/|$)")
+MKTEMP = re.compile(r"\$\(\s*mktemp\b[^)]*\)|`\s*mktemp\b[^`]*`")
+SEPARATORS = {";", "&&", "||", "|", "|&", "&", "(", ")", "\n"}
+REDIRECTS = {">", ">>", ">|", "&>", "&>>"}
+PREFIXES = {"sudo", "env", "command", "nohup", "time", "then", "do", "else", "if", "while", "until", "!", "{"}
+FILE_COMMANDS = {"mv", "rm", "rmdir", "mkdir", "touch", "truncate", "tee"}
+MODE_COMMANDS = {"chmod", "chown"}
+COPY_COMMANDS = {"cp", "install", "ln"}
+PUSH = re.compile(r"\bgit\b(?:\s+(?:-[Cc]\s+\S+|--\S+))*\s+push\b|\bgh\s+(?:pr|issue|release|api)\b")
 
 
 def data_dir():
@@ -103,12 +128,106 @@ def current_skill(transcript):
     return skill
 
 
-def log(decision, agent_type, skill):
+def temp_path(path):
+    """Whether a path sits in a temporary folder, with no `..` to climb out of it."""
+    path = os.path.expandvars(path)
+    tmpdir = os.environ.get("TMPDIR", "").rstrip("/")
+    inside = bool(TEMP_ROOT.match(path)) or bool(tmpdir and (path == tmpdir or path.startswith(tmpdir + "/")))
+    return inside and ".." not in path.split("/")
+
+
+def segments(command):
+    """The simple commands of a command line, as token lists, its heredoc bodies and quotes resolved."""
+    bare = measure.HEREDOC.sub(lambda m: m.group(3) + "\n", command)
+    names = set(re.findall(r"\b(\w+)=[\"']?(?:" + MKTEMP.pattern + ")", bare)) | {"TMPDIR"}
+    bare = MKTEMP.sub("/tmp/mktemp", bare)
+    for name in names:
+        bare = re.sub(r"\$\{?" + name + r"\}?(?!\w)", "/tmp/mktemp", bare)
+    lex = shlex.shlex(bare, posix=True, punctuation_chars="();<>|&\n")
+    lex.whitespace = " \t\r"
+    lex.whitespace_split = True
+    seg = []
+    for tok in lex:
+        if tok in SEPARATORS:
+            if seg:
+                yield seg
+            seg = []
+        else:
+            seg.append(tok)
+    if seg:
+        yield seg
+
+
+def targets(seg, writes):
+    """What a simple command writes to: its paths, "." for the folder it runs in, or None for a remote."""
+    out, args, skip = [], [], False
+    for i, tok in enumerate(seg):
+        if skip:
+            skip = False
+        elif tok in REDIRECTS or tok == ">&" and i + 1 < len(seg) and not seg[i + 1].isdigit():
+            if i + 1 < len(seg) and not seg[i + 1].startswith("/dev/"):
+                out.append(seg[i + 1])
+            skip = True
+        elif tok in ("<", "<<<", ">&", "<&"):
+            skip = True
+        else:
+            args.append(tok)
+    while args and (args[0] in PREFIXES or re.match(r"^\w+=", args[0])):
+        args.pop(0)
+    if not args:
+        return out
+    cmd, rest = os.path.basename(args[0]), [a for a in args[1:] if not a.startswith("-")]
+    line = " ".join(args)
+    if PUSH.search(line) and writes(shlex.join(args)):
+        return None
+    if cmd in FILE_COMMANDS:
+        out += rest
+    elif cmd in MODE_COMMANDS:
+        out += rest[1:]
+    elif cmd in COPY_COMMANDS:
+        out += rest[-1:]
+    elif cmd == "dd":
+        out += [a[3:] for a in args if a.startswith("of=")]
+    elif cmd == "git":
+        if writes(shlex.join(args)):
+            c = [args[i + 1] for i, a in enumerate(args[:-1]) if a == "-C"]
+            out += c or ["."]
+    elif cmd in ("sed", "gsed", "perl") and any(re.match(r"^-[a-zA-Z]*i", a) for a in args[1:]):
+        out += rest if any(a in ("-e", "-f") for a in args) else rest[1:]
+    elif writes(shlex.join(args)) or writes(line):
+        out.append(".")
+    return out
+
+
+def bash_writes_outside_temp(command, cwd):
+    """Whether a command writes, per measure's bash_writes, somewhere other than a temporary folder."""
+    if not measure.bash_writes(command):
+        return False
+    here = temp_path(cwd or "")
+    for seg in segments(command):
+        words = [t for t in seg if not re.match(r"^\w+=", t) and t not in PREFIXES]
+        if words[:1] == ["cd"]:
+            dest = next((a for a in words[1:] if not a.startswith("-")), "")
+            here = temp_path(dest) or (here and not dest.startswith(("/", "~", "$")) and ".." not in dest.split("/"))
+            continue
+        out = targets(seg, measure.bash_writes)
+        if out is None:
+            return True
+        for t in out:
+            if temp_path(t):
+                continue
+            if here and not t.startswith(("/", "~", "$")) and ".." not in t.split("/"):
+                continue
+            return True
+    return False
+
+
+def log(decision, agent_type, skill, tool):
     try:
         d = data_dir()
         d.mkdir(parents=True, exist_ok=True)
         ts = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        event = {"ts": ts, "decision": decision, "agent_type": agent_type, "skill": skill}
+        event = {"ts": ts, "decision": decision, "tool": tool, "agent_type": agent_type, "skill": skill}
         with open(d / "guard-agent-type.jsonl", "a") as f:
             f.write(json.dumps(event) + "\n")
     except Exception as e:  # noqa: BLE001 - a failed log never changes the decision
@@ -123,17 +242,34 @@ def main():
         payload = json.loads(sys.stdin.read())
     except ValueError:
         return 0
-    if not isinstance(payload, dict) or payload.get("tool_name") not in ("Agent", "Task"):
+    if not isinstance(payload, dict):
         return 0
-    agent_type = str((payload.get("tool_input") or {}).get("subagent_type") or "").strip()
-    if agent_type not in CATCH_ALL:
+    tool = payload.get("tool_name")
+    if tool in ("Agent", "Task"):
+        agent_type = str((payload.get("tool_input") or {}).get("subagent_type") or "").strip()
+        if agent_type not in CATCH_ALL:
+            return 0
+        reason = REASON.format(type=agent_type or "no subagent_type")
+    elif tool == "Bash":
+        agent_type = str(payload.get("agent_type") or "")
+        if measure is None or not agent_type.startswith("delegation:"):
+            return 0
+        try:
+            if not bash_writes_outside_temp(
+                str((payload.get("tool_input") or {}).get("command") or ""), payload.get("cwd")
+            ):
+                return 0
+        except Exception:  # noqa: BLE001 - an unreadable command never blocks by mistake
+            return 0
+        reason = BASH_REASON.format(type=agent_type)
+    else:
         return 0
     if m == "block":
-        reason = REASON.format(type=agent_type or "no subagent_type")
         out = {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}
         print(json.dumps({"hookSpecificOutput": out}), flush=True)
     # The decision is out before the log, which may fail without changing it.
-    log("would-block" if m == "log" else "block", agent_type, current_skill(payload.get("transcript_path")))
+    skill = current_skill(payload.get("transcript_path")) if tool != "Bash" else None
+    log("would-block" if m == "log" else "block", agent_type, skill, "Bash" if tool == "Bash" else "Agent")
     return 0
 
 

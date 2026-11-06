@@ -22,15 +22,20 @@ Each is called as `delegation:<role>`, beside the built-in `Explore`, which stay
 | `reviewer` | review a diff without the briefing session's reasoning; verified findings at `file:line` | Read, Grep, Glob, Bash | opus, high |
 | `skeptic` | try to break a plan or a design; the objections that hold, or none | Read, Grep, Glob, Bash, WebSearch, WebFetch | fable, high |
 
-Every report opens with `Status` (`done`, `partial`, `blocked`) and closes with `Unverified` and `Verify` (the one check that lets the briefing session trust it); the fields between depend on the role and are written in full in each agent file. Bash stays read-only by instruction alone, not by the allow-list: nothing enforces it. A `permissions.deny` rule on the write commands would bind the main session too, the one meant to write, commit and push. The allow-list bounds the built-in tools, not a tool another plugin injects: on Claude Code 2.1.318, each agent also listed the handover plugin's `SubagentHandback`. Read-only then rests on each such tool being read-only too. A plugin agent ignores `permissionMode`, `hooks` and `mcpServers` in its frontmatter.
+Every report opens with `Status` (`done`, `partial`, `blocked`) and closes with `Unverified` and `Verify` (the one check that lets the briefing session trust it); the fields between depend on the role and are written in full in each agent file. Their Bash stays read-only by instruction, and the guard hook below catches what breaks it: a `permissions.deny` rule on the write commands would bind the main session too, the one meant to write, commit and push, while the hook reads the calling agent's type. The allow-list bounds the built-in tools, not a tool another plugin injects: on Claude Code 2.1.318, each agent also listed the handover plugin's `SubagentHandback`. Read-only then rests on each such tool being read-only too. A plugin agent ignores `permissionMode`, `hooks` and `mcpServers` in its frontmatter.
 
 ## Guard
 
-The `guard-agent-type` hook watches Agent calls of no type, `general-purpose`, `claude` or `fork`: a catch-all subagent starts on a large context with every tool. Its `guard_mode` option sets what it does:
+The `guard-agent-type` hook watches two kinds of call:
+
+- an Agent call of no type, `general-purpose`, `claude` or `fork`: a catch-all subagent starts on a large context with every tool;
+- a Bash command of one of this plugin's agents (`agent_type` `delegation:*`) that writes, by the definition M2 uses (a redirection, a file command, an in-place edit, a git or gh write, a script's write). Writes that all land in a temporary folder (a `mktemp -d` one, `$TMPDIR`, `/tmp`) go through: the agents' throwaway reproductions. A push or a gh write is caught even there. The main session's commands and other agents' are never touched.
+
+Its `guard_mode` option sets what it does with both:
 
 - `off` (the default): nothing; installing the plugin changes no call.
-- `log`: the call goes through, and a would-block event (time, agent type, the skill running in the turn) is appended to `guard-agent-type.jsonl` in the plugin's data folder. `measure` counts them as M9 would-block, by skill and type, so a caller that still spawns catch-all agents shows up before `block` is turned on.
-- `block`: the call is refused, its reason naming the typed roles; the refusal is logged, and `measure` counts it as M9 blocked.
+- `log`: the call goes through, and a would-block event (time, tool, agent type, and for an Agent call the skill running in the turn) is appended to `guard-agent-type.jsonl` in the plugin's data folder. `measure` counts the Agent ones as M9 would-block, by skill and type, and the Bash ones as M9b, by agent type, so a caller that still spawns catch-all agents, or an agent that still writes, shows up before `block` is turned on.
+- `block`: the call is refused, its reason naming the typed roles (Agent) or the `mktemp -d` way and the report (Bash); the refusal is logged, and `measure` counts it as M9 or M9b blocked.
 
 Set it in `settings.json`:
 
@@ -63,6 +68,7 @@ It reads `<config>/projects` (`CLAUDE_CONFIG_DIR`, else `~/.claude`), or `--proj
 | M6 | Delegated results the main session re-checked | files a subagent read, opened again afterwards |
 | M7 | MCP result volume, by server and tool | the tool results |
 | M9 | Catch-all calls the `guard-agent-type` hook caught: would-block (`log` mode) and blocked (`block` mode), by caller skill and type | its event log, when there is one |
+| M9b | The plugin's agents' Bash writes the same hook caught, would-block and blocked, by agent type | the same log |
 
 A token count reads a message's usage once, though the transcript repeats it on each record the message is split into (one per content block, same `message.id`). A percentile (p75, p90) is the nearest rank, the value at rank ⌈p × n / 100⌉ of the sorted values; a median is the middle value, or the mean of the two middle values of an even count.
 
