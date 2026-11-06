@@ -39,7 +39,7 @@ A snapshot holds aggregates only: counts, sizes, shares, and the names of tools,
 
 ## Evals (M8)
 
-`evals/` holds eight `claude plugin eval` cases on a small fixture repo (`evals/fixture.sh`, copied into each case): four read tasks that should go to a role (`Explore` as scout, `investigator`, `reviewer`, `skeptic`) and write nothing, and four write tasks the main session should write itself, with no `general-purpose`, `claude`, `fork` or untyped agent. M8 is the share of cases that pass. The runs spend tokens, and the fixture runs as you (`--scaffold`):
+`evals/` holds eight `claude plugin eval` cases on a small fixture repo (`evals/fixture.sh`, copied into each case): four read tasks that should go to a role (`Explore` as scout, `investigator`, `reviewer`, `skeptic`) and write nothing (no Edit, no Write, no Bash write), and four write tasks the main session should write itself (an Edit or a Write call, tools no role has), with no `general-purpose`, `claude`, `fork` or untyped agent. M8 is the share of cases that pass. The runs spend tokens, and the fixture runs as you (`--scaffold`):
 
 ```
 claude plugin eval plugins/delegation --ablation none --runs 2 --scaffold --trust-plugin \

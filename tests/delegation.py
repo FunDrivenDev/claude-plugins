@@ -5,6 +5,7 @@ transcript content."""
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -237,6 +238,45 @@ class EvalCases(unittest.TestCase):
             self.assertIn("scaffold_script: fixture.sh", (d / "case.yaml").read_text(), d.name)
             self.assertEqual((d / "fixture.sh").read_text(), fixture, f"{d.name}/fixture.sh differs from evals/")
             self.assertTrue(list((d / "graders").glob("*.md")), d.name)
+
+    def grader(self, path):
+        meta = {}
+        for line in path.read_text().split("---")[1].strip().splitlines():
+            key, _, value = line.partition(":")
+            value = value.strip()
+            meta[key.strip()] = value[1:-1].replace("''", "'") if value.startswith("'") else value
+        return meta
+
+    def graders(self, case):
+        return [self.grader(p) for p in sorted((case / "graders").glob("*.md"))]
+
+    def test_a_read_case_refuses_every_write_path(self):
+        # Bash is allowed in the read cases, so a write through it fails the case like an Edit or a Write.
+        bash = (self.EVALS / "read-map-config-to-scout" / "graders" / "no-bash-write.md").read_text()
+        for d in self.cases():
+            if d.name.startswith("read-"):
+                refused = {g["tool"] for g in self.graders(d) if g.get("type") == "tool_used" and g.get("max") == "0"}
+                self.assertLessEqual({"Edit", "Write", "Bash"}, refused, d.name)
+                self.assertEqual((d / "graders" / "no-bash-write.md").read_text(), bash, d.name)
+        pattern = re.compile(
+            self.grader(self.EVALS / "read-map-config-to-scout" / "graders" / "no-bash-write.md")["input_match"]
+        )
+        # The grader matches the JSON input with one regex: a script's own writes and a quoted `>` are out of its
+        # reach, which the measure's own check (BashWrites) covers.
+        writes = [c for c in BashWrites.WRITES if not c.startswith("python3")]
+        reads = [c for c in BashWrites.READS if c.startswith(("cat", "ls", "cmd", "git", "sed", "jq", "gh", "find"))]
+        as_input = lambda c: json.dumps({"command": c, "description": "d"})
+        self.assertEqual([c for c in writes if not pattern.search(as_input(c))], [])
+        self.assertEqual([c for c in reads if pattern.search(as_input(c))], [])
+
+    def test_a_write_case_needs_a_write_by_the_main_session(self):
+        # Edit and Write belong to no role, so a call to either is the main session writing, not a delegated agent.
+        for d in self.cases():
+            if d.name.startswith("write-"):
+                wrote = [
+                    g for g in self.graders(d) if g.get("type") == "tool_used" and g.get("tool") in ("Edit", "Write")
+                ]
+                self.assertTrue([g for g in wrote if int(g.get("min", "1")) >= 1], d.name)
 
     def test_read_and_write_cases_are_balanced(self):
         kinds = [d.name.split("-")[0] for d in self.cases()]
