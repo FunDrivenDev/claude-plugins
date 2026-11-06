@@ -29,6 +29,12 @@
       "description": "Workflow tooling: wrap-up report (artifact, Bear, Slack), mental-model pages, MCP server audit, Claude config audit, and local-LLM setup advice",
       "source": "./plugins/tools",
       "category": "productivity"
+    },
+    {
+      "name": "delegation",
+      "description": "Measure how sessions delegate to subagents and where the main session's context goes: snapshots of a date window and a before/after compare",
+      "source": "./plugins/delegation",
+      "category": "productivity"
     }
   ]
 }
