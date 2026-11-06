@@ -160,6 +160,70 @@ class Snapshot(unittest.TestCase):
         self.assertEqual(g, {"would_block": 1, "by_skill": {"s": 1}, "by_type": {"general-purpose": 1}})
 
 
+class BashWrites(unittest.TestCase):
+    """M2 counts a Bash call that changes a file, the repo or a remote; Bash is the only write path of a
+    read-only agent, so each common form is caught, and each common read stays a read."""
+
+    WRITES = (
+        "cat > a.py <<'EOF'\nprint(1)\nEOF",
+        "echo x > f",
+        "echo x >> notes.txt",
+        "printf '%s' x>f",
+        "ls 2> err.log",
+        "cmd &> out.log",
+        "printf x | tee f",
+        "make | tee -a build.log",
+        "mv a b",
+        "cd src && cp a b",
+        "rm -rf build",
+        "find . -name '*.tmp' | xargs rm",
+        "mkdir -p out; touch out/x",
+        "sed -i '' 's/a/b/' f",
+        "sed -E -i 's/a/b/' f",
+        "perl -pi -e 's/a/b/' f",
+        "git commit -m x",
+        "git -C repo push origin main",
+        "git -c user.name=x commit -m m",
+        "git --no-pager -C r add -A",
+        "git checkout -b fix",
+        "git stash",
+        "git reset --hard HEAD~1",
+        "gh pr create --draft",
+        "gh issue comment 3 --body x",
+        "gh api repos/o/r/labels -X POST -f name=x",
+        "python3 -c \"open('f', 'w').write('x')\"",
+        'python3 -c \'import pathlib; pathlib.Path("f").write_text("x")\'',
+    )
+    READS = (
+        "cat f",
+        "ls 2>/dev/null",
+        "cmd 2>&1 | head -5",
+        "cmd >/dev/null 2>&1",
+        "grep -c '=>' f",
+        "grep 'a > b' f",
+        'echo "x > y"',
+        "git -C repo log --oneline -3",
+        "git diff main...HEAD",
+        "git stash list",
+        "sed -n 1,20p f",
+        "jq '.a' f",
+        "python3 -c 'print(1 if 2 > 1 else 0)'",
+        "python3 - <<'EOF'\nprint(2 > 1)\nEOF",
+        "gh pr view 3 --json title",
+        "gh api repos/o/r/pulls",
+        "[[ $a -gt 3 ]] && echo big",
+        "find . -name '*.py' -exec grep -l x {} +",
+    )
+
+    def test_each_write_form_counts_as_a_write(self):
+        missed = [c for c in self.WRITES if not M.bash_writes(c)]
+        self.assertEqual(missed, [])
+
+    def test_reads_do_not_count_as_writes(self):
+        flagged = [c for c in self.READS if M.bash_writes(c)]
+        self.assertEqual(flagged, [])
+
+
 class EvalCases(unittest.TestCase):
     EVALS = SCRIPT.parent.parent / "evals"
 

@@ -26,7 +26,7 @@ Compare windows of the same length (the two weeks before a change against the tw
 Show the tables as they are, then read them in a few sentences:
 
 - **M1, typed share**: agent calls naming a role, against `general-purpose`, `claude`, `fork` or no type. Low means delegation goes to catch-all agents.
-- **M2, delegated writes**: subagents that edited, wrote, committed or pushed. Writes belong in the main session, which holds the decisions.
+- **M2, delegated writes**: subagents that edited or wrote, through the file tools or Bash (a redirection, `tee`, `mv`, `rm`, `sed -i`, a commit, a push). Writes belong in the main session, which holds the decisions.
 - **M3, starting context**: a subagent's first request, by type. A custom agent above `Explore` loads more than it needs (CLAUDE.md, rules, tools).
 - **M4, main peak context**: median, p90 and sessions above 150k tokens.
 - **M5, large results**: share of tool output in results above 20k characters, and re-reads of a file unchanged since its last read.

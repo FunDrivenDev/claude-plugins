@@ -29,7 +29,33 @@ AGENT_TOOLS = {"Agent", "Task"}
 UNTYPED = {"(untyped)", "general-purpose", "claude", "fork"}
 LARGE_RESULT = 20000
 HEAVY_READ = 100000
-BASH_WRITE = re.compile(r"git( -C \S+)? (commit|push)\b|\bgh pr (create|edit|merge)\b|\bsed -i\b")
+# Bash writes, read on the command with its quoted strings and heredoc bodies taken out: a redirection to a
+# file (not /dev/null nor another descriptor), a file command at a command's start, an in-place edit, a git
+# or gh verb that changes the repo or the remote.
+CMD_START = r"(?:^|[;&|(`]|\b(?:xargs|sudo|then|do|else)\b)\s*"
+BASH_WRITE = re.compile(
+    r"(?:^|[^-=<>!\d&])(?:\d|&)?>>?(?![&>=])\s*(?!/dev/(?:null|stdout|stderr)\b)[^\s;&|)]"
+    r"|\|\s*tee\b(?!\s+/dev/null\b)"
+    + rf"|{CMD_START}(?:mv|cp|rm|rmdir|mkdir|touch|ln|chmod|chown|truncate|install|dd)(?:\s|$)"
+    + r"|\b(?:g?sed|perl)\s+(?:-[^\si]*\s+|'[^']*'\s+)*-[a-zA-Z]*i"
+    r"|\bgit\b(?:\s+(?:-[Cc]\s+\S+|--\S+))*\s+(?:commit|push|pull|merge|rebase|reset|revert|cherry-pick|am|apply"
+    r"|add|rm|mv|restore|clean|checkout|switch|tag\s+(?!-l\b)\S|stash(?!\s+(?:list|show)\b))\b"
+    r"|\bgh\s+(?:pr|issue)\s+(?:create|edit|merge|close|reopen|ready|comment|review)\b"
+    r"|\bgh\s+release\s+create\b|\bgh\s+api\b.*(?:-X|--method)\s*(?:POST|PUT|PATCH|DELETE)\b"
+)
+# A script's own writes, read on the raw command since they sit inside its quoted code.
+SCRIPT_WRITE = re.compile(r"\.write_(?:text|bytes)\(|\bopen\([^)]*,\s*['\"][wax]")
+QUOTED = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1([^\n]*)\n.*?(?:\n\2\s*(?:\n|$)|$)", re.DOTALL)
+
+
+def bash_writes(command):
+    """Whether a Bash command changes a file, the repo or a remote, as far as its text shows."""
+    if SCRIPT_WRITE.search(command):
+        return True
+    bare = HEREDOC.sub(lambda m: m.group(3) + "\n", command)
+    return bool(BASH_WRITE.search(QUOTED.sub("''", bare)))
+
 
 CLASSES = [
     ("review", r"review|revue|relecture|audit|verif|vérif|check\b|critique|adversar|judge|disprove|prove"),
@@ -178,7 +204,7 @@ def subagent(meta):
                     report = len(json.dumps(inp))
                 if t["name"] == "Read" and inp.get("file_path"):
                     files.add(inp["file_path"])
-                if t["name"] == "Bash" and BASH_WRITE.search(inp.get("command", "")):
+                if t["name"] == "Bash" and bash_writes(inp.get("command", "")):
                     bash_writes += 1
     writes = sum(tools[t] for t in WRITE_TOOLS) + bash_writes
     return m.get("toolUseId"), {
