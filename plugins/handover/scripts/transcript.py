@@ -95,7 +95,8 @@ def last_assistant_text(path):
 
 AGENT_MESSAGE_RE = re.compile(r'<agent-message from="([\w-]+)"')
 TASK_ID_RE = re.compile(r"<task-notification>\s*<task-id>([\w-]+)</task-id>")
-# A notice whose report comes as the agent's hand-back message, delivered right after it.
+# A notice whose report comes as the agent's hand-back message, delivered just before it (the usual order) or
+# just after it.
 HANDBACK_RE = re.compile(
     r"<task-notification>(?:(?!</task-notification>).)*?delivered to you as a message from", re.DOTALL
 )
@@ -105,7 +106,8 @@ def notifications_due(path):
     """Subagents whose message reached the session after their last task notification, read from the file tail.
 
     A subagent's report can come in before the notice of its end, which then starts one more turn. A hand-back
-    report comes after a notice announcing it: that message is the end, with no notice to wait for."""
+    message usually comes in before its notice, which then clears the wait as any notice does; when the notice
+    comes first, it announces that message, which is then the end, with no notice to wait for."""
     try:
         size = os.path.getsize(path)
     except OSError:
@@ -135,9 +137,10 @@ def notifications_due(path):
         found += [(m.start(), "notice", m.group(1)) for m in TASK_ID_RE.finditer(text)]
         for at, kind, aid in sorted(found):
             if kind == "notice":
-                due[aid] = False
-                if at in handbacks:
+                # A hand-back notice announces its message only when that message has not come in yet.
+                if at in handbacks and not due.get(aid):
                     announced.add(aid)
+                due[aid] = False
             elif aid in announced:
                 announced.discard(aid)
             else:

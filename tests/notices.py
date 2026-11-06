@@ -57,6 +57,12 @@ class NoticesDue(unittest.TestCase):
         # A resumed agent writes again after its first notice: its next notice is still to come.
         self.assertEqual(T.notifications_due(transcript(notice(AID), message(AID))), [AID])
 
+    def test_a_hand_back_whose_message_came_first_still_waits_after_a_resume(self):
+        # The common order: the hand-back message, then its notice; the notice then announces nothing to come,
+        # so the resumed agent's next message waits for its own notice.
+        texts = (message(AID, handback=True), notice(AID, handback=True), message(AID))
+        self.assertEqual(T.notifications_due(transcript(*texts)), [AID])
+
     def test_an_announcement_covers_one_message_only(self):
         texts = (notice(AID, handback=True), message(AID, handback=True), message(AID))
         self.assertEqual(T.notifications_due(transcript(*texts)), [AID])
