@@ -26,7 +26,7 @@ It reads `<config>/projects` (`CLAUDE_CONFIG_DIR`, else `~/.claude`), or `--proj
 
 | # | Metric | From |
 |---|---|---|
-| M1 | Share of agent calls naming a role (not `general-purpose`, `claude`, `fork`, untyped) | the Agent calls |
+| M1 | Share of the agents that ran naming a role (not `general-purpose`, `claude`, `fork`, untyped); a refused or failed Agent call stays out | the Agent calls and their results |
 | M2 | Delegated calls that wrote (Edit, Write, or a Bash write: a redirection to a file, `tee`, `mv`, `rm`, an in-place edit, a git or gh write) | the subagent transcripts |
 | M3 | Subagent starting context, by type | a subagent's first request |
 | M4 | Main peak context: median, p90, sessions above 150k | the main transcripts |

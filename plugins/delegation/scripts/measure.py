@@ -277,7 +277,7 @@ def session(path):
                 bash_calls[k] += 1
             if not edited and (name in READ_TOOLS or name == "Bash"):
                 read_before_edit += n
-            if name in AGENT_TOOLS:
+            if name in AGENT_TOOLS and not res.get("is_error"):  # a refused or failed call ran no agent
                 calls.append(
                     {
                         "id": t["id"],
@@ -472,7 +472,7 @@ def markdown(s):
         "",
         "| # | Metric | Value |",
         "|---|---|---|",
-        f"| M1 | Agent calls of a typed role | {a['typed']} of {a['calls']} ({pct(a['typed_share'])}) |",
+        f"| M1 | Agents that ran of a typed role | {a['typed']} of {a['calls']} ({pct(a['typed_share'])}) |",
         f"| M2 | Delegated calls that wrote | {a['wrote']} of {a['with_transcript']} with a transcript |",
         "| M3 | Subagent starting context, median by type | "
         + ", ".join(

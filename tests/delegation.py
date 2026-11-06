@@ -161,6 +161,30 @@ class Snapshot(unittest.TestCase):
         self.assertEqual(g, {"would_block": 1, "by_skill": {"s": 1}, "by_type": {"general-purpose": 1}})
 
 
+class RefusedAgentCalls(unittest.TestCase):
+    """M1 counts the agents that ran: an Agent call whose result is an error (refused by the guard hook or by
+    permissions, or failed) stays out of it."""
+
+    def test_a_refused_catch_all_call_and_its_typed_retry_count_one_typed_agent(self):
+        projects = pathlib.Path(tempfile.mkdtemp()) / "projects"
+        ts = "2026-10-01T10:00:00Z"
+        refused = result(ts, "g1", 50)
+        refused["message"]["content"][0]["is_error"] = True
+        write(
+            projects / "-tmp-proj" / "s1.jsonl",
+            [
+                assistant(
+                    ts, [("g1", "Agent", {"subagent_type": "general-purpose", "description": "d", "prompt": "p"})]
+                ),
+                refused,
+                assistant(ts, [("e1", "Agent", {"subagent_type": "Explore", "description": "d", "prompt": "p"})]),
+                result(ts, "e1", 500),
+            ],
+        )
+        a = M.snapshot(projects)["agents"]
+        self.assertEqual((a["calls"], a["typed"], a["typed_share"]), (1, 1, 1.0))
+
+
 class BashWrites(unittest.TestCase):
     """M2 counts a Bash call that changes a file, the repo or a remote; Bash is the only write path of a
     read-only agent, so each common form is caught, and each common read stays a read."""
