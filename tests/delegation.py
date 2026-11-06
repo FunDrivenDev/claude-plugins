@@ -160,6 +160,26 @@ class Snapshot(unittest.TestCase):
         self.assertEqual(g, {"would_block": 1, "by_skill": {"s": 1}, "by_type": {"general-purpose": 1}})
 
 
+class EvalCases(unittest.TestCase):
+    EVALS = SCRIPT.parent.parent / "evals"
+
+    def cases(self):
+        return sorted(d for d in self.EVALS.iterdir() if d.is_dir() and d.name != "results")
+
+    def test_every_case_has_a_prompt_graders_and_the_shared_fixture(self):
+        fixture = (self.EVALS / "fixture.sh").read_text()
+        for d in self.cases():
+            self.assertTrue((d / "prompt.md").exists(), d.name)
+            self.assertIn("scaffold_script: fixture.sh", (d / "case.yaml").read_text(), d.name)
+            self.assertEqual((d / "fixture.sh").read_text(), fixture, f"{d.name}/fixture.sh differs from evals/")
+            self.assertTrue(list((d / "graders").glob("*.md")), d.name)
+
+    def test_read_and_write_cases_are_balanced(self):
+        kinds = [d.name.split("-")[0] for d in self.cases()]
+        self.assertEqual(kinds.count("read"), kinds.count("write"))
+        self.assertGreaterEqual(len(kinds), 6)
+
+
 class Cli(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

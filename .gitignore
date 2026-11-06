@@ -4,3 +4,5 @@ plugins/*/.claude-plugin/types/
 # Python bytecode from the handover plugin's scripts
 __pycache__/
 *.pyc
+# Results of claude plugin eval runs
+plugins/*/evals/results/

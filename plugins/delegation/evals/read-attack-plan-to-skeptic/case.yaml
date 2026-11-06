@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: read-attack-plan-to-skeptic
+context:
+  scaffold_script: fixture.sh
