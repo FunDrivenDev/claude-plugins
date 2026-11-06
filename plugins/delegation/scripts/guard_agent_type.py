@@ -97,12 +97,12 @@ def log(decision, agent_type, skill):
     try:
         d = data_dir()
         d.mkdir(parents=True, exist_ok=True)
-        ts = dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ts = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         event = {"ts": ts, "decision": decision, "agent_type": agent_type, "skill": skill}
         with open(d / "guard-agent-type.jsonl", "a") as f:
             f.write(json.dumps(event) + "\n")
-    except OSError:
-        pass
+    except Exception as e:  # noqa: BLE001 - a failed log never changes the decision
+        print(f"guard-agent-type: the event was not logged: {e}", file=sys.stderr)
 
 
 def main():
@@ -118,11 +118,12 @@ def main():
     agent_type = str((payload.get("tool_input") or {}).get("subagent_type") or "").strip()
     if agent_type not in CATCH_ALL:
         return 0
-    log("would-block" if m == "log" else "block", agent_type, current_skill(payload.get("transcript_path")))
     if m == "block":
         reason = REASON.format(type=agent_type or "no subagent_type")
         out = {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}
-        print(json.dumps({"hookSpecificOutput": out}))
+        print(json.dumps({"hookSpecificOutput": out}), flush=True)
+    # The decision is out before the log, which may fail without changing it.
+    log("would-block" if m == "log" else "block", agent_type, current_skill(payload.get("transcript_path")))
     return 0
 
 

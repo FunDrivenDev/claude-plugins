@@ -17,6 +17,10 @@ sys.path.insert(0, str(HOOK.parent))
 
 import measure as M
 
+# The hook runs as `python3`, which on macOS can be the system one (3.9): run it there when it exists.
+SYSTEM_PYTHON = pathlib.Path("/usr/bin/python3")
+HOOK_PYTHON = str(SYSTEM_PYTHON) if SYSTEM_PYTHON.exists() else sys.executable
+
 
 class Guard(unittest.TestCase):
     def setUp(self):
@@ -45,7 +49,7 @@ class Guard(unittest.TestCase):
             "session_id": "s-1",
         }
         r = subprocess.run(
-            [sys.executable, str(HOOK)],
+            [HOOK_PYTHON, "-B", str(HOOK)],
             input=json.dumps(payload),
             capture_output=True,
             text=True,
@@ -137,7 +141,7 @@ class Guard(unittest.TestCase):
         self.transcript.write_text("not json\n")
         self.assertIsNone(self.run_hook("Explore", CLAUDE_PLUGIN_OPTION_GUARD_MODE="block"))
         r = subprocess.run(
-            [sys.executable, str(HOOK)],
+            [HOOK_PYTHON, "-B", str(HOOK)],
             input="{",
             capture_output=True,
             text=True,
