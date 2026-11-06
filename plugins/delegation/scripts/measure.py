@@ -342,17 +342,24 @@ def session(path):
 
 
 def guard_events(path, since, until):
-    """Would-block events of the guard-agent-type hook in log mode, by caller skill and agent type."""
-    by_skill, by_type, n = Counter(), Counter(), 0
+    """Catch-all calls the guard-agent-type hook caught: would-block events (log mode, the call went through) and
+    blocked ones (block mode, refused), and both together by caller skill and agent type."""
+    by_skill, by_type, n = Counter(), Counter(), Counter()
     if not path or not pathlib.Path(path).exists():
         return None
     for r in records(path):
-        if r.get("decision") != "would-block" or not in_window(local_date(r.get("ts", "")), since, until):
+        decision = r.get("decision")
+        if decision not in ("would-block", "block") or not in_window(local_date(r.get("ts", "")), since, until):
             continue
-        n += 1
+        n[decision] += 1
         by_skill[r.get("skill") or "(none)"] += 1
         by_type[r.get("agent_type") or "(untyped)"] += 1
-    return {"would_block": n, "by_skill": dict(by_skill.most_common()), "by_type": dict(by_type.most_common())}
+    return {
+        "would_block": n["would-block"],
+        "blocked": n["block"],
+        "by_skill": dict(by_skill.most_common()),
+        "by_type": dict(by_type.most_common()),
+    }
 
 
 def snapshot(projects, since=None, until=None, guard_log=None):
@@ -526,7 +533,8 @@ def markdown(s):
         ),
     ]
     if s.get("guard") is not None:
-        out.append(f"| M9 | Hook would-block events | {s['guard']['would_block']} |")
+        g = s["guard"]
+        out.append(f"| M9 | Hook events: would-block {g['would_block']}, blocked {g.get('blocked', 0)} |")
     out += [
         "",
         "## Agent calls by type",
@@ -585,7 +593,7 @@ def markdown(s):
         g = s["guard"]
         out += [
             "",
-            "## Hook would-block events",
+            "## Hook events (would-block and blocked)",
             "",
             "By caller skill: " + (", ".join(f"{n} {c}" for n, c in g["by_skill"].items()) or "none"),
             "",
@@ -610,6 +618,7 @@ HEADLINES = [
     ("M7 MCP chars", ("mcp", "total_chars")),
     ("M7 MCP share", ("mcp", "share")),
     ("M9 would-block", ("guard", "would_block")),
+    ("M9 blocked", ("guard", "blocked")),
     ("main sessions", ("sessions", "main")),
 ]
 

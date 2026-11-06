@@ -32,6 +32,6 @@ Show the tables as they are, then read them in a few sentences:
 - **M5, large results**: share of tool output in results above 20k characters, and re-reads of a file unchanged since its last read.
 - **M6, re-checked**: delegated calls whose files the main session opened again afterwards. Stable or up for review roles; very high for a scout means its reports are not trusted.
 - **M7, MCP volume**: result characters by server and tool.
-- **M9, hook would-blocks**: events of the `guard-agent-type` hook in `log` mode, by caller skill, when its log exists.
+- **M9, hook events**: catch-all calls the `guard-agent-type` hook caught, would-block (`log` mode, let through) and blocked (`block` mode, refused), by caller skill, when its log exists. Blocked at 0 under `block` means no caller still asks for a catch-all agent.
 
 A snapshot holds no prompt, description, title, path or result text, so one taken on a work machine can be shared; the Markdown names only tools, agent types and skills.

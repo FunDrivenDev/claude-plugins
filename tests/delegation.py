@@ -155,11 +155,28 @@ class Snapshot(unittest.TestCase):
                     "skill": "s",
                 },
                 {"ts": "2026-10-02T09:00:00Z", "decision": "allow", "agent_type": "Explore"},
+                {"ts": "2026-10-03T09:00:00Z", "decision": "block", "agent_type": "", "skill": "s"},
                 {"ts": "2026-11-20T09:00:00Z", "decision": "would-block", "agent_type": "claude"},
+                {"ts": "2026-11-20T09:00:00Z", "decision": "block", "agent_type": "fork"},
             ],
         )
         g = M.snapshot(self.projects, M.to_date("2026-09-01"), M.to_date("2026-10-31"), str(log))["guard"]
-        self.assertEqual(g, {"would_block": 1, "by_skill": {"s": 1}, "by_type": {"general-purpose": 1}})
+        self.assertEqual(
+            g,
+            {
+                "would_block": 1,
+                "blocked": 1,
+                "by_skill": {"s": 2},
+                "by_type": {"general-purpose": 1, "(untyped)": 1},
+            },
+        )
+
+    def test_blocked_events_show_in_the_markdown_and_the_compare(self):
+        log = self.tmp / "guard.jsonl"
+        write(log, [{"ts": "2026-10-03T09:00:00Z", "decision": "block", "agent_type": "claude"}])
+        s = M.snapshot(self.projects, M.to_date("2026-09-01"), M.to_date("2026-10-31"), str(log))
+        self.assertIn("| M9 | Hook events: would-block 0, blocked 1 |", M.markdown(s))
+        self.assertIn("M9 blocked", [name for name, _ in M.HEADLINES])
 
 
 class RefusedAgentCalls(unittest.TestCase):

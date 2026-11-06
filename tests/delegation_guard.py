@@ -149,9 +149,10 @@ class Guard(unittest.TestCase):
     def test_measure_counts_the_events_the_hook_writes(self):
         self.run_hook("general-purpose", CLAUDE_PLUGIN_OPTION_GUARD_MODE="log")
         self.run_hook(None, CLAUDE_PLUGIN_OPTION_GUARD_MODE="log")
+        self.run_hook("fork", CLAUDE_PLUGIN_OPTION_GUARD_MODE="block")
         g = M.guard_events(str(self.data / "guard-agent-type.jsonl"), None, None)
-        self.assertEqual(g["would_block"], 2)
-        self.assertEqual(g["by_type"], {"general-purpose": 1, "(untyped)": 1})
+        self.assertEqual((g["would_block"], g["blocked"]), (2, 1))
+        self.assertEqual(g["by_type"], {"general-purpose": 1, "(untyped)": 1, "fork": 1})
 
 
 class Registration(unittest.TestCase):

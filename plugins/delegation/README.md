@@ -29,8 +29,8 @@ Every report opens with `Status` (`done`, `partial`, `blocked`) and closes with 
 The `guard-agent-type` hook watches Agent calls of no type, `general-purpose`, `claude` or `fork`: a catch-all subagent starts on a large context with every tool. Its `guard_mode` option sets what it does:
 
 - `off` (the default): nothing; installing the plugin changes no call.
-- `log`: the call goes through, and a would-block event (time, agent type, the skill running in the turn) is appended to `guard-agent-type.jsonl` in the plugin's data folder. `measure` counts them as M9, by skill and type, so a caller that still spawns catch-all agents shows up before `block` is turned on.
-- `block`: the call is refused, its reason naming the typed roles; the refusal is logged too.
+- `log`: the call goes through, and a would-block event (time, agent type, the skill running in the turn) is appended to `guard-agent-type.jsonl` in the plugin's data folder. `measure` counts them as M9 would-block, by skill and type, so a caller that still spawns catch-all agents shows up before `block` is turned on.
+- `block`: the call is refused, its reason naming the typed roles; the refusal is logged, and `measure` counts it as M9 blocked.
 
 Set it in `settings.json`:
 
@@ -62,7 +62,7 @@ It reads `<config>/projects` (`CLAUDE_CONFIG_DIR`, else `~/.claude`), or `--proj
 | M5 | Share of tool output in results above 20k characters; re-reads | the tool results |
 | M6 | Delegated results the main session re-checked | files a subagent read, opened again afterwards |
 | M7 | MCP result volume, by server and tool | the tool results |
-| M9 | Would-block events of the `guard-agent-type` hook in `log` mode | its event log, when there is one |
+| M9 | Catch-all calls the `guard-agent-type` hook caught: would-block (`log` mode) and blocked (`block` mode), by caller skill and type | its event log, when there is one |
 
 A token count reads a message's usage once, though the transcript repeats it on each record the message is split into (one per content block, same `message.id`). A percentile (p75, p90) is the nearest rank, the value at rank ⌈p × n / 100⌉ of the sorted values; a median is the middle value, or the mean of the two middle values of an even count.
 
