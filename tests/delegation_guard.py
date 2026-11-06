@@ -137,6 +137,31 @@ class Guard(unittest.TestCase):
         self.run_hook("fork", CLAUDE_PLUGIN_OPTION_GUARD_MODE="log")
         self.assertEqual([e["skill"] for e in self.events()], ["sweep", None, "x:y"])
 
+    def test_a_notice_or_a_shell_echo_is_no_new_prompt_and_keeps_the_skill(self):
+        # A background agent's notice, a `!` command's echo or another session's message arrive as user records:
+        # the skill that started the turn still runs.
+        records = [
+            {"type": "user", "message": {"role": "user", "content": "<command-name>/sweep</command-name>"}},
+            {"type": "user", "message": {"role": "user", "content": "<task-notification>\n<task-id>a1</task-id>"}},
+            {
+                "type": "user",
+                "origin": {"kind": "task-notification", "producer": "session-task"},
+                "message": {"role": "user", "content": "A background task finished."},
+            },
+            {"type": "user", "message": {"role": "user", "content": "<bash-stdout>ok</bash-stdout>"}},
+            {"type": "user", "message": {"role": "user", "content": "<local-command-stdout>x</local-command-stdout>"}},
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": 'Another Claude session sent a message:\n<agent-message from="p">',
+                },
+            },
+        ]
+        self.transcript.write_text("".join(json.dumps(r) + "\n" for r in records))
+        self.run_hook("general-purpose", CLAUDE_PLUGIN_OPTION_GUARD_MODE="log")
+        self.assertEqual([e["skill"] for e in self.events()], ["sweep"])
+
     def test_a_broken_input_or_transcript_never_blocks_a_call_by_mistake(self):
         self.transcript.write_text("not json\n")
         self.assertIsNone(self.run_hook("Explore", CLAUDE_PLUGIN_OPTION_GUARD_MODE="block"))

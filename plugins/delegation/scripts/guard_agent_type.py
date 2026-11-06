@@ -59,8 +59,15 @@ def normal(v):
     return v if v in MODES else "off"
 
 
+# User records that are not a prompt: a background agent's notice, a `!` command's echo, a local command's output,
+# another session's message. They arrive mid-turn and keep the skill that runs.
+NOT_A_PROMPT = ("<task-notification>", "<bash-", "<local-command-", "Another Claude session sent a message")
+
+
 def current_skill(transcript):
-    """The skill invoked since the session's last prompt (a Skill call or a slash command), else None."""
+    """The skill invoked since the session's last prompt (a Skill call or a slash command), else None.
+
+    Only a typed prompt starts a new turn: a record with an `origin` or one of NOT_A_PROMPT does not."""
     try:
         with open(transcript, "rb") as f:
             f.seek(0, os.SEEK_END)
@@ -85,7 +92,10 @@ def current_skill(transcript):
                 text = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
             if text is not None:
                 m = re.search(r"<command-name>/?([^<\s]+)</command-name>", text)
-                skill = m.group(1) if m else None
+                if m:
+                    skill = m.group(1)
+                elif not (r.get("origin") or text.lstrip().startswith(NOT_A_PROMPT)):
+                    skill = None
         elif r.get("type") == "assistant" and isinstance(content, list):
             for c in content:
                 if isinstance(c, dict) and c.get("type") == "tool_use" and c.get("name") == "Skill":
