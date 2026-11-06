@@ -402,6 +402,14 @@ class Agents(unittest.TestCase):
             self.assertEqual(meta["effort"], "high", name)
             self.assertEqual(meta["omitClaudeMd"], "true", name)
 
+    def test_the_investigator_reruns_only_a_failing_command_without_side_effects(self):
+        # A failed deploy, migration or POST is itself a write: it is reported as the repro, never rerun.
+        _, body = self.parse("investigator")
+        rules = " ".join(body.split("Stop when", 1)[0].split())
+        self.assertNotIn("the failing command itself:", rules)
+        self.assertIn("no side effect", rules)
+        self.assertIn("goes under `Repro`", rules)
+
     def test_each_report_opens_on_status_and_closes_on_unverified_then_verify(self):
         for name, _ in self.ROLES:
             _, body = self.parse(name)

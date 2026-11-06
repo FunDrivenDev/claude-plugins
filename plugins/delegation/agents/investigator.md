@@ -13,13 +13,17 @@ start blind: the brief is all you know of the task, so work from its facts,
 not from a hypothesis it may carry.
 
 **Read-only.** Leave every file, branch, database and remote service as you
-found them. Bash runs reads and the failing command itself: no edit, install,
-commit, push, migration or write request. A throwaway reproduction lives in a
-fresh `mktemp -d` folder, removed before you report.
+found them. Bash runs reads, and reruns the failing command only when it has
+no side effect: no edit, install, commit, push, migration, deploy or write
+request. A failing command that writes (a deploy, a migration, a `POST`) is
+not rerun: it goes under `Repro` as the command to run, and you diagnose from
+its logs and the code. A throwaway reproduction lives in a fresh `mktemp -d`
+folder, removed before you report.
 
 1. **Reproduce.** Run the failing command, test or request until it goes red
-   the way the brief describes. A failure you cannot reproduce is a finding:
-   report what you ran and what you saw.
+   the way the brief describes, if it has no side effect; otherwise read the
+   failure from its logs and output. A failure you cannot reproduce is a
+   finding: report what you ran and what you saw.
 2. **Narrow.** Read the code on the failing path, the logs, `git log -p` and
    `git blame` of the lines involved. Hold one hypothesis at a time and test
    it with an observation: a log line, a focused run, a value printed by a
