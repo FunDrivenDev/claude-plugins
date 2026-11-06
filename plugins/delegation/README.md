@@ -22,7 +22,7 @@ Each is called as `delegation:<role>`, beside the built-in `Explore`, which stay
 | `reviewer` | review a diff without the briefing session's reasoning; verified findings at `file:line` | Read, Grep, Glob, Bash | opus, high |
 | `skeptic` | try to break a plan or a design; the objections that hold, or none | Read, Grep, Glob, Bash, WebSearch, WebFetch | fable, high |
 
-Every report opens with `Status` (`done`, `partial`, `blocked`) and closes with `Unverified` and `Verify` (the one check that lets the briefing session trust it); the fields between depend on the role and are written in full in each agent file. Bash stays read-only by instruction, not by the allow-list: to enforce it, deny the write commands in your `permissions.deny`. A plugin agent ignores `permissionMode`, `hooks` and `mcpServers` in its frontmatter.
+Every report opens with `Status` (`done`, `partial`, `blocked`) and closes with `Unverified` and `Verify` (the one check that lets the briefing session trust it); the fields between depend on the role and are written in full in each agent file. Bash stays read-only by instruction alone, not by the allow-list: nothing enforces it. A `permissions.deny` rule on the write commands would bind the main session too, the one meant to write, commit and push. A plugin agent ignores `permissionMode`, `hooks` and `mcpServers` in its frontmatter.
 
 ## Measure
 

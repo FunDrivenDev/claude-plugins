@@ -410,6 +410,12 @@ class Agents(unittest.TestCase):
         self.assertIn("no side effect", rules)
         self.assertIn("goes under `Repro`", rules)
 
+    def test_the_readme_does_not_send_bash_rules_to_the_session_wide_deny_list(self):
+        # permissions.deny binds the main session too, which is the one meant to commit and push.
+        readme = " ".join((SCRIPT.parent.parent / "README.md").read_text().split())
+        self.assertNotIn("deny the write commands in your `permissions.deny`", readme)
+        self.assertIn("would bind the main session too", readme)
+
     def test_each_report_opens_on_status_and_closes_on_unverified_then_verify(self):
         for name, _ in self.ROLES:
             _, body = self.parse(name)
