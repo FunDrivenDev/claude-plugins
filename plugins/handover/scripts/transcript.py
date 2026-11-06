@@ -95,12 +95,17 @@ def last_assistant_text(path):
 
 AGENT_MESSAGE_RE = re.compile(r'<agent-message from="([\w-]+)"')
 TASK_ID_RE = re.compile(r"<task-notification>\s*<task-id>([\w-]+)</task-id>")
+# A notice whose report comes as the agent's hand-back message, delivered right after it.
+HANDBACK_RE = re.compile(
+    r"<task-notification>(?:(?!</task-notification>).)*?delivered to you as a message from", re.DOTALL
+)
 
 
 def notifications_due(path):
     """Subagents whose message reached the session after their last task notification, read from the file tail.
 
-    A subagent's report can come in before the notice of its end, which then starts one more turn."""
+    A subagent's report can come in before the notice of its end, which then starts one more turn. A hand-back
+    report comes after a notice announcing it: that message is the end, with no notice to wait for."""
     try:
         size = os.path.getsize(path)
     except OSError:
@@ -108,7 +113,7 @@ def notifications_due(path):
     with open(path, "rb") as f:
         f.seek(max(0, size - TAIL_BYTES))
         lines = f.read().decode("utf-8", "replace").splitlines()
-    due = {}
+    due, announced = {}, set()
     for line in lines:
         if "<agent-message" not in line and "<task-notification>" not in line:
             continue
@@ -125,10 +130,18 @@ def notifications_due(path):
             text = a["prompt"]
         else:
             continue
-        for m in AGENT_MESSAGE_RE.finditer(text):
-            due[m.group(1)] = True
-        for m in TASK_ID_RE.finditer(text):
-            due[m.group(1)] = False
+        handbacks = {m.start() for m in HANDBACK_RE.finditer(text)}
+        found = [(m.start(), "message", m.group(1)) for m in AGENT_MESSAGE_RE.finditer(text)]
+        found += [(m.start(), "notice", m.group(1)) for m in TASK_ID_RE.finditer(text)]
+        for at, kind, aid in sorted(found):
+            if kind == "notice":
+                due[aid] = False
+                if at in handbacks:
+                    announced.add(aid)
+            elif aid in announced:
+                announced.discard(aid)
+            else:
+                due[aid] = True
     return [aid for aid, d in due.items() if d]
 
 
