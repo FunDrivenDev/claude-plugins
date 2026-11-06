@@ -9,7 +9,7 @@ Typed read-only subagents for Claude Code, and a measure of how sessions delegat
 /plugin install delegation@fundrivendev
 ```
 
-Installing it adds four agents the main session can delegate to; the measure only reads transcripts when asked.
+Installing it adds four agents the main session can delegate to and a guard hook that is off until you set its mode; the measure only reads transcripts when asked.
 
 ## Agents
 
@@ -23,6 +23,22 @@ Each is called as `delegation:<role>`, beside the built-in `Explore`, which stay
 | `skeptic` | try to break a plan or a design; the objections that hold, or none | Read, Grep, Glob, Bash, WebSearch, WebFetch | fable, high |
 
 Every report opens with `Status` (`done`, `partial`, `blocked`) and closes with `Unverified` and `Verify` (the one check that lets the briefing session trust it); the fields between depend on the role and are written in full in each agent file. Bash stays read-only by instruction alone, not by the allow-list: nothing enforces it. A `permissions.deny` rule on the write commands would bind the main session too, the one meant to write, commit and push. The allow-list bounds the built-in tools, not a tool another plugin injects: on Claude Code 2.1.318, each agent also listed the handover plugin's `SubagentHandback`. Read-only then rests on each such tool being read-only too. A plugin agent ignores `permissionMode`, `hooks` and `mcpServers` in its frontmatter.
+
+## Guard
+
+The `guard-agent-type` hook watches Agent calls of no type, `general-purpose`, `claude` or `fork`: a catch-all subagent starts on a large context with every tool. Its `guard_mode` option sets what it does:
+
+- `off` (the default): nothing; installing the plugin changes no call.
+- `log`: the call goes through, and a would-block event (time, agent type, the skill running in the turn) is appended to `guard-agent-type.jsonl` in the plugin's data folder. `measure` counts them as M9, by skill and type, so a caller that still spawns catch-all agents shows up before `block` is turned on.
+- `block`: the call is refused, its reason naming the typed roles; the refusal is logged too.
+
+Set it in `settings.json`:
+
+```json
+"pluginConfigs": { "delegation@fundrivendev": { "options": { "guard_mode": "log" } } }
+```
+
+`DELEGATION_GUARD_MODE=off|log|block` in a session's environment overrides it for that session. Any error in the hook lets the call through.
 
 ## Measure
 
