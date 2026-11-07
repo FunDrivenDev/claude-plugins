@@ -8,7 +8,8 @@
   session's commands (no agent_type) and other agents' are never touched.
 
 Mode, from DELEGATION_GUARD_MODE (a session's override), else the plugin's guard_mode option (the hook environment,
-then settings.json), else off:
+then settings.json), else off. An invalid override is ignored with a one-line warning on stderr (exit 0: Claude Code
+shows it in verbose mode only, and the call is decided by the option); an invalid option is off:
 - off: nothing happens;
 - log: the call goes through, and a would-block event is appended to <plugin data>/guard-agent-type.jsonl;
 - block: the call is refused with what to do instead, and the refusal is logged.
@@ -64,9 +65,27 @@ def config_dir():
 
 
 def mode():
-    for v in (os.environ.get("DELEGATION_GUARD_MODE"), os.environ.get("CLAUDE_PLUGIN_OPTION_GUARD_MODE")):
-        if v and v.strip():
-            return normal(v)
+    """The session's override if it is a mode, else the option's mode. An invalid override is ignored with a warning:
+    a typo never turns block off. An invalid option is off."""
+    option = option_mode()
+    override = (os.environ.get("DELEGATION_GUARD_MODE") or "").strip()
+    if not override:
+        return option
+    if override.lower() in MODES:
+        return override.lower()
+    print(
+        f"guard-agent-type: DELEGATION_GUARD_MODE={override!r} is not off, log or block, so it is ignored; "
+        f"the guard_mode option applies: {option}",
+        file=sys.stderr,
+    )
+    return option
+
+
+def option_mode():
+    """The plugin's guard_mode option: the hook environment, then settings.json, else off."""
+    v = os.environ.get("CLAUDE_PLUGIN_OPTION_GUARD_MODE")
+    if v and v.strip():
+        return normal(v)
     try:
         configs = json.loads((config_dir() / "settings.json").read_text()).get("pluginConfigs") or {}
     except (OSError, ValueError):

@@ -57,6 +57,7 @@ class Hook(unittest.TestCase):
             check=False,
         )
         self.assertEqual(r.returncode, 0, r.stderr)
+        self.stderr = r.stderr
         return json.loads(r.stdout) if r.stdout.strip() else None
 
     def events(self):
@@ -107,8 +108,33 @@ class Guard(Hook):
         (self.config / "settings.json").write_text(json.dumps(settings))
         self.assertTrue(self.denied(self.run_hook("fork")))
 
-    def test_an_unknown_mode_falls_back_to_off(self):
+    def test_an_unknown_option_falls_back_to_off(self):
         self.assertIsNone(self.run_hook("claude", CLAUDE_PLUGIN_OPTION_GUARD_MODE="strict"))
+        self.assertEqual(self.events(), [])
+
+    def test_an_invalid_override_is_ignored_with_a_warning_and_the_option_applies(self):
+        self.assertTrue(
+            self.denied(self.run_hook("claude", CLAUDE_PLUGIN_OPTION_GUARD_MODE="block", DELEGATION_GUARD_MODE="blok"))
+        )
+        self.assertEqual(len(self.stderr.strip().splitlines()), 1, self.stderr)
+        self.assertIn("'blok'", self.stderr)
+        self.assertTrue(self.stderr.strip().endswith("option applies: block"), self.stderr)
+        self.assertIsNone(self.run_hook("claude", CLAUDE_PLUGIN_OPTION_GUARD_MODE="log", DELEGATION_GUARD_MODE="blok"))
+        self.assertEqual([e["decision"] for e in self.events()], ["block", "would-block"])
+        self.assertTrue(self.stderr.strip().endswith("option applies: log"), self.stderr)
+
+    def test_an_invalid_override_falls_back_to_the_settings_option_then_off(self):
+        settings = {"pluginConfigs": {"delegation@market": {"options": {"guard_mode": "block"}}}}
+        (self.config / "settings.json").write_text(json.dumps(settings))
+        self.assertTrue(self.denied(self.run_hook("fork", DELEGATION_GUARD_MODE="nope")))
+        (self.config / "settings.json").unlink()
+        self.assertIsNone(self.run_hook("fork", DELEGATION_GUARD_MODE="nope"))
+        self.assertTrue(self.stderr.strip().endswith("option applies: off"), self.stderr)
+
+    def test_a_valid_mode_writes_nothing_on_stderr(self):
+        self.run_hook("claude", CLAUDE_PLUGIN_OPTION_GUARD_MODE="block", DELEGATION_GUARD_MODE="LOG")
+        self.assertEqual(self.stderr, "")
+        self.assertEqual([e["decision"] for e in self.events()], ["would-block"])
 
     def test_the_event_names_the_skill_running_in_the_current_turn(self):
         records = [
