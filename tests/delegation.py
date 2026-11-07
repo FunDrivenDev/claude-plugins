@@ -212,6 +212,27 @@ class SplitMessages(unittest.TestCase):
         self.assertEqual((explore["start_context"]["median"], explore["peak_context_avg"]), (9000, 13000))
 
 
+class Quantiles(unittest.TestCase):
+    """Percentiles by nearest rank (the value at rank ceil(q*n)); the median of an even count is the mean of
+    the two middle values."""
+
+    def test_small_lists(self):
+        cases = {
+            1: (1, 1, 1),
+            2: (1.5, 2, 2),
+            4: (2.5, 3, 4),
+            10: (5.5, 8, 9),
+            11: (6, 9, 10),
+        }
+        for n, (median, p75, p90) in cases.items():
+            q = M.quantiles(list(range(n, 0, -1)))
+            self.assertEqual((q["n"], q["median"], q["p75"], q["p90"], q["max"]), (n, median, p75, p90, n), n)
+        self.assertEqual(M.quantiles([])["median"], 0)
+
+    def test_the_median_seen_share_is_the_mean_of_the_middles(self):
+        self.assertEqual(M.median([0.0, 0.5]), 0.25)
+
+
 class BashWrites(unittest.TestCase):
     """M2 counts a Bash call that changes a file, the repo or a remote; Bash is the only write path of a
     read-only agent, so each common form is caught, and each common read stays a read."""

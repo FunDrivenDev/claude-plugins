@@ -174,12 +174,26 @@ def mcp_parts(name):
     return server, tool
 
 
+def median(xs):
+    """The middle value, or the mean of the two middle values of an even count; 0 for none."""
+    xs, n = sorted(xs), len(xs)
+    if not n:
+        return 0
+    mid = (xs[(n - 1) // 2] + xs[n // 2]) / 2
+    return int(mid) if mid == int(mid) else mid
+
+
+def nearest_rank(xs, pct):
+    """The pct-th percentile of sorted XS by nearest rank: the value at rank ceil(pct * n / 100)."""
+    return xs[-(-pct * len(xs) // 100) - 1]
+
+
 def quantiles(xs):
     xs = sorted(xs)
     n = len(xs)
     if not n:
         return {"n": 0, "median": 0, "p75": 0, "p90": 0, "max": 0}
-    return {"n": n, "median": xs[n // 2], "p75": xs[3 * n // 4], "p90": xs[9 * n // 10], "max": xs[-1]}
+    return {"n": n, "median": median(xs), "p75": nearest_rank(xs, 75), "p90": nearest_rank(xs, 90), "max": xs[-1]}
 
 
 def avg(xs):
@@ -416,7 +430,7 @@ def snapshot(projects, since=None, until=None, guard_log=None):
             "calls_with_files": len(ratios),
             "rechecked": sum(1 for r in ratios if r > 0),
             "rechecked_share": share(sum(1 for r in ratios if r > 0), len(ratios)),
-            "median_seen_share": round(ratios[len(ratios) // 2], 2) if ratios else 0.0,
+            "median_seen_share": round(median(ratios), 2) if ratios else 0.0,
         },
         "main_context": dict(
             quantiles([s["peak"] for s in sessions if s["peak"]]),
