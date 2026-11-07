@@ -24,6 +24,7 @@ a compaction interrupted. A file an older plugin version wrote holds flags inste
 
 import contextlib
 import os
+import re
 import time
 
 from store import data_dir, locked_json, read_json
@@ -55,9 +56,14 @@ COMPACTED = (
     "write_failed",
     "reply_offset",
     "written",
+    "resume",
 )
 # Due again at a handover asked for after an earlier one.
-CLOSING = ("reply_due", "reply_reminded", "held_since", "reply_offset")
+CLOSING = ("reply_due", "reply_reminded", "held_since", "reply_offset", "resume")
+# The writer is stopped after this; past it and a margin, its pid may belong to another process.
+WRITER_TIMEOUT = 600
+# The thresholds recorded at SessionStart, by their name in the pane's view.
+THRESHOLDS = {"suggest": "suggest_tokens", "warn_at": "warn_at_tokens", "trigger": "trigger_tokens"}
 
 
 def path(sid):
@@ -154,6 +160,20 @@ def halt_reason(st):
     return "failed"
 
 
+def writing(st, now=None):
+    """Whether the writer runs (D12): started within its timeout and a margin, its pid alive."""
+    r = st.get("writer")
+    if not r:
+        return False
+    if (now or time.time()) - r.get("since", 0) > WRITER_TIMEOUT + 60:
+        return False
+    try:
+        os.kill(r["pid"], 0)
+    except (OSError, KeyError, TypeError):
+        return False
+    return True
+
+
 def handing_over(st):
     """Whether the session's handover is due: winding down or past it, or kept fresh for a compaction."""
     return phase(st) != WORKING
@@ -238,7 +258,10 @@ def wrote(st, failed):
     st["write_failed"] = failed
 
 
-def reply_written(st):
+def reply_written(st, resume=None):
+    """The closing reply is written, with the message it gives the next session to start on, when it has one."""
+    if resume:
+        st["resume"] = resume
     enter(st, HANDED_OVER)
 
 
@@ -256,3 +279,82 @@ def halted(st, reason, n, afk=None):
     else:
         st["relay_outcome"] = {"limit": True, "n": n, **({"deadline": True} if reason == "deadline" else {})}
     enter(st, HALTED)
+
+
+# The session-mods pane's view (D18): the pane runs `handover.py state --session <sid> --json` and only renders it.
+
+
+def title(text):
+    """A handover's title: its front matter's `summary`, else its `# Handover:` heading."""
+    front = re.match(r"---\n(.*?)\n---", text, re.DOTALL)
+    summary = front and re.search(r"^summary:\s*[\"']?(.+?)[\"']?\s*$", front.group(1), re.MULTILINE)
+    if summary:
+        return summary.group(1)
+    heading = re.search(r"^#\s*Hand(?:over|off):\s*(.+)$", text, re.MULTILINE)
+    return heading.group(1).strip() or None if heading else None
+
+
+def document(path):
+    """A handover document as the pane lists it: its title, line count and last change (epoch s), each None when
+    unread; None without a path."""
+    if not path or not isinstance(path, str):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        modified = int(os.path.getmtime(path))
+    except (OSError, ValueError):
+        return {"path": path, "title": None, "lines": None, "modified_at": None}
+    head = "\n".join(text.split("\n")[:40])
+    return {"path": path, "title": title(head), "lines": text.count("\n"), "modified_at": modified}
+
+
+def recorded_thresholds(st, resolved):
+    """(thresholds, why unknown, pending): the thresholds the session recorded at its start, never a default; the
+    suggest and trigger points `resolved` now gives otherwise, which apply from the next session."""
+    saved = st.get("thresholds")
+    if not isinstance(saved, dict):
+        why = (
+            "this session's handover state records no thresholds: its handover plugin is older than 0.20.0, which "
+            "records them at session start"
+        )
+        return None, why, None
+    bad = [
+        v for v in THRESHOLDS.values() if not isinstance(saved.get(v), (int, float)) or isinstance(saved.get(v), bool)
+    ]
+    if bad:
+        version = f" (handover {st['plugin_version']})" if isinstance(st.get("plugin_version"), str) else ""
+        return (
+            None,
+            f"in this session's handover state{version}, not a number: thresholds." + ", thresholds.".join(bad),
+            None,
+        )
+    th = {k: saved[v] for k, v in THRESHOLDS.items()}
+    pending = {
+        k: resolved[THRESHOLDS[k]]
+        for k in ("suggest", "trigger")
+        if isinstance((resolved or {}).get(THRESHOLDS[k]), int) and resolved[THRESHOLDS[k]] != th[k]
+    }
+    return th, None, pending or None
+
+
+def view(st, on, resolved):
+    """The session's handover state for the session-mods pane: `on` (its hooks run in the session), the phase, the
+    pid-checked writer, its error as the status line cuts it, the written and loaded handovers, the thresholds and
+    the resume message. `resolved` holds the thresholds the options give now, None when they do not resolve."""
+    error = st.get("error")
+    message = error.get("message") if isinstance(error, dict) else None
+    th, why, pending = recorded_thresholds(st, resolved)
+    return {
+        "on": on,
+        "phase": phase(st),
+        "wound_down": wound_down(st),
+        "writing": writing(st),
+        "error": message[:60] if isinstance(message, str) and message else None,
+        "written": document(st.get("path")) if (st.get("written") or {}).get("ok") else None,
+        "loaded": document(st.get("loaded_from")),
+        "thresholds": th,
+        "thresholds_error": why,
+        "pending": pending,
+        "resume": st.get("resume"),
+    }
