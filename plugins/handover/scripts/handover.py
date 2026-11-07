@@ -95,6 +95,7 @@ import session as S
 import terminal as TERM
 import transcript as T
 import writer_prompt as P
+from store import data_dir, locked_json, read_json, write_json
 
 # additionalContext beyond 10,000 characters is moved to a file Claude only sees a preview of.
 INJECT_CHARS = 9500
@@ -186,35 +187,17 @@ def record_thresholds(sid):
     """At SessionStart, the thresholds this session runs with, and the plugin version that resolved them: its
     hooks, its status line and other plugins (the session-mods pane) read them from its state file, so a settings
     change, or a session on another plugin version, never moves them under a running session."""
-    with locked_state(sid) as st:
-        st["thresholds"] = thresholds(config())
-        st["plugin_version"] = plugin_json().get("version")
-
-
-def tracked(sid):
-    """Whether the session's state holds more than what SessionStart records."""
-    return bool(set(read_json(state_path(sid), {})) - {"thresholds", "plugin_version"})
+    with S.locked(sid) as st:
+        S.started(st, thresholds(config()), plugin_json().get("version"))
 
 
 def session_config(sid, st=None):
     """config(), with the thresholds the session recorded at its start; resolved now when it recorded none."""
     cfg = config()
-    th = (st if st is not None else read_json(state_path(sid), {}) if sid else {}).get("thresholds") or {}
+    th = (st if st is not None else S.read(sid) if sid else {}).get("thresholds") or {}
     if isinstance(th.get("suggest_tokens"), int) and isinstance(th.get("trigger_tokens"), int):
         cfg.update(suggest=th["suggest_tokens"], trigger=th["trigger_tokens"])
     return cfg
-
-
-def data_dir():
-    """The plugin's data folder; outside a hook, derived from where the plugin is installed."""
-    d = os.environ.get("CLAUDE_PLUGIN_DATA", "").strip()
-    if d and not d.startswith("${"):
-        return d
-    # <plugins>/cache/<marketplace>/<plugin>/<version>/scripts -> <plugins>/data/<plugin>-<marketplace>
-    parts = os.path.dirname(os.path.abspath(__file__)).split(os.sep)
-    if len(parts) >= 6 and parts[-5] == "cache":
-        return os.sep.join(parts[:-5] + ["data", f"{parts[-3]}-{parts[-4]}"])
-    return os.path.expanduser("~/.claude/plugins/data/handover-inline")
 
 
 # Metric events of the plugin when it was named handoff, before 0.8.0: their names now, and their renamed fields.
@@ -302,10 +285,6 @@ def import_old_data():
     write_json(marker, done)
 
 
-def state_path(sid):
-    return os.path.join(data_dir(), "sessions", f"{sid}.json")
-
-
 def progress_path(sid):
     return os.path.join(data_dir(), "sessions", f"{sid}.progress.json")
 
@@ -340,22 +319,6 @@ def mark_live(sid, event):
 
 def project_key(project):
     return hashlib.sha1(os.path.realpath(project).encode()).hexdigest()[:16]
-
-
-def read_json(path, default=None):
-    try:
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return default
-
-
-def write_json(path, obj):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(obj, f, indent=1)
-    os.replace(tmp, path)
 
 
 def metrics_path():
@@ -409,22 +372,6 @@ def compaction_conflict(cfg, cwd):
         f"{(limit + cfg['reserve']) // 1000}K in ~/.claude/settings.json, or lower {name} under {point // 1000}K "
         "with /handover:config."
     )
-
-
-@contextlib.contextmanager
-def locked_json(path):
-    """A JSON file, saved on exit; the processes that share it never interleave."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path + ".lock", "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        obj = read_json(path, {})
-        yield obj
-        write_json(path, obj)
-
-
-def locked_state(sid):
-    """The session's state; hooks and the writer never interleave."""
-    return locked_json(state_path(sid))
 
 
 def writer_running(st):
@@ -483,12 +430,15 @@ def start_writer(st, sid, cause):
 
 
 def start_wind_down(st, sid, cause, tokens, cfg):
-    """The session hands over: it starts no new task and finishes those in progress."""
-    st.update(wind_down=True, wind_down_tokens=tokens, cause=cause)
+    """The session hands over: it starts no new task and finishes those in progress. False when it hands over
+    already (session.wind_down)."""
+    if not S.wind_down(st, cause, tokens):
+        return False
     reset_commands(st, sid)
     record(
         "wind_down_started", sid, cause=cause, tokens=tokens, trigger=cfg["trigger"], compact_window=compact_window()
     )
+    return True
 
 
 def reset_commands(st, sid):
@@ -502,7 +452,7 @@ def reset_commands(st, sid):
 def wait_for(sid, seconds):
     deadline = time.time() + seconds
     while True:
-        st = read_json(state_path(sid), {})
+        st = S.read(sid)
         if not writer_running(st) or time.time() >= deadline:
             return st
         time.sleep(1)
@@ -517,7 +467,7 @@ def write_now(sid, cause, seconds):
     deadline = time.time() + seconds
     for attempt in (1, 2, 3):
         t0 = time.time()
-        with locked_state(sid) as st:
+        with S.locked(sid) as st:
             if not writer_running(st):
                 if not needs_refresh(st, T.context_tokens(st["transcript"])[0]):
                     return "written", st
@@ -884,17 +834,17 @@ def cmd_wake_timeout(args):
     if turn_since(args.transcript, args.offset):
         # That turn's Stop writes the handover.
         return 0
-    with locked_state(args.session) as st:
+    with S.locked(args.session) as st:
         if st.get("closing_reply") or st.get("reply_due") or not st.get("woken"):
             return 0
-        st["reply_due"] = True
+        S.reply_asked(st, False)
         cause = st.get("cause") or "trigger"
     outcome, _ = write_now(args.session, cause, WRITER_TIMEOUT)
-    with locked_state(args.session) as st:
+    with S.locked(args.session) as st:
         if st.get("closing_reply"):
             return 0
         tokens, _ = T.context_tokens(args.transcript)
-        st["closing_reply"] = True
+        S.reply_written(st)
         record("closing_reply_written", args.session, tokens=tokens, reply=False, woken=False, written=outcome)
         hand_over(st, args.session, tokens, session_config(args.session, st), None, outcome)
     return 0
@@ -1133,7 +1083,7 @@ def cmd_request(args):
     # Not a refusal: this count can hold a subagent that no longer runs (interrupted, crashed, or stopped
     # in a way PostToolUse missed). The Stop hook reads the running ones from Claude Code and waits for those.
     busy = agents_busy(sid)
-    with locked_state(sid) as st:
+    with S.locked(sid) as st:
         request_handover(st, sid, args.cause, cfg, reason=args.reason, focus=args.focus, relay=args.relay)
     print(REQUESTED + (AGENTS_PENDING.format(busy) if busy else ""))
     return 0
@@ -1163,12 +1113,8 @@ def request_handover(st, sid, cause, cfg, reason=None, focus=None, relay=False, 
         suggest=cfg["suggest"],
         reason=(reason or "")[:300] or None,
     )
-    if not st.get("wind_down"):
-        start_wind_down(st, sid, cause, tokens, cfg)
-    # The session knows: only the handover and its closing reply are left, due again after an earlier handover.
-    st["user_notified"] = st["wind_down_sent"] = True
-    for k in ("closing_reply", "reply_due", "reply_reminded", "held_since", "reply_offset"):
-        st.pop(k, None)
+    start_wind_down(st, sid, cause, tokens, cfg)
+    S.requested(st)
     reset_commands(st, sid)
 
 
@@ -1176,7 +1122,7 @@ def cmd_write(args):
     """Write the handover now: the writer the hooks start, or a handover asked for from a shell."""
     sid = args.session
     cfg = session_config(sid)
-    with locked_state(sid) as st:
+    with S.locked(sid) as st:
         if args.transcript:
             st["transcript"] = args.transcript
         if not st.get("transcript"):
@@ -1184,7 +1130,7 @@ def cmd_write(args):
         if args.focus is not None:
             st["focus"] = args.focus
         cause = args.cause or "cli"
-        if not (st.get("wind_down") or st.get("keep_fresh")):
+        if not S.handing_over(st):
             start_wind_down(st, sid, cause, T.context_tokens(st["transcript"])[0], cfg)
         st["writer"] = {"pid": os.getpid(), "since": time.time()}
         # Left by a writer killed outright: the status line would show its progress until this one's first.
@@ -1205,7 +1151,7 @@ def cmd_write(args):
         text, tokens, info = compose_handover(snapshot, cfg, sid)
     except Exception as e:  # noqa: BLE001 - every failure is reported to the user through the state
         on_kill(signal.SIG_DFL)
-        with locked_state(sid) as st:
+        with S.locked(sid) as st:
             st["writer"] = None
             st["error"] = {"at": time.time(), "message": str(e)[:1000], "reported": False}
             drop_progress(sid)
@@ -1226,7 +1172,7 @@ def cmd_write(args):
         handover_chars=len(text),
         **info,
     )
-    with locked_state(sid) as st:
+    with S.locked(sid) as st:
         path = handover_path(st, text, cfg)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = f"{path}.tmp"
@@ -1323,17 +1269,17 @@ def on_activity(inp, cfg, event):
     sid, tp = inp["session_id"], inp["transcript_path"]
     busy = agents_busy(sid, inp) if event == "Stop" else 0
     tokens, _ = T.context_tokens(tp)
-    if not tracked(sid) and not (cfg["trigger"] and tokens >= cfg["trigger"]) and not suggesting(cfg, tokens):
+    if not S.tracked(sid) and not (cfg["trigger"] and tokens >= cfg["trigger"]) and not suggesting(cfg, tokens):
         return None
     out = {}
     notes = []
     # What is left to do once the lock is released: the writer takes it.
     todo = None
-    with locked_state(sid) as st:
+    with S.locked(sid) as st:
         st["transcript"] = tp
         st.setdefault("project", project_of(inp))
         # The session works again: a compaction it was in is over, or was cancelled.
-        st.pop("compacting", None)
+        S.active(st)
         if st.get("wind_down") and event == "PostToolUse" and inp.get("tool_name") == "TaskStop":
             session_stopped(st, sid, inp.get("tool_response"))
         if not st.get("wind_down") and not st.get("suggested") and event == "PostToolUse" and suggesting(cfg, tokens):
@@ -1344,7 +1290,7 @@ def on_activity(inp, cfg, event):
                 "hookEventName": event,
                 "additionalContext": SUGGEST.format(tokens=tokens // 1000, suggest=cfg["suggest"] // 1000, later=later),
             }
-        if not st.get("wind_down") and cfg["trigger"] and tokens >= cfg["trigger"]:
+        if cfg["trigger"] and tokens >= cfg["trigger"]:
             start_wind_down(st, sid, "trigger", tokens, cfg)
         wind_down, closing = st.get("wind_down"), st.get("wind_down") and not st.get("closing_reply")
         if wind_down and not st.get("user_notified"):
@@ -1422,7 +1368,7 @@ def on_activity(inp, cfg, event):
                     # Nothing left running: the handover is written now, from all of it, before the closing reply.
                     todo = "write"
                 elif CLEAR_RE.search(last) or st.get("reply_reminded"):
-                    st["closing_reply"] = True
+                    S.reply_written(st)
                     record(
                         "closing_reply_written",
                         sid,
@@ -1434,7 +1380,7 @@ def on_activity(inp, cfg, event):
                     note = afk_declared_end(st, sid, last) if afk_active(st) else None
                     if note:
                         # The run is over: its last handover relays to no new session.
-                        st["relay_outcome"] = {"afk": st["afk"]["ended"], "n": chain_n(st)}
+                        S.halted(st, "afk", chain_n(st), afk=st["afk"]["ended"])
                         notes.append(note)
                 else:
                     st["reply_reminded"] = True
@@ -1458,7 +1404,7 @@ def on_activity(inp, cfg, event):
     elif todo == "hand_over":
         notes.append(close(sid, cfg, inp.get("last_assistant_message") or T.last_assistant_text(tp)))
     if todo:
-        with locked_state(sid) as st:
+        with S.locked(sid) as st:
             notes.append(model_warning(st))
     notes = [n for n in notes if n]
     if notes:
@@ -1491,13 +1437,12 @@ def ask_closing_reply(sid, tokens, notes):
     """Stop, nothing left running: write the handover, holding the session until it is written, then block
     the stop to have the session write its closing reply. The status line shows the writer meanwhile."""
     t0 = time.time()
-    with locked_state(sid) as st:
+    with S.locked(sid) as st:
         cause = st.get("cause") or "trigger"
-        st["held_since"] = t0
+        S.held(st, t0)
     outcome, _ = write_now(sid, cause, STOP_WRITE_SECONDS)
-    with locked_state(sid) as st:
-        st["reply_due"] = True
-        st["write_failed"] = outcome == "failed"
+    with S.locked(sid) as st:
+        S.reply_asked(st, outcome == "failed")
         record("closing_reply_asked", sid, tokens=tokens, written=outcome, held_s=round(time.time() - t0))
         err = st.get("error") or {}
         if outcome == "failed":
@@ -1512,14 +1457,14 @@ def close(sid, cfg, last):
 
     A session that went on past `refresh_tokens` after the handover was written, or whose handover failed, has
     it written again first, so that the next session loads it at once."""
-    tokens, _ = T.context_tokens(read_json(state_path(sid), {}).get("transcript") or "")
-    with locked_state(sid) as st:
+    tokens, _ = T.context_tokens(S.read(sid).get("transcript") or "")
+    with S.locked(sid) as st:
         stale = not writer_running(st) and needs_refresh(st, tokens)
     outcome, _ = write_now(sid, "reply", STOP_WRITE_SECONDS) if stale else (None, None)
-    with locked_state(sid) as st:
+    with S.locked(sid) as st:
         if outcome is None:
             outcome = "slow" if writer_running(st) else "failed" if st.get("write_failed") else "written"
-        st["write_failed"] = outcome == "failed"
+        S.wrote(st, outcome == "failed")
         # The closing reply (2K to 4K tokens) reaches the transcript after this hook: `reply_only` tells it from a
         # session that went on.
         with contextlib.suppress(OSError):
@@ -1532,7 +1477,7 @@ def hand_over(st, sid, tokens, cfg, message, outcome):
     if outcome == "failed":
         if relay_on(st) and not st.get("relay_outcome"):
             # The new session would start without the handover: the user takes over.
-            st["relay_outcome"] = {"failed": True, "n": chain_n(st)}
+            S.halted(st, "failed", chain_n(st))
             record(
                 "relay_failed",
                 sid,
@@ -1602,18 +1547,18 @@ def relay(st, sid, tokens, cfg, message):
     n, limit = chain_n(st), cfg["relay_limit"]
     afk = afk_active(st)
     if afk and afk_overdue(afk):
-        st["relay_outcome"] = {"limit": True, "n": n, "deadline": True}
+        S.halted(st, "deadline", n)
         afk_end(st, sid, "deadline", f"deadline {fmt_until(afk['until'])} passed after {n} handovers")
         return "handover: AFK deadline passed, no new session. Run /clear to continue from its handover."
     if n >= limit and not afk:
-        st["relay_outcome"] = {"limit": True, "n": n}
+        S.halted(st, "limit", n)
         record("relay_limit_reached", sid, chain=chain.get("base"), n=n, tokens=tokens)
         alert(f"Relay halted at {n} handovers. Run /clear to continue from the last one.")
         return f"handover: relay halted at its limit of {limit} handovers. Run /clear to continue from the last one."
     term = terminal()
     pid = None if term.types or not term.relays else claude_pid()
     if not term.types and not pid:
-        st["relay_outcome"] = {"failed": True, "n": n}
+        S.halted(st, "failed", n)
         record("relay_failed", sid, chain=chain.get("base"), n=n, tokens=tokens)
         alert("Relay impossible: this session runs in no terminal the plugin can type into. Run /clear.")
         return "handover: cannot relay here: no terminal to type into, no toolbox session run. Run /clear."
@@ -1631,7 +1576,7 @@ def relay(st, sid, tokens, cfg, message):
             f.write(message)
         cmd += ["--kill", str(pid)]
     detach(cmd)
-    st["relay_outcome"] = {"at": time.time(), "n": n, "mode": term.name}
+    S.relayed(st, n, term.name)
     record(
         "relay_launched",
         sid,
@@ -1868,7 +1813,7 @@ def afk_on_activity(st, sid, inp, event):
 
 def cmd_afk(args):
     """The afk skill: AFK mode on (or off) in a running session, which must be able to relay."""
-    with locked_state(args.session) as st:
+    with S.locked(args.session) as st:
         if args.off:
             if not afk_active(st):
                 print("handover: AFK mode is not on in this session.")
@@ -2156,7 +2101,7 @@ def on_pre_tool_use(inp):
     nothing that writes the plugin, its audit log or the settings that load it."""
     sid = inp["session_id"]
     reason = untagged_background(inp)
-    st = read_json(state_path(sid), {})
+    st = S.read(sid)
     if not st and not reason:
         return None
     tool = inp.get("tool_name") or ""
@@ -2164,7 +2109,7 @@ def on_pre_tool_use(inp):
         reason = NO_NEW_AGENT
         ti = inp.get("tool_input") or {}
         record("agent_refused", sid, tool=tool, agent=ti.get("subagent_type"))
-        with locked_state(sid) as st:
+        with S.locked(sid) as st:
             st["agents_refused"] = st.get("agents_refused", 0) + 1
             st["refused_call"] = refused_call(tool, ti)
             if afk_goes_on(st) and not st.get("wind_down"):
@@ -2208,7 +2153,7 @@ def bypass_seen(afk, inp):
     run: record once what afk_start records for one (baseline, plugin hash), so stats and the audit check
     count it as a YOLO run."""
     sid = inp["session_id"]
-    with locked_state(sid) as st:
+    with S.locked(sid) as st:
         mine = st.get("afk") or {}
         if mine.get("run") != afk.get("run") or mine.get("bypass_seen"):
             return
@@ -2633,7 +2578,7 @@ def on_afk_signal(inp, event):
     """Why an AFK run stopped, waits, or was denied: a permission prompt, an idle session, an API error,
     an auto-mode denial. Recorded for `stats`; the user is alerted when the run stands still."""
     sid = inp["session_id"]
-    afk = afk_active(read_json(state_path(sid), {}))
+    afk = afk_active(S.read(sid))
     if not afk:
         return
     tool, ti = inp.get("tool_name") or "", inp.get("tool_input") or {}
@@ -2655,7 +2600,7 @@ def on_afk_signal(inp, event):
     elif event == "PermissionRequest":
         record("afk_user_needed", sid, kind="permission", tool=tool, detail=tool_target(tool, ti), **fields)
     elif event == "PermissionDenied":
-        with locked_state(sid) as st:
+        with S.locked(sid) as st:
             st["afk_denied"] = st.get("afk_denied", 0) + 1
         record(
             "afk_denied", sid, tool=tool, detail=tool_target(tool, ti), reason=(inp.get("reason") or "")[:200], **fields
@@ -2817,16 +2762,16 @@ def cmd_relay_recover(args):
         seen = term.survey(args.instance)
         ended = ended + 1 if seen == "ended" else 0
     typed = False
-    afk = afk_active(read_json(state_path(args.session), {}))
+    afk = afk_active(S.read(args.session))
     if seen == "restarted" and afk:
         time.sleep(RECOVER_SHELL_SECONDS)
         typed = term.clear_input() and term.type_text(resume_command(args.session, afk)) and term.press_enter()
     deadline = time.time() + RESUME_SECONDS
     while typed and time.time() < deadline:
-        if not read_json(state_path(args.session), {}).get("recovering"):
+        if not S.read(args.session).get("recovering"):
             return 0
         time.sleep(1)
-    with locked_state(args.session) as st:
+    with S.locked(args.session) as st:
         if not st.pop("recovering", None) or not afk_active(st):
             return 0
         why = "the tab closed" if seen == "ended" else "the terminal server did not come back"
@@ -2917,7 +2862,7 @@ DELEGATE = (
 def on_precompact(inp):
     sid = inp["session_id"]
     tokens, _ = T.context_tokens(inp["transcript_path"])
-    with locked_state(sid) as st:
+    with S.locked(sid) as st:
         st["transcript"] = inp["transcript_path"]
         st.setdefault("project", project_of(inp))
         # Auto-compactions show where compaction really fires, winding down or not.
@@ -2930,15 +2875,14 @@ def on_precompact(inp):
             compact_window=compact_window(),
         )
         # No wind-down: the handover is kept fresh for the summary the compaction loads it next to.
-        st["keep_fresh"] = True
-        st["compacting"] = True
+        S.compaction_starts(st)
         if needs_refresh(st, tokens):
             start_writer(st, sid, "precompact")
 
 
 def audit_post(inp):
     """PostToolUse in a YOLO run: the call goes to the audit log, tagged by whether it needed YOLO."""
-    afk = afk_active(read_json(state_path(inp["session_id"]), {}))
+    afk = afk_active(S.read(inp["session_id"]))
     if afk and yolo_on(afk, inp):
         verdict, why = classify(inp, afk.get("baseline") or baseline_mode(project_of(inp)))
         audit_write(afk, inp, verdict, why)
@@ -2953,9 +2897,9 @@ def reply_only(st, transcript):
 
 def on_session_end(inp):
     sid = inp["session_id"]
-    if not tracked(sid):
+    if not S.tracked(sid):
         return
-    with locked_state(sid) as st:
+    with S.locked(sid) as st:
         if afk_active(st) and not st.get("relay_outcome"):
             term = terminal()
             # resume_command types a Rex launcher: another host that recovers needs its own resume first.
@@ -2976,7 +2920,7 @@ def on_session_end(inp):
             else:
                 # Not a handover: the run ends with this session (an exit, a /clear by hand, a crash of claude).
                 afk_end(st, sid, "exit", f"session ended ({inp.get('reason') or 'unknown'})")
-        if not (st.get("wind_down") or st.get("keep_fresh")):
+        if not S.handing_over(st):
             return
         tokens, _ = T.context_tokens(inp["transcript_path"])
         record("session_ended", sid, tokens=tokens, reason=inp.get("reason"))
@@ -2993,7 +2937,7 @@ def on_session_end(inp):
 def after_recovery(inp):
     """The AFK run relay-recover resumed: same session id, so its state is there; the agent gets its rules back."""
     sid = inp["session_id"]
-    with locked_state(sid) as st:
+    with S.locked(sid) as st:
         afk = afk_active(st)
         if not (afk and st.pop("recovering", None)):
             return None
@@ -3025,7 +2969,7 @@ def on_session_start(inp):
     if goal:
         # claude-relay --afk: a new run, whose goal is also the first prompt.
         until = os.environ.get("HANDOVER_AFK_UNTIL")
-        with locked_state(inp["session_id"]) as new:
+        with S.locked(inp["session_id"]) as new:
             new.update(transcript=inp.get("transcript_path"), project=project_of(inp))
             afk = afk_active(new) or afk_start(
                 new,
@@ -3063,7 +3007,7 @@ def on_session_start(inp):
             return None
         with contextlib.suppress(FileNotFoundError):
             os.remove(latest_path)
-        with locked_state(inp["session_id"]) as new:
+        with S.locked(inp["session_id"]) as new:
             new.update(transcript=inp.get("transcript_path"), project=project_of(inp), loaded_from=st["path"])
         note = "" if not writer_running(st) else " It may miss the last steps: its refresh was still running."
         return {
@@ -3078,7 +3022,7 @@ def on_session_start(inp):
             },
         }
     if source == "startup" and age <= STARTUP_POINTER_SECONDS:
-        st = read_json(state_path(latest["session"]), {})
+        st = S.read(latest["session"])
         if not (st.get("written") or {}).get("ok") or not os.path.exists(st.get("path", "")):
             return None
         with contextlib.suppress(FileNotFoundError):
@@ -3135,7 +3079,7 @@ def take_relay(inp):
     term = terminal()
     term.report_status("clear")
     retitle(term, chain, afk)
-    with locked_state(inp["session_id"]) as new:
+    with S.locked(inp["session_id"]) as new:
         new.update(
             transcript=inp.get("transcript_path"), project=project_of(inp), loaded_from=st["path"], relayed_from=chain
         )
@@ -3174,7 +3118,7 @@ def after_compact(inp):
     sid = inp["session_id"]
     t0 = time.time()
     st = wait_for(sid, WAIT_SECONDS)
-    if not (st.get("wind_down") or st.get("keep_fresh")):
+    if not S.handing_over(st):
         return None
     text = read_handover(st) if (st.get("written") or {}).get("ok") else None
     record(
@@ -3185,26 +3129,9 @@ def after_compact(inp):
         waited_s=round(time.time() - t0),
         refresh_running=writer_running(st),
     )
-    with locked_state(sid) as st:
+    with S.locked(sid) as st:
         # The session starts over from a small context: wind down and notify again at the next trigger.
-        for k in (
-            "wind_down",
-            "wind_down_tokens",
-            "keep_fresh",
-            "cause",
-            "suggested",
-            "user_notified",
-            "wind_down_sent",
-            "reply_due",
-            "reply_reminded",
-            "held_since",
-            "write_failed",
-            "closing_reply",
-            "reply_offset",
-            "written",
-            "compacting",
-        ):
-            st.pop(k, None)
+        S.compacted(st)
         reset_commands(st, sid)
     if not text:
         return None
@@ -3287,13 +3214,13 @@ def cmd_status(args):
         if args.session
         else sorted(
             (f[:-5] for f in os.listdir(d) if f.endswith(".json")) if os.path.isdir(d) else [],
-            key=lambda s: os.path.getmtime(state_path(s)),
+            key=lambda s: os.path.getmtime(S.path(s)),
             reverse=True,
         )[:10]
     )
     print(
         json.dumps(
-            {"config": config(), "data_dir": data_dir(), "sessions": {s: read_json(state_path(s), {}) for s in sids}},
+            {"config": config(), "data_dir": data_dir(), "sessions": {s: S.read(s) for s in sids}},
             indent=1,
         )
     )
@@ -3396,7 +3323,7 @@ def cmd_statusline(_args):
     # Nothing in a session the plugin's hooks never ran in: the plugin is disabled there.
     if not sid or not os.path.exists(live_path(sid)):
         return 0
-    st = read_json(state_path(sid), {})
+    st = S.read(sid)
     cfg = session_config(sid, st)
     tokens = int((inp.get("context_window") or {}).get("total_input_tokens") or 0)
     if not tokens and inp.get("transcript_path"):

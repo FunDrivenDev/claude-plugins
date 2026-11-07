@@ -18,6 +18,7 @@ os.environ.pop("CLAUDE_PROJECT_DIR", None)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "plugins", "handover", "scripts"))
 
 import handover as H
+import session as S
 
 
 def bash(command, mode=None):
@@ -168,9 +169,9 @@ class AuditChain(unittest.TestCase):
 class BypassPermissions(unittest.TestCase):
     def test_a_run_under_bypass_permissions_counts_as_a_yolo_run(self):
         run = "r-bypass"
-        H.write_json(H.state_path("s-audit"), {"project": PROJECT, "afk": {"run": run, "yolo": False, "since": 0}})
+        H.write_json(S.path("s-audit"), {"project": PROJECT, "afk": {"run": run, "yolo": False, "since": 0}})
         H.record("afk_started", "s-audit", run=run, how="test", yolo=False)
-        afk = H.read_json(H.state_path("s-audit"))["afk"]
+        afk = H.read_json(S.path("s-audit"))["afk"]
         self.assertFalse(H.yolo_on(afk, bash("ls")))
         self.assertTrue(H.yolo_on(afk, bash("ls", mode="bypassPermissions")))
         self.assertTrue(H.yolo_on(afk, bash("ls", mode="bypassPermissions")))
@@ -180,7 +181,7 @@ class BypassPermissions(unittest.TestCase):
 
         promoted = [e for e in sessions()["s-audit"] if e["event"] == "afk_yolo" and e["run"] == run]
         self.assertEqual(len(promoted), 1, "recorded once")
-        self.assertEqual(H.read_json(H.state_path("s-audit"))["afk"]["baseline"], "default")
+        self.assertEqual(H.read_json(S.path("s-audit"))["afk"]["baseline"], "default")
         [row] = [r for r in H.afk_runs(sessions()) if r["run"] == run]
         self.assertTrue(row["yolo"])
         self.assertEqual(row["calls"], 1)

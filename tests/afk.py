@@ -18,6 +18,7 @@ for key in ("TMUX", "TMUX_PANE", "REX_SESSION", "REX_BLOCK", "REX_SERVER"):
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "plugins", "handover", "scripts"))
 
 import handover as H
+import session as S
 
 H.alert = lambda message, *a, **k: None
 TRANSCRIPT = os.path.join(HOME, "transcript.jsonl")
@@ -32,11 +33,11 @@ def session(sid, afk=True, **st):
     if afk:
         st["afk"] = {"goal": "ship it", "until": None, "run": f"run-{sid}", "since": time.time(), "yolo": True}
         st["relay_on"] = True
-    H.write_json(H.state_path(sid), st)
+    H.write_json(S.path(sid), st)
 
 
 def state(sid):
-    return H.read_json(H.state_path(sid), {})
+    return S.read(sid)
 
 
 def refuse(sid, tool="Workflow", ti=REVIEW):
@@ -47,7 +48,7 @@ def refuse(sid, tool="Workflow", ti=REVIEW):
 
 
 def stop(sid, reply):
-    with H.locked_state(sid) as st:
+    with S.locked(sid) as st:
         return H.afk_on_activity(st, sid, {"last_assistant_message": reply, "transcript_path": TRANSCRIPT}, "Stop")
 
 
@@ -80,7 +81,7 @@ class RefusedSubagent(unittest.TestCase):
 
     def test_past_the_afk_deadline_no_handover_starts(self):
         session("a4")
-        with H.locked_state("a4") as st:
+        with S.locked("a4") as st:
             st["afk"]["deadline_told"] = True
         self.assertEqual(refuse("a4"), H.NO_NEW_AGENT)
         self.assertFalse(state("a4").get("wind_down"))
@@ -99,7 +100,7 @@ class BlockedByRefusal(unittest.TestCase):
 
     def test_a_closing_reply_blocked_by_the_refusal_still_relays(self):
         session("b2", agents_refused=1)
-        with H.locked_state("b2") as st:
+        with S.locked("b2") as st:
             self.assertIsNone(H.afk_declared_end(st, "b2", "AFK blocked: subagents refused"))
         self.assertFalse(state("b2")["afk"].get("ended"))
 
