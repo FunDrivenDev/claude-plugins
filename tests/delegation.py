@@ -356,12 +356,17 @@ class EvalCases(unittest.TestCase):
 
     def test_a_write_case_needs_a_write_by_the_main_session(self):
         # Edit and Write belong to no role, so a call to either is the main session writing, not a delegated agent.
+        # A case the main session may write through Bash (the rename's one `sed`) forbids every agent call instead.
         for d in self.cases():
             if d.name.startswith("write-"):
-                wrote = [
-                    g for g in self.graders(d) if g.get("type") == "tool_used" and g.get("tool") in ("Edit", "Write")
+                tools = [g for g in self.graders(d) if g.get("type") == "tool_used"]
+                wrote = [g for g in tools if g.get("tool") in ("Edit", "Write") and int(g.get("min", "1")) >= 1]
+                alone = [
+                    g for g in tools if g.get("tool") == "Agent" and g.get("max") == "0" and "input_match" not in g
                 ]
-                self.assertTrue([g for g in wrote if int(g.get("min", "1")) >= 1], d.name)
+                self.assertTrue(wrote or alone, d.name)
+        rename = self.graders(self.EVALS / "write-rename-in-main")
+        self.assertIn({"type": "tool_used", "tool": "Agent", "min": "0", "max": "0", "arm": "both"}, rename)
 
     def test_read_and_write_cases_are_balanced(self):
         kinds = [d.name.split("-")[0] for d in self.cases()]
