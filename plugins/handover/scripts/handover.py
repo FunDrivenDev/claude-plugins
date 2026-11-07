@@ -91,6 +91,7 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import notify as N
+import session as S
 import terminal as TERM
 import transcript as T
 import writer_prompt as P
@@ -3320,33 +3321,42 @@ def kfmt(n):
 def status_line(st, prog, tokens, cfg):
     """(colour, text) of the session's handover state, for the status line; the first line shows the tokens."""
     written, trig, suggest = st.get("written") or {}, cfg["trigger"], cfg["suggest"]
-    if st.get("error") and not written.get("ok") and not writer_running(st):
-        return "red", f"Handover failed · {st['error']['message'][:60]}"
+    error = st.get("error") or {}
+    if error and not written.get("ok") and not writer_running(st):
+        return "red", f"Handover failed · {error['message'][:60]}"
     if writer_running(st):
         verb = "refreshing" if written.get("ok") else "writing"
-        phase = (prog or {}).get("phase")
-        if phase == "writing":
+        step = (prog or {}).get("phase")
+        if step == "writing":
             target = prog.get("target") or cfg["chars"]
             cells = min(10, prog["chars"] * 10 // max(1, target))
             detail = f"{kfmt(prog['chars'])}/{kfmt(target)} chars {'▓' * cells}{'░' * (10 - cells)}"
-        elif phase == "thinking":
+        elif step == "thinking":
             detail = "thinking"
-        elif phase == "reading":
+        elif step == "reading":
             detail = "reading"
         else:
             detail = "starting"
         secs = round(time.time() - (prog or {}).get("since", time.time()))
         return "orange", f"Handover {verb} · {detail} · {secs}s"
-    if st.get("compacting"):
+    phase = S.phase(st)
+    if phase == S.COMPACTING:
         # The handover is loaded after the compaction, next to its summary: no /clear to run.
         return "gray", "Compacting · handover " + ("written, loads after it" if written.get("ok") else "not written")
-    outcome = st.get("relay_outcome") or {}
-    if outcome.get("at"):
+    if phase == S.RELAYING:
         return "green", "Handover ready · relaying"
-    if outcome.get("limit") and outcome.get("deadline"):
-        return "red", f"AFK deadline · {outcome['n']} handovers · run /clear"
-    if outcome.get("limit"):
-        return "red", f"Relay limit · {outcome['n']} handovers · run /clear"
+    if st.get("write_failed") and phase in (S.CLOSING, S.HANDED_OVER, S.HALTED):
+        # The last write failed: a handover on disk is an older one.
+        if phase == S.CLOSING:
+            return "red", "Handover failed · closing reply"
+        return "red", f"Handover failed · {(error.get('message') or 'run /clear')[:60]}"
+    reason, n = S.halt_reason(st), (st.get("relay_outcome") or {}).get("n", 0)
+    if reason == "deadline":
+        return "red", f"AFK deadline · {n} handovers · run /clear"
+    if reason == "limit":
+        return "red", f"Relay limit · {n} handovers · run /clear"
+    if reason == "failed":
+        return "red", "Relay failed · run /clear"
     afk = st.get("afk") or {}
     if afk.get("ended") and afk["ended"] != "off":
         return ("green" if afk["ended"] == "done" else "red"), f"AFK {afk['ended']} · {afk.get('reason', '')[:60]}"
@@ -3358,12 +3368,10 @@ def status_line(st, prog, tokens, cfg):
         loaded += " · AFK" + (
             f" until {datetime.fromtimestamp(afk['until']).strftime('%H:%M')}" if afk.get("until") else ""
         )
-    if st.get("wind_down") and not st.get("closing_reply"):
-        # Ready only once the closing reply is written: /clear before it would lose the resume message.
-        # Written while the Stop hook holds the session: the hook sets reply_due a moment later.
-        held = st.get("held_since")
-        if st.get("reply_due") or held and written.get("ok") and written.get("at", 0) >= held:
-            return "orange", f"Handover written · closing reply{loaded}"
+    # Ready only once the closing reply is written: /clear before it would lose the resume message.
+    if phase == S.CLOSING:
+        return "orange", f"Handover written · closing reply{loaded}"
+    if phase == S.WINDING_DOWN:
         return "orange", f"Winding down · finishing tasks{loaded}"
     if written.get("ok"):
         return "green", "Handover ready · run /clear"

@@ -18,7 +18,9 @@ The one-line handover state a status line can print. [Back to the README](../REA
 | `✋ Relay limit · 10 handovers · run /clear` | red | The chain reached `relay_limit` |
 | `✋ AFK deadline · 3 handovers · run /clear` | red | An AFK run's deadline passed at a handover |
 | `✋ AFK done · <why>` | green | The AFK run ended on `AFK done`; red for `blocked`, `deadline`, `idle`, `exit` |
-| `✋ Handover failed · <error>` | red | The writer failed |
+| `✋ Relay failed · run /clear` | red | The relay could not start the next session: no terminal to type into |
+| `✋ Handover failed · closing reply` | red | The writer failed at the session's stop, even with an older handover on disk; the session writes its closing reply |
+| `✋ Handover failed · <error>` | red | The writer failed, and no newer handover was written since; after the closing reply, even with an older handover on disk |
 | `✋ Handover trigger off` | gray | `trigger_tokens` is 0 |
 
 The line is empty in a session where the plugin is disabled: the plugin's hooks mark each session they run in, from its start to its end, and the status line prints only for those. A status-line script can therefore call it whenever the plugin is installed.
