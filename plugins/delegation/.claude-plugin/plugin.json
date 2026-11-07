@@ -1,7 +1,7 @@
 {
   "name": "delegation",
   "description": "Typed read-only subagents (investigator, researcher, reviewer, skeptic), a guard on catch-all ones and on the agents' Bash writes (off, log, block), and a measure of how sessions delegate to subagents and where the main session's context goes: typed share of agent calls, delegated writes, subagent starting context, peak context, large results, MCP volume; snapshots and a before/after compare",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "author": {
     "name": "FunDrivenDev",
     "url": "https://github.com/FunDrivenDev"

@@ -408,7 +408,12 @@ class Agents(unittest.TestCase):
     that opens on Status and closes on Unverified then Verify."""
 
     AGENTS = SCRIPT.parent.parent / "agents"
-    ROLES = (("investigator", "opus"), ("researcher", "sonnet"), ("reviewer", "opus"), ("skeptic", "fable"))
+    ROLES = (
+        ("investigator", "opus", "high"),
+        ("researcher", "sonnet", "medium"),
+        ("reviewer", "opus", "high"),
+        ("skeptic", "fable", "high"),
+    )
     WRITE_TOOLS = frozenset({"Edit", "Write", "NotebookEdit", "Agent", "Task", "Workflow"})
     # Each role's exact allow-list: a tool added, removed or renamed in an agent file needs this table changed on purpose.
     TOOLS: ClassVar[dict[str, set[str]]] = {
@@ -425,11 +430,11 @@ class Agents(unittest.TestCase):
         return meta, body
 
     def test_the_four_roles_and_no_other(self):
-        self.assertEqual(sorted(p.stem for p in self.AGENTS.glob("*.md")), [n for n, _ in self.ROLES])
-        self.assertEqual(sorted(self.TOOLS), [n for n, _ in self.ROLES], "TOOLS must pin every role and no other")
+        self.assertEqual(sorted(p.stem for p in self.AGENTS.glob("*.md")), [n for n, _, _ in self.ROLES])
+        self.assertEqual(sorted(self.TOOLS), [n for n, _, _ in self.ROLES], "TOOLS must pin every role and no other")
 
     def test_each_role_is_read_only_with_its_model_effort_and_no_claude_md(self):
-        for name, model in self.ROLES:
+        for name, model, effort in self.ROLES:
             meta, _ = self.parse(name)
             self.assertEqual(meta["name"], name)
             tools = {t.strip() for t in meta["tools"].split(",")}
@@ -438,7 +443,7 @@ class Agents(unittest.TestCase):
                 tools, self.TOOLS[name], f"{name}'s tools changed: change Agents.TOOLS on purpose if this is meant"
             )
             self.assertEqual(meta["model"], model, name)
-            self.assertEqual(meta["effort"], "high", name)
+            self.assertEqual(meta["effort"], effort, name)
             self.assertEqual(meta["omitClaudeMd"], "true", name)
 
     def test_the_investigator_reruns_only_a_failing_command_without_side_effects(self):
@@ -463,7 +468,7 @@ class Agents(unittest.TestCase):
         self.assertNotIn("CLAUDE.md", body)
 
     def test_each_report_opens_on_status_and_closes_on_unverified_then_verify(self):
-        for name, _ in self.ROLES:
+        for name, _, _ in self.ROLES:
             _, body = self.parse(name)
             fields = re.findall(r"^- \*\*(\w+)\*\*", body.split("Report in this format", 1)[1], re.MULTILINE)
             self.assertEqual(fields[0], "Status", name)
