@@ -102,8 +102,10 @@ def fake(directory):
             log.write(json.dumps(line) + "\n")
             log.flush()
             if line == "/clear" and config.get("marker"):
-                with open(config["marker"], "w", encoding="utf-8") as f:
+                # Written aside and renamed, as write_json does: the relay polls for the file and reads it at once.
+                with open(config["marker"] + ".tmp", "w", encoding="utf-8") as f:
                     json.dump({"ok": config.get("loads", True)}, f)
+                os.rename(config["marker"] + ".tmp", config["marker"])
         show()
 
 
