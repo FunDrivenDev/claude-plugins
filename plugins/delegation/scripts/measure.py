@@ -136,6 +136,21 @@ def context_of(usage):
     )
 
 
+def first_usage(rec, seen):
+    """The usage of an assistant record, or None when an earlier record of the same message carried it.
+
+    A transcript writes one record per content block of a message, each with the message's id and its whole
+    usage: summing usage per record counts a message once per block. A record without an id counts alone.
+    """
+    msg = rec.get("message") or {}
+    usage, mid = msg.get("usage"), msg.get("id")
+    if not usage or mid in seen:
+        return None
+    if mid:
+        seen.add(mid)
+    return usage
+
+
 def local_date(stamp):
     try:
         return dt.datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone().date()
@@ -182,12 +197,13 @@ def subagent(meta):
     except (OSError, json.JSONDecodeError):
         return None, None
     tools, files, bash_writes, out_tok, peak, start, model, report = Counter(), set(), 0, 0, 0, 0, None, 0
+    seen = set()
     tr = meta.with_name(meta.name.replace(".meta.json", ".jsonl"))
     if tr.exists():
         for r in records(tr):
             if r.get("type") != "assistant":
                 continue
-            usage = (r.get("message") or {}).get("usage")
+            usage = first_usage(r, seen)
             if usage:
                 out_tok += usage.get("output_tokens", 0)
                 ctx = context_of(usage)
@@ -233,7 +249,7 @@ def session(path):
     for r in records(path):
         if r.get("type") == "assistant":
             usage = (r.get("message") or {}).get("usage")
-            if usage:
+            if usage:  # a peak: a message split over several records counts the same
                 peak = max(peak, context_of(usage))
             for t in blocks(r, "tool_use"):
                 pending[t["id"]] = t

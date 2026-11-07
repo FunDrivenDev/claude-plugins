@@ -185,6 +185,33 @@ class RefusedAgentCalls(unittest.TestCase):
         self.assertEqual((a["calls"], a["typed"], a["typed_share"]), (1, 1, 1.0))
 
 
+class SplitMessages(unittest.TestCase):
+    """A transcript writes one record per content block of an assistant message, each with the message's id and
+    its whole usage: the usage counts once per message.id, and a record without an id counts alone."""
+
+    def test_a_message_split_over_two_records_counts_its_output_tokens_once(self):
+        projects = pathlib.Path(tempfile.mkdtemp()) / "projects"
+        ts = "2026-10-01T10:00:00Z"
+        proj = projects / "-tmp-proj"
+        write(
+            proj / "s1.jsonl",
+            [
+                assistant(ts, [("e1", "Agent", {"subagent_type": "Explore", "description": "d", "prompt": "p"})]),
+                result(ts, "e1", 500),
+            ],
+        )
+        sub = proj / "s1" / "subagents"
+        sub.mkdir(parents=True)
+        (sub / "agent-1.meta.json").write_text(json.dumps({"agentType": "Explore", "toolUseId": "e1"}))
+        split = [assistant(ts, [("x1", "Read", {"file_path": "/a"})], ctx=9000), assistant(ts, ctx=9000, text="r")]
+        for r in split:
+            r["message"]["id"] = "msg_1"
+        write(sub / "agent-1.jsonl", [*split, assistant(ts, ctx=12000), assistant(ts, ctx=13000)])
+        explore = M.snapshot(projects)["agents"]["by_type"]["Explore"]
+        self.assertEqual(explore["output_tokens_avg"], 30)  # msg_1 once, then two records without an id
+        self.assertEqual((explore["start_context"]["median"], explore["peak_context_avg"]), (9000, 13000))
+
+
 class BashWrites(unittest.TestCase):
     """M2 counts a Bash call that changes a file, the repo or a remote; Bash is the only write path of a
     read-only agent, so each common form is caught, and each common read stays a read."""

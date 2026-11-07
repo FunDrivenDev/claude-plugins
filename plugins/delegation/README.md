@@ -35,6 +35,8 @@ It reads `<config>/projects` (`CLAUDE_CONFIG_DIR`, else `~/.claude`), or `--proj
 | M7 | MCP result volume, by server and tool | the tool results |
 | M9 | Would-block events of the `guard-agent-type` hook in `log` mode | its event log, when there is one |
 
+A token count reads a message's usage once, though the transcript repeats it on each record the message is split into (one per content block, same `message.id`).
+
 A snapshot holds aggregates only: counts, sizes, shares, and the names of tools, agent types and skills. No prompt, description, session title, path or result text, so a snapshot taken on one machine can be shared from it.
 
 ## Evals (M8)
