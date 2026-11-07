@@ -6,7 +6,7 @@ For a run that should go on while you are away, overnight for instance, on a seq
 
 Two ways to start one:
 
-- **A new run:** `toolbox session create --afk '<goal>' [--until <when>] [--yolo] [-- <claude options>]`, which calls `toolbox session run --afk` (see [Relay](relay.md)). The goal is also the first prompt. Outside tmux, the run gets a tmux session of its own, `afk-<folder>`, which outlives its terminal tab: `tmux ls` lists it, `tmux attach -t afk-<folder>` rejoins it.
+- **A new run:** `toolbox session create --afk --prompt='<goal>' [--until <when>] [--yolo] [-- <claude options>]`, which calls `toolbox session run --afk` (see [Relay](relay.md)). The goal is also the first prompt. Outside tmux, the run gets a tmux session of its own, `afk-<folder>`, which outlives its terminal tab: `tmux ls` lists it, `tmux attach -t afk-<folder>` rejoins it. In a Rex pane, `toolbox rex-session run --afk '<goal>' [--until <when>] [--yolo]` runs it in the pane instead, so that its status reaches the tab (see [Rex](relay.md#rex)).
 - **From a running session:** `/handover:afk <goal> [until <when>]`, in a session the relay can reach (see [Terminals](relay.md#terminals)). The session starts on the goal right away; under tmux, its tmux session stops closing with its tab.
 
 Then:
@@ -20,7 +20,7 @@ AFK runs are unattended: start them with the permissions they need (an auto or a
 
 ## YOLO
 
-`toolbox session create --afk --yolo '<goal>'` (or `toolbox session run --afk '<goal>' --yolo`) runs without any permission prompt: `--dangerously-skip-permissions`, for a run that must not wait on you at all. Use it on a machine or a project where the worst a wrong command does is acceptable.
+`toolbox session create --afk --yolo --prompt='<goal>'` (or `toolbox session run --afk '<goal>' --yolo`) runs without any permission prompt: `--dangerously-skip-permissions`, for a run that must not wait on you at all. Use it on a machine or a project where the worst a wrong command does is acceptable.
 
 What it still holds back:
 
