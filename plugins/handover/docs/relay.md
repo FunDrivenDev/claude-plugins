@@ -4,7 +4,7 @@ Hand over without typing `/clear` yourself, under tmux, in Rex, or in any termin
 
 Two ways to turn the relay on:
 
-- **For a whole session:** start it with `toolbox session create` or `toolbox session run` (below), which set `HANDOVER_RELAY=1` and run `claude` inside a tmux session of their own when in neither tmux nor Rex. Arguments go to `claude`. Every handover of that session relays: the one the session asks for, and the automatic one at `trigger_tokens`.
+- **For a whole session:** start it with `toolbox session create` or `toolbox session run` (below), which set `HANDOVER_RELAY=1` and run `claude` inside a tmux session of their own when outside tmux; in a Rex pane, with `toolbox rex-session run`, which keeps `claude` in the pane. Arguments go to `claude`. Every handover of that session relays: the one the session asks for, and the automatic one at `trigger_tokens`.
 - **From a running session:** type `/handover:relay [focus]`. The session hands over at the end of its turn, and the handover is relayed; the session must already run in a terminal the plugin can type into.
 
 Either way, every session the relay starts relays in turn, until the chain reaches `relay_limit`. The handover is written first, as for any handover; once the session has then written its closing reply (`Ready to hand over: run /clear.` and the resume message), the `Stop` hook hands over without you:
@@ -28,6 +28,7 @@ toolbox session create --afk --yolo '<goal>' [--until <when>] [-- <claude option
 toolbox session list                        # the sessions
 toolbox session attach <name>               # rejoins one
 toolbox session run [claude args]           # the relay itself, arguments passed to claude untouched
+toolbox rex-session run [claude args]       # the same in a Rex pane, without tmux
 ```
 
 `scripts/claude-relay` remains as a shim for older callers: it runs `toolbox session run` with its arguments, and fails with an install hint when toolbox is missing. The contract between toolbox and `handover.py` (the `HANDOVER_*` variables, `handover.py until` and `yolo-settings`) is documented in toolbox's [`docs/handover-relay.md`](https://github.com/FunDrivenDev/toolbox/blob/main/docs/handover-relay.md).
@@ -47,9 +48,9 @@ Everything the plugin does to a terminal goes through one port, `scripts/termina
 
 ### Rex
 
-Rex's own status on the tab needs `claude` directly in the pane, as it does not cross tmux. So in Rex, `toolbox session run` starts no tmux.
+Rex's own status on the tab needs `claude` directly in the pane, as it does not cross tmux. So in Rex, start the relay with `toolbox rex-session run`, which starts no tmux (`toolbox session run` there would start one).
 
-A pane program dies with its tab and with the Rex server, and a Rex update restarts the server. An AFK run comes back from a restart: Rex restores the pane with a shell, and the plugin types `toolbox session run --afk <goal> --resume <session>` there, within 5 minutes of the server's return. A closed tab ends the run, with an alert giving the resume command. A reboot sends Claude Code no `SessionEnd`, so it is not covered. A relay outside AFK mode is not resumed.
+A pane program dies with its tab and with the Rex server, and a Rex update restarts the server. An AFK run comes back from a restart: Rex restores the pane with a shell, and the plugin types `toolbox rex-session run --afk <goal> --resume <session>` there, within 5 minutes of the server's return. A closed tab ends the run, with an alert giving the resume command. A reboot sends Claude Code no `SessionEnd`, so it is not covered. A relay outside AFK mode is not resumed.
 
 ### Any other terminal
 

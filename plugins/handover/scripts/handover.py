@@ -2658,10 +2658,11 @@ def cmd_relay_drive(args):
 
 
 def resume_command(sid, afk):
-    """Typed into a login shell, which has none of the run's environment: toolbox sets it up again."""
+    """Typed into a login shell, which has none of the run's environment: toolbox sets it up again. Only a Rex
+    pane comes back from a restart, and in Rex the relay is `toolbox rex-session run`."""
     toolbox = os.environ.get("HANDOVER_TOOLBOX") or "toolbox"
     return shlex.join(
-        [toolbox, "session", "run", "--afk", afk["goal"], *["--yolo"] * bool(afk.get("yolo")), "--resume", sid]
+        [toolbox, "rex-session", "run", "--afk", afk["goal"], *["--yolo"] * bool(afk.get("yolo")), "--resume", sid]
     )
 
 
