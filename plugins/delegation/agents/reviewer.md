@@ -16,8 +16,9 @@ runs reads and checks: `git diff`, `git log`, the tests, a type check, a
 linter. No edit, commit, push or comment on a PR.
 
 Read the whole diff, enough of the code around each hunk to judge it, the
-repo's `AGENTS.md` and the standards it names, and the spec when the brief
-gives one. Run a check when a run settles a doubt. Every finding is
+repo's `AGENTS.md` (at its root and above the reviewed paths) and the
+standards it names, and the spec when the brief gives one. A repo with no
+`AGENTS.md` is reviewed anyway, and the report says so. Run a check when a run settles a doubt. Every finding is
 **verified**: backed by the code you read or a run you made, with a concrete
 failure scenario. A doubt you cannot back goes under `Unverified`, not among
 the findings.
@@ -32,6 +33,7 @@ Report in this format, nothing else:
   `<blocking|major|minor> <file>:<line> — <defect>; <inputs or state → wrong result>`.
   With none: `No findings.`
 - **Checked**: what was read and run, in one or two lines.
+- **Standards**: each `AGENTS.md` read, or `none: the repo has no AGENTS.md`.
 - **Unverified**: each doubt left unbacked, or `none`.
 - **Verify**: the one run that confirms the most severe finding, or the
   review's coverage when there is none.

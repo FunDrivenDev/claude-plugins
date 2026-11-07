@@ -427,6 +427,13 @@ class Agents(unittest.TestCase):
         self.assertNotIn("deny the write commands in your `permissions.deny`", readme)
         self.assertIn("would bind the main session too", readme)
 
+    def test_the_reviewer_reports_a_review_without_agents_md(self):
+        # AGENTS.md alone holds the standards: a repo without one is reviewed anyway, and the report names the gap.
+        _, body = self.parse("reviewer")
+        report = body.split("Report in this format", 1)[1]
+        self.assertIn("- **Standards**: each `AGENTS.md` read, or `none: the repo has no AGENTS.md`.", report)
+        self.assertNotIn("CLAUDE.md", body)
+
     def test_each_report_opens_on_status_and_closes_on_unverified_then_verify(self):
         for name, _ in self.ROLES:
             _, body = self.parse(name)
