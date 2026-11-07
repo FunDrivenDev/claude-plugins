@@ -751,14 +751,21 @@ def input_spec(cmd):
     }
 
 
+def read_snapshot(path):
+    try:
+        doc = json.loads(path.read_text())
+    except OSError as e:
+        raise Failure("not_found", f"cannot read a snapshot: {e}") from None
+    except json.JSONDecodeError as e:
+        raise Failure("invalid", f"a snapshot is not JSON: {path}: {e}") from None
+    if not isinstance(doc, dict) or "schema" not in doc:
+        raise Failure("invalid", f"not a snapshot (no schema field): {path}")
+    return doc
+
+
 def run(cmd, params, json_out):
     if cmd == ("snapshot", "compare"):
-        try:
-            before, after = (json.loads(params[n].read_text()) for n in ("before", "after"))
-        except OSError as e:
-            raise Failure("not_found", f"cannot read a snapshot: {e}") from None
-        except json.JSONDecodeError as e:
-            raise Failure("invalid", f"a snapshot is not JSON: {e}") from None
+        before, after = (read_snapshot(params[n]) for n in ("before", "after"))
         rows = compare(before, after)
         return json.dumps(rows, indent=2) if json_out else compare_markdown(before, after, rows)
 
@@ -768,8 +775,11 @@ def run(cmd, params, json_out):
     s = snapshot(projects, params.get("since"), params.get("until"), params.get("guard-log") or default_guard_log())
     out = params.get("out")
     if out:
-        pathlib.Path(out + ".json").write_text(json.dumps(s, indent=2) + "\n")
-        pathlib.Path(out + ".md").write_text(markdown(s))
+        try:
+            pathlib.Path(out + ".json").write_text(json.dumps(s, indent=2) + "\n")
+            pathlib.Path(out + ".md").write_text(markdown(s))
+        except OSError as e:
+            raise Failure("not_found", f"cannot write --out={out}: {e}") from None
         paths = [out + ".json", out + ".md"]
         return json.dumps({"files": paths}) if json_out else "\n".join(paths)
     return json.dumps(s, indent=2) if json_out else markdown(s)

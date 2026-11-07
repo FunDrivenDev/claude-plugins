@@ -426,6 +426,27 @@ class Cli(unittest.TestCase):
         code, _, err = self.run_cli("snapshot", "compare", "--before=/no/a", "--after=/no/b", "--json")
         self.assertEqual((code, json.loads(err)["error"]["code"]), (1, "not_found"))
 
+    def test_compare_of_json_that_is_not_a_snapshot_fails_with_invalid(self):
+        prefix = str(self.tmp / "valid")
+        self.run_cli("snapshot", "take", f"--out={prefix}")
+        for i, text in enumerate(("[]", '{"a": 1}')):
+            other = self.tmp / f"not-a-snapshot-{i}.json"
+            other.write_text(text)
+            code, out, err = self.run_cli(
+                "snapshot", "compare", f"--before={prefix}.json", f"--after={other}", "--json"
+            )
+            self.assertEqual((code, out), (1, ""), text)
+            self.assertEqual(json.loads(err)["error"]["code"], "invalid", text)
+            self.assertIn(str(other), json.loads(err)["error"]["message"], text)
+
+    def test_out_into_a_missing_folder_fails_with_not_found(self):
+        prefix = self.tmp / "no-such-folder" / "snap"
+        code, out, err = self.run_cli("snapshot", "take", f"--out={prefix}", "--json")
+        self.assertEqual((code, out), (1, ""))
+        self.assertEqual(json.loads(err)["error"]["code"], "not_found")
+        self.assertIn(str(prefix), json.loads(err)["error"]["message"])
+        self.assertFalse(prefix.parent.exists())
+
     def test_help_json_prints_the_input_spec(self):
         code, out, _ = self.run_cli("snapshot", "take", "--help", "--json")
         spec = json.loads(out)
