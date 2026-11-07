@@ -155,11 +155,39 @@ class Snapshot(unittest.TestCase):
                     "skill": "s",
                 },
                 {"ts": "2026-10-02T09:00:00Z", "decision": "allow", "agent_type": "Explore"},
+                {"ts": "2026-10-03T09:00:00Z", "decision": "block", "agent_type": "", "skill": "s"},
                 {"ts": "2026-11-20T09:00:00Z", "decision": "would-block", "agent_type": "claude"},
+                {"ts": "2026-11-20T09:00:00Z", "decision": "block", "agent_type": "fork"},
             ],
         )
         g = M.snapshot(self.projects, M.to_date("2026-09-01"), M.to_date("2026-10-31"), str(log))["guard"]
-        self.assertEqual(g, {"would_block": 1, "by_skill": {"s": 1}, "by_type": {"general-purpose": 1}})
+        self.assertEqual(
+            g,
+            {
+                "would_block": 1,
+                "blocked": 1,
+                "by_skill": {"s": 2},
+                "by_type": {"general-purpose": 1, "(untyped)": 1},
+                "bash": {"would_block": 0, "blocked": 0, "by_type": {}},
+            },
+        )
+
+    def test_blocked_events_show_in_the_markdown_and_the_compare(self):
+        log = self.tmp / "guard.jsonl"
+        write(log, [{"ts": "2026-10-03T09:00:00Z", "decision": "block", "agent_type": "claude"}])
+        s = M.snapshot(self.projects, M.to_date("2026-09-01"), M.to_date("2026-10-31"), str(log))
+        md = M.markdown(s)
+        self.assertIn("| M9 | Hook events (would-block, blocked) | 0, 1 |", md)
+        self.assertIn("| M9b | Agents' Bash writes (would-block, blocked) | 0, 0 |", md)
+        self.assertIn("M9 blocked", [name for name, _ in M.HEADLINES])
+
+    def test_every_headline_row_has_as_many_cells_as_its_header(self):
+        log = self.tmp / "guard.jsonl"
+        write(log, [{"ts": "2026-10-03T09:00:00Z", "decision": "block", "agent_type": "claude"}])
+        md = M.markdown(M.snapshot(self.projects, M.to_date("2026-09-01"), M.to_date("2026-10-31"), str(log)))
+        table = md.split("## Headline metrics\n\n", 1)[1].split("\n\n", 1)[0].splitlines()
+        cells = [len(row.strip("|").split("|")) for row in table]
+        self.assertEqual(cells, [cells[0]] * len(table), table)
 
 
 class RefusedAgentCalls(unittest.TestCase):
