@@ -9,7 +9,9 @@
 
 Mode, from DELEGATION_GUARD_MODE (a session's override), else the plugin's guard_mode option (the hook environment,
 then settings.json), else off. An invalid override is ignored with a one-line warning on stderr (exit 0: Claude Code
-shows it in verbose mode only, and the call is decided by the option); an invalid option is off:
+shows it in verbose mode only, and the call is decided by the option); an invalid option is off; a settings.json that
+cannot be read, or whose level on the way to the option is not an object, sets no option, with the same kind of
+warning:
 - off: nothing happens;
 - log: the call goes through, and a would-block event is appended to <plugin data>/guard-agent-type.jsonl;
 - block: the call is refused with what to do instead, and the refusal is logged.
@@ -86,15 +88,50 @@ def option_mode():
     v = os.environ.get("CLAUDE_PLUGIN_OPTION_GUARD_MODE")
     if v and v.strip():
         return normal(v)
+    path = config_dir() / "settings.json"
     try:
-        configs = json.loads((config_dir() / "settings.json").read_text()).get("pluginConfigs") or {}
-    except (OSError, ValueError):
-        configs = {}
+        return settings_mode(path)
+    except Malformed as e:
+        print(f"guard-agent-type: {path}: {e}, so it sets no guard_mode option: off", file=sys.stderr)
+        return "off"
+
+
+class Malformed(Exception):
+    """settings.json cannot be read, or a level on the way to the option is not an object."""
+
+
+JSON_TYPES = {list: "an array", str: "a string", bool: "a boolean", int: "a number", float: "a number"}
+
+
+def json_object(value, where):
+    """value if it is an object, {} if it is null or absent, else Malformed."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise Malformed(f"{where} is {JSON_TYPES.get(type(value), 'another type')}, not an object")
+    return value
+
+
+def settings_mode(path):
+    """The guard_mode option in settings.json's pluginConfigs: off when the file or a level is missing."""
+    try:
+        text = path.read_text()
+    except FileNotFoundError:
+        return "off"
+    except OSError as e:
+        raise Malformed(f"it cannot be read ({e.strerror or e})") from e
+    try:
+        settings = json.loads(text)
+    except ValueError as e:
+        raise Malformed("it is not valid JSON") from e
+    configs = json_object(json_object(settings, "the file").get("pluginConfigs"), "pluginConfigs")
     name = data_dir().name
     key = "delegation@" + name.removeprefix("delegation-") if name.startswith("delegation-") else None
     for k, v in configs.items():
         if k == key or (key is None and k.startswith("delegation@")):
-            return normal(str((v.get("options") or {}).get("guard_mode") or "off"))
+            entry = json_object(v, f"pluginConfigs[{k!r}]")
+            options = json_object(entry.get("options"), f"pluginConfigs[{k!r}].options")
+            return normal(str(options.get("guard_mode") or "off"))
     return "off"
 
 

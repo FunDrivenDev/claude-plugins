@@ -131,6 +131,33 @@ class Guard(Hook):
         self.assertIsNone(self.run_hook("fork", DELEGATION_GUARD_MODE="nope"))
         self.assertTrue(self.stderr.strip().endswith("option applies: off"), self.stderr)
 
+    def test_a_malformed_settings_file_sets_no_option_with_a_warning_and_never_crashes(self):
+        cases = {
+            "pluginConfigs is a list": {"pluginConfigs": ["delegation@market"]},
+            "the plugin's entry is a string": {"pluginConfigs": {"delegation@market": "block"}},
+            "its options level is not an object": {"pluginConfigs": {"delegation@market": {"options": "block"}}},
+            "the file is not an object": ["pluginConfigs"],
+            "the file is not JSON": "{",
+        }
+        for case, settings in cases.items():
+            with self.subTest(case):
+                text = settings if isinstance(settings, str) else json.dumps(settings)
+                (self.config / "settings.json").write_text(text)
+                # The option is unset, so off applies; the override still decides.
+                self.assertIsNone(self.run_hook("fork"))
+                self.assertEqual(len(self.stderr.strip().splitlines()), 1, self.stderr)
+                self.assertIn("settings.json", self.stderr)
+                self.assertTrue(self.stderr.strip().endswith("sets no guard_mode option: off"), self.stderr)
+                self.assertTrue(self.denied(self.run_hook("fork", DELEGATION_GUARD_MODE="block")))
+                self.assertEqual(len(self.stderr.strip().splitlines()), 1, self.stderr)
+
+    def test_a_null_level_in_settings_is_unset_without_a_warning(self):
+        for settings in ({"pluginConfigs": None}, {"pluginConfigs": {"delegation@market": {"options": None}}}):
+            with self.subTest(settings):
+                (self.config / "settings.json").write_text(json.dumps(settings))
+                self.assertIsNone(self.run_hook("fork"))
+                self.assertEqual(self.stderr, "")
+
     def test_a_valid_mode_writes_nothing_on_stderr(self):
         self.run_hook("claude", CLAUDE_PLUGIN_OPTION_GUARD_MODE="block", DELEGATION_GUARD_MODE="LOG")
         self.assertEqual(self.stderr, "")

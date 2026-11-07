@@ -43,7 +43,7 @@ Set it in `settings.json`:
 "pluginConfigs": { "delegation@fundrivendev": { "options": { "guard_mode": "log" } } }
 ```
 
-`DELEGATION_GUARD_MODE=off|log|block` in a session's environment overrides it for that session. An invalid override (a typo such as `blok`) is ignored with a one-line warning on stderr, and the option applies: a typo never turns `block` off. An invalid option is `off`. Any error in the hook lets the call through.
+`DELEGATION_GUARD_MODE=off|log|block` in a session's environment overrides it for that session. An invalid override (a typo such as `blok`) is ignored with a one-line warning on stderr, and the option applies: a typo never turns `block` off. An invalid option is `off`. A `settings.json` that cannot be read, or whose `pluginConfigs` level on the way to the option is not an object, sets no option, with a one-line warning. Any error in the hook lets the call through.
 
 ## Measure
 
