@@ -645,6 +645,15 @@ export const readThresholds = (
   return { thresholds, thresholdsError: null, pending: Object.keys(pending).length ? pending : null }
 }
 
+/**
+ * The writer's failure as the handover plugin's status line shows it: its state
+ * records `{at, message, reported}`, and the status line cuts the message at 60.
+ */
+export const writerError = (error: unknown): string | null => {
+  const message = typeof error === 'object' && error !== null ? (error as { message?: unknown }).message : undefined
+  return typeof message === 'string' && message ? message.slice(0, 60) : null
+}
+
 /** Reads the handover plugin's state for this session, as its status line does. */
 async function readHandover($: EngineInterface) {
   const sid = await $.session.id()
@@ -680,7 +689,7 @@ async function readHandover($: EngineInterface) {
     ...readThresholds(st, handoverOptions(settings)),
     isWriting: typeof writer?.since === 'number' && now - writer.since < 660,
     isWindingDown: Boolean(st.wind_down),
-    error: typeof st.error === 'string' ? st.error : null,
+    error: writerError(st.error),
     resume: said ? resumeMessage(said) : null,
   }
   await update($, handover, () => next)
