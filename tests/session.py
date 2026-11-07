@@ -1,5 +1,5 @@
-"""Unit tests of the handover plugin's session phase (scripts/session.py) and of the status line it drives
-(handover.py `status_line`): one case per phase and per flag combination today's transitions leave, the
+"""Unit tests of the handover plugin's session phase (scripts/session.py), its transitions, and the status line
+it drives (handover.py `status_line`): one case per phase and per flag combination the transitions leave, the
 contradictions the state survey found among them."""
 
 import os
@@ -70,6 +70,62 @@ class Phase(unittest.TestCase):
 
     def test_every_phase_is_reached(self):
         self.assertEqual({row[2] for row in PHASES}, set(S.PHASES))
+
+
+class Transitions(unittest.TestCase):
+    def test_lifecycle(self):
+        st = {}
+        self.assertTrue(S.wind_down(st, "trigger", 200_000))
+        self.assertEqual(S.phase(st), S.WINDING_DOWN)
+        self.assertFalse(S.wind_down(st, "request", 210_000))
+        self.assertEqual(st["cause"], "trigger")
+        S.held(st, NOW)
+        self.assertFalse(S.reply_owed(st))
+        S.reply_asked(st, False)
+        self.assertTrue(S.reply_owed(st))
+        S.reply_written(st)
+        self.assertEqual(S.phase(st), S.HANDED_OVER)
+        S.relayed(st, 1, "rex")
+        self.assertEqual(S.phase(st), S.RELAYING)
+
+    def test_halts_carry_their_reason(self):
+        for reason in ("limit", "deadline", "failed", "afk"):
+            with self.subTest(reason):
+                st = {}
+                S.halted(st, reason, 2, afk="done")
+                self.assertEqual((S.phase(st), S.halt_reason(st)), (S.HALTED, reason))
+
+    def test_a_cancelled_compaction_returns_to_the_phase_before_it(self):
+        # The survey's contradiction: keep_fresh outlived a cancelled compaction, and kept the wind-down off.
+        st = {"keep_fresh": True}
+        S.compaction_starts(st)
+        self.assertEqual(S.phase(st), S.COMPACTING)
+        self.assertFalse(S.wind_down(st, "cli", 1))
+        S.active(st)
+        self.assertEqual(st, {})
+        self.assertTrue(S.wind_down(st, "cli", 1))
+        S.compaction_starts(st)
+        S.active(st)
+        self.assertEqual(S.phase(st), S.WINDING_DOWN)
+
+    def test_a_compaction_starts_the_session_over(self):
+        st = {"wind_down": True, "compacting": True, "reply_due": True, "written": WRITTEN, "afk": {"goal": "g"}}
+        S.compacted(st)
+        self.assertEqual(st, {"afk": {"goal": "g"}})
+
+    def test_a_handover_asked_again_owes_a_new_reply(self):
+        st = {"wind_down": True, "closing_reply": True, "reply_due": True, "held_since": NOW}
+        S.requested(st)
+        self.assertEqual(S.phase(st), S.WINDING_DOWN)
+        self.assertFalse(S.reply_owed(st))
+        self.assertTrue(st["user_notified"] and st["wind_down_sent"])
+
+    def test_a_restart_keeps_the_thresholds(self):
+        # The survey's contradiction: each SessionStart, a compaction's or a resume's, recomputed them.
+        st = {}
+        S.started(st, {"trigger_tokens": 1}, "1.0.0")
+        S.started(st, {"trigger_tokens": 2}, "1.1.0")
+        self.assertEqual(st, {"thresholds": {"trigger_tokens": 1}, "plugin_version": "1.0.0"})
 
 
 def line(st, tokens=0, prog=None):

@@ -14,6 +14,7 @@ os.environ.update(HOME=HOME, CLAUDE_PLUGIN_DATA=DATA)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "plugins", "handover", "scripts"))
 
 import handover as H
+import session as S
 
 started = []
 H.start_writer = lambda st, sid, cause: started.append((sid, cause))
@@ -41,7 +42,7 @@ def closed_session(sid, written_at=235_000):
         "written": {"ok": True, "tokens": written_at},
         "reply_offset": os.path.getsize(transcript),
     }
-    H.write_json(H.state_path(sid), st)
+    H.write_json(S.path(sid), st)
     return transcript
 
 
@@ -66,14 +67,14 @@ class RefreshAtTheEnd(unittest.TestCase):
 
     def test_a_failed_handover_is_written_at_the_end(self):
         transcript = closed_session("failed")
-        with H.locked_state("failed") as st:
+        with S.locked("failed") as st:
             st["written"] = {"ok": False}
         append(transcript, assistant(237_300))
         self.assertEqual(end("failed", transcript), ["session_end"])
 
     def test_without_a_closing_reply_the_rule_is_unchanged(self):
         transcript = closed_session("no-reply")
-        with H.locked_state("no-reply") as st:
+        with S.locked("no-reply") as st:
             st.pop("reply_offset")
         append(transcript, assistant(237_300))
         self.assertEqual(end("no-reply", transcript), ["session_end"])

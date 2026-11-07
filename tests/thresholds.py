@@ -21,6 +21,7 @@ for k in [k for k in os.environ if k.startswith(("CLAUDE_PLUGIN_OPTION_", "HANDO
 sys.path.insert(0, os.path.dirname(SCRIPT))
 
 import handover as H
+import session as S
 
 PLUGIN = H.plugin_json()
 DEFAULTS = {k: v["default"] for k, v in PLUGIN["userConfig"].items()}
@@ -44,7 +45,7 @@ def start(sid, **env):
         text=True,
         check=True,
     )
-    return H.read_json(H.state_path(sid), {})
+    return S.read(sid)
 
 
 def statusline(sid, tokens):
@@ -103,7 +104,7 @@ class PerSession(unittest.TestCase):
         cfg = H.session_config("old")
         self.assertEqual((cfg["suggest"], cfg["trigger"]), (200_000, 250_000))
         self.assertEqual(start("new")["thresholds"]["trigger_tokens"], 120_000)
-        self.assertEqual(H.read_json(H.state_path("old"))["thresholds"]["trigger_tokens"], 250_000)
+        self.assertEqual(H.read_json(S.path("old"))["thresholds"]["trigger_tokens"], 250_000)
 
     def test_two_sessions_never_move_each_others_thresholds(self):
         start("x", suggest_tokens=100000, trigger_tokens=120000)
@@ -119,10 +120,10 @@ class PerSession(unittest.TestCase):
 
     def test_the_start_record_alone_does_not_wake_the_activity_hooks(self):
         start("idle")
-        self.assertFalse(H.tracked("idle"))
-        with H.locked_state("idle") as st:
+        self.assertFalse(S.tracked("idle"))
+        with S.locked("idle") as st:
             st["transcript"] = "/t"
-        self.assertTrue(H.tracked("idle"))
+        self.assertTrue(S.tracked("idle"))
 
     def test_no_shared_options_file_is_written(self):
         start("z")
