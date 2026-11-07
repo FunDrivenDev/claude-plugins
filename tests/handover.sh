@@ -50,7 +50,7 @@ echo '{"hook_event_name": "SubagentStart", "session_id": "s1", "agent_id": "a1",
 out=$(handover request --cause user --session s1 2>&1) && code=0 || code=$?
 same "the request is accepted" 0 "$code"
 same "the session is told subagents may still run" 1 "$(grep -c 'may still run (1 counted)' <<<"$out")"
-same "the wind-down starts" true "$(jq -r '.wind_down != null' "$data/handover-fundrivendev/sessions/s1.json" 2>/dev/null)"
+same "the wind-down starts" true "$(jq -r '.phase == "winding_down"' "$data/handover-fundrivendev/sessions/s1.json" 2>/dev/null)"
 
 echo "handover: the running subagents are kept up to date outside a handover"
 sessions="$data/handover-fundrivendev/sessions"
