@@ -1,10 +1,10 @@
 {
   "name": "handover",
   "description": "Hand a session over to a fresh one before its context fills up: a separate model writes the handover from the transcript, /clear loads it",
-  "version": "0.24.1",
+  "version": "0.24.2",
   "author": {
-    "name": "Raphaël Louvradoux",
-    "url": "https://github.com/rlvdx"
+    "name": "FunDrivenDev",
+    "url": "https://github.com/FunDrivenDev"
   },
   "repository": "https://github.com/FunDrivenDev/claude-plugins",
   "userConfig": {
