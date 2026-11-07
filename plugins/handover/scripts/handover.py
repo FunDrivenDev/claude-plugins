@@ -15,6 +15,7 @@ transcript, never by the session whose context is full.
                                        waited on for `await_minutes`
     handover.py wake-timeout ...       the detached safety net of a kill or a notice that should wake the session
     handover.py statusline             the session's handover state, status-line payload on stdin
+    handover.py state --session ID     the session's handover state for the session-mods pane, as JSON
     handover.py relay-drive ...        the relay's detached second half, started by the hooks
     handover.py relay-recover ...      detached, after a host ended the session: resume the AFK run in the restored pane
     handover.py terminal <verb> ...    run a verb of the session's terminal (terminal.py), as JSON
@@ -118,7 +119,6 @@ WARN_TOKENS = 20_000
 DEFAULT_COMPACT_WINDOW = 200_000
 # How long the Stop hook holds the session while the writer works, within the hook's timeout in hooks.json.
 STOP_WRITE_SECONDS = 240
-WRITER_TIMEOUT = 600
 CLEAR_HANDOVER_SECONDS = 300
 # After the plugin kills a command, or a subagent's notice is late, how long the turn it should wake is waited for.
 WAKE_SECONDS = 20
@@ -374,19 +374,6 @@ def compaction_conflict(cfg, cwd):
     )
 
 
-def writer_running(st):
-    r = st.get("writer")
-    if not r:
-        return False
-    if time.time() - r.get("since", 0) > WRITER_TIMEOUT + 60:
-        return False
-    try:
-        os.kill(r["pid"], 0)
-    except (OSError, KeyError):
-        return False
-    return True
-
-
 def needs_refresh(st, tokens):
     written = st.get("written") or {}
     return not written.get("ok") or abs(tokens - written.get("tokens", 0)) > config()["refresh"]
@@ -421,7 +408,7 @@ def detach(args, stderr=subprocess.DEVNULL, env=None):
 
 def start_writer(st, sid, cause):
     """Start the writer detached, so it outlives the hook and the session."""
-    if writer_running(st):
+    if S.writing(st):
         return
     with open(os.path.join(data_dir(), "sessions", f"{sid}.log"), "a") as log:
         pid = detach(["write", "--session", sid, "--cause", cause], log)
@@ -453,7 +440,7 @@ def wait_for(sid, seconds):
     deadline = time.time() + seconds
     while True:
         st = S.read(sid)
-        if not writer_running(st) or time.time() >= deadline:
+        if not S.writing(st) or time.time() >= deadline:
             return st
         time.sleep(1)
 
@@ -468,14 +455,14 @@ def write_now(sid, cause, seconds):
     for attempt in (1, 2, 3):
         t0 = time.time()
         with S.locked(sid) as st:
-            if not writer_running(st):
+            if not S.writing(st):
                 if not needs_refresh(st, T.context_tokens(st["transcript"])[0]):
                     return "written", st
                 if attempt == 3:
                     break
                 start_writer(st, sid, cause)
         st = wait_for(sid, deadline - time.time())
-        if writer_running(st):
+        if S.writing(st):
             return "slow", st
         if (st.get("error") or {}).get("at", 0) >= t0 and (attempt > 1 or deadline - time.time() < 60):
             return "failed", st
@@ -827,6 +814,27 @@ def turn_since(transcript, offset, types=("user", "assistant")):
     return False
 
 
+def answered_since(transcript, offset):
+    """Whether the session answered something that came in past `offset`: a user entry, then an assistant one. A
+    local command (`/usage`, `/rename`) writes user entries that no turn answers, and the closing reply itself may
+    reach the transcript after the offset."""
+    asked = False
+    with contextlib.suppress(OSError), open(transcript, "rb") as f:
+        f.seek(offset)
+        for line in f.read().decode("utf-8", "replace").splitlines():
+            with contextlib.suppress(ValueError):
+                e = json.loads(line)
+                if not isinstance(e, dict) or e.get("isSidechain"):
+                    continue
+                content = (e.get("message") or {}).get("content") if isinstance(e.get("message"), dict) else None
+                local = isinstance(content, str) and content.lstrip().startswith(("<command-name>", "<local-command-"))
+                if e.get("type") == "user" and not e.get("isMeta") and not local:
+                    asked = True
+                elif e.get("type") == "assistant" and asked:
+                    return True
+    return False
+
+
 def cmd_wake_timeout(args):
     """With no turn woken by the kill or the notice within the wait, write the handover here and hand over without a
     closing reply: the relay resumes with a generic message, the user reads the status line."""
@@ -839,7 +847,7 @@ def cmd_wake_timeout(args):
             return 0
         S.reply_asked(st, False)
         cause = st.get("cause") or "trigger"
-    outcome, _ = write_now(args.session, cause, WRITER_TIMEOUT)
+    outcome, _ = write_now(args.session, cause, S.WRITER_TIMEOUT)
     with S.locked(args.session) as st:
         if S.replied(st):
             return 0
@@ -959,7 +967,7 @@ def run_writer(cmd, prompt, cwd, progress):
     save(force=True)
     with tempfile.TemporaryFile("w+") as err:
         p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err, text=True, cwd=cwd)
-        killer = threading.Timer(WRITER_TIMEOUT, p.kill)
+        killer = threading.Timer(S.WRITER_TIMEOUT, p.kill)
         killer.start()
         result, tail = None, []
         try:
@@ -1368,7 +1376,7 @@ def on_activity(inp, cfg, event):
                     # Nothing left running: the handover is written now, from all of it, before the closing reply.
                     todo = "write"
                 elif CLEAR_RE.search(last) or st.get("reply_reminded"):
-                    S.reply_written(st)
+                    S.reply_written(st, resume_message(last))
                     record(
                         "closing_reply_written",
                         sid,
@@ -1423,7 +1431,7 @@ def model_warning(st):
 
 def written_line(st):
     """Where the handover stands, for the session's closing reply."""
-    if writer_running(st):
+    if S.writing(st):
         return "The handover is still being written; the new session waits for it."
     if (st.get("written") or {}).get("ok") and not st.get("write_failed"):
         return f"The handover is written: {st.get('path')}. Do not read it."
@@ -1459,11 +1467,11 @@ def close(sid, cfg, last):
     it written again first, so that the next session loads it at once."""
     tokens, _ = T.context_tokens(S.read(sid).get("transcript") or "")
     with S.locked(sid) as st:
-        stale = not writer_running(st) and needs_refresh(st, tokens)
+        stale = not S.writing(st) and needs_refresh(st, tokens)
     outcome, _ = write_now(sid, "reply", STOP_WRITE_SECONDS) if stale else (None, None)
     with S.locked(sid) as st:
         if outcome is None:
-            outcome = "slow" if writer_running(st) else "failed" if st.get("write_failed") else "written"
+            outcome = "slow" if S.writing(st) else "failed" if st.get("write_failed") else "written"
         S.wrote(st, outcome == "failed")
         # The closing reply (2K to 4K tokens) reaches the transcript after this hook: `reply_only` tells it from a
         # session that went on.
@@ -3001,7 +3009,7 @@ def on_session_start(inp):
             source="clear",
             chars=len(text or ""),
             waited_s=round(time.time() - t0),
-            refresh_running=writer_running(st),
+            refresh_running=S.writing(st),
         )
         if not text:
             return None
@@ -3009,7 +3017,7 @@ def on_session_start(inp):
             os.remove(latest_path)
         with S.locked(inp["session_id"]) as new:
             new.update(transcript=inp.get("transcript_path"), project=project_of(inp), loaded_from=st["path"])
-        note = "" if not writer_running(st) else " It may miss the last steps: its refresh was still running."
+        note = "" if not S.writing(st) else " It may miss the last steps: its refresh was still running."
         return {
             "systemMessage": f"handover: loaded {st['path']}",
             "hookSpecificOutput": {
@@ -3058,7 +3066,7 @@ def take_relay(inp):
         source="relay",
         chars=len(text or ""),
         waited_s=round(time.time() - t0),
-        refresh_running=writer_running(st),
+        refresh_running=S.writing(st),
     )
     write_json(relay_marker(pending["session"]), {"ok": bool(text)})
     if not text:
@@ -3127,7 +3135,7 @@ def after_compact(inp):
         source="compact",
         chars=len(text or ""),
         waited_s=round(time.time() - t0),
-        refresh_running=writer_running(st),
+        refresh_running=S.writing(st),
     )
     with S.locked(sid) as st:
         # The session starts over from a small context: wind down and notify again at the next trigger.
@@ -3227,6 +3235,24 @@ def cmd_status(args):
     return 0
 
 
+def cmd_state(args):
+    """The session's handover state for the session-mods pane (D18), computed by session.py: the pane runs this
+    command and renders its answer, without reading the plugin's files."""
+    sid = args.session
+    try:
+        resolved = thresholds(config())
+    except (ValueError, OverflowError, TypeError):
+        # Options that do not resolve: no pending thresholds, the rest of the state still answers.
+        resolved = None
+    st = S.read(sid)
+    # The session went on after its closing reply: its resume message may name a step since done.
+    offset = st.get("reply_offset")
+    went_on = isinstance(offset, int) and answered_since(st.get("transcript") or "", offset)
+    out = S.view(st, os.path.exists(live_path(sid)), resolved, went_on)
+    print(json.dumps(out) if args.json else json.dumps(out, indent=1))
+    return 0
+
+
 # Status line colours, bold for the host's dimColor wrapper (same palette as a typical statusline.sh).
 C = {
     "gray": "\033[1;38;5;245m",
@@ -3249,9 +3275,9 @@ def status_line(st, prog, tokens, cfg):
     """(colour, text) of the session's handover state, for the status line; the first line shows the tokens."""
     written, trig, suggest = st.get("written") or {}, cfg["trigger"], cfg["suggest"]
     error = st.get("error") or {}
-    if error and not written.get("ok") and not writer_running(st):
+    if error and not written.get("ok") and not S.writing(st):
         return "red", f"Handover failed · {error['message'][:60]}"
-    if writer_running(st):
+    if S.writing(st):
         verb = "refreshing" if written.get("ok") else "writing"
         step = (prog or {}).get("phase")
         if step == "writing":
@@ -3898,6 +3924,9 @@ def main():
         "--audit", metavar="RUN", help="check an AFK run's audit log (hash chain, length at the end) and plugin hash"
     )
     sub.add_parser("statusline")
+    sv = sub.add_parser("state", help="the session's handover state for the session-mods pane")
+    sv.add_argument("--session", required=True)
+    sv.add_argument("--json", action="store_true", help="on one line, for a program to read")
     c = sub.add_parser("config", help="the options with their default and current value, as JSON")
     c.add_argument(
         "--set", metavar="JSON", help="save these option values, a JSON object; options left out keep theirs"
@@ -3939,6 +3968,7 @@ def main():
         "status": cmd_status,
         "stats": cmd_stats,
         "statusline": cmd_statusline,
+        "state": cmd_state,
         "relay-drive": cmd_relay_drive,
         "relay-recover": cmd_relay_recover,
         "terminal": cmd_terminal,

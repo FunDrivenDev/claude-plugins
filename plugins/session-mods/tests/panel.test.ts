@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { ago, cleanTitle, clockTime, handoverPhase, phaseLine, describeCall, fileMeta, handoverStatus, handoverTitle, headline, isWoundDown, lastSentence, previousPrompts, promptText, readThresholds, resumeMessage, writerError } from '../hooks/panel'
+import { ago, cleanTitle, clockTime, handoverPhase, phaseLine, describeCall, fileMeta, handoverStatus, headline, lastSentence, previousPrompts, promptText } from '../hooks/panel'
+import { HANDOVER_STATE } from '../hooks/handover'
 
 const PANE = {
   component: 'Pane',
@@ -17,17 +18,6 @@ const PANE = {
 
 const typed = (text: string) => ({ text, wait: false, origin: { kind: 'composer' } as const })
 
-describe('isWoundDown', () => {
-  test('reads the phase, the interrupted one in a compaction, and an older plugin version\'s flag', () => {
-    expect(isWoundDown({})).toBe(false)
-    expect(isWoundDown({ phase: 'winding_down' })).toBe(true)
-    expect(isWoundDown({ phase: 'handed_over' })).toBe(true)
-    expect(isWoundDown({ phase: 'compacting' })).toBe(false)
-    expect(isWoundDown({ phase: 'compacting', phase_before: 'winding_down' })).toBe(true)
-    expect(isWoundDown({ wind_down: true })).toBe(true)
-  })
-})
-
 describe('helpers', () => {
   test('names models and durations calmly', async () => {
     expect(ago(125_000)).toBe('2 min ago')
@@ -35,8 +25,6 @@ describe('helpers', () => {
     expect(headline('Read the pane example first. Then write it.')).toBe('Read the pane example first.')
     expect(describeCall('Bash', { command: 'ls -la' })).toBe('Bash: ls -la')
     expect(lastSentence('Read the types. Then search engine types for link supp')).toBe('Read the types.')
-    expect(handoverTitle('---\nstatus: done\nsummary: "panel corner"\n---\n# Handover: x')).toBe('panel corner')
-    expect(handoverTitle('# Handover: session-panel tracker\n')).toBe('session-panel tracker')
     expect(fileMeta(142, new Date(2026, 9, 7, 9, 32).getTime())).toBe('142 lines · 2026-10-07 09:32')
     expect(fileMeta(1, null)).toBe('1 line')
     expect(previousPrompts(11)).toBe('11 previous prompts')
@@ -45,25 +33,13 @@ describe('helpers', () => {
     expect(clockTime(new Date(2026, 9, 8, 9, 5).getTime())).toBe('09:05')
     expect(fileMeta(null, null)).toBeNull()
     const thresholds = { suggest: 150_000, warnAt: 167_500, trigger: 185_000 }
-    const ho = { isOn: true, loaded: null, written: null, thresholds, thresholdsError: null, pending: null, isWriting: false, isWindingDown: false, error: null, resume: null }
+    const ho = { isOn: true, unknown: null, loaded: null, written: null, thresholds, thresholdsError: null, pending: null, isWriting: false, isWindingDown: false, error: null, resume: null }
     expect(handoverStatus(ho, 92_000).text).toBe('triggers at 185k · now 92k')
     expect(handoverStatus(ho, 167_000).color).toBe('#a5adce')
     expect(handoverStatus(ho, 167_500).color).toBe('#e5c890')
     expect(handoverStatus({ ...ho, thresholds: null, thresholdsError: 'why' }, 92_000)).toEqual({ text: 'thresholds unknown · why', color: '#e78284' })
     expect(handoverPhase({ ...ho, thresholds: null, thresholdsError: 'why' }, 190_000)).toBeNull()
-    const recorded = { thresholds: { suggest_tokens: 200_000, warn_at_tokens: 225_000, trigger_tokens: 250_000 }, plugin_version: '0.20.0' }
-    expect(readThresholds(recorded, {})).toEqual({ thresholds: { suggest: 200_000, warnAt: 225_000, trigger: 250_000 }, thresholdsError: null, pending: null })
-    expect(readThresholds(recorded, { suggest_tokens: 200_000, trigger_tokens: 250_000 }).pending).toBeNull()
-    expect(readThresholds(recorded, { trigger_tokens: '120000' }).pending).toEqual({ trigger: 120_000 })
-    expect(readThresholds({}, {}).thresholdsError).toContain('older than 0.20.0')
-    expect(readThresholds({ ...recorded, thresholds: { suggest_tokens: 1, warn_at_tokens: 2, trigger_tokens: '3' } }, {}).thresholdsError).toBe(
-      "in this session's handover state (handover 0.20.0), not a number: thresholds.trigger_tokens",
-    )
     expect(handoverPhase(ho, 92_000)).toBeNull()
-    expect(writerError({ at: 1, message: 'claude -p exited 1', reported: false })).toBe('claude -p exited 1')
-    expect(writerError({ at: 1, message: 'x'.repeat(100) })).toBe('x'.repeat(60))
-    expect(writerError('a bare string')).toBeNull()
-    expect(writerError(undefined)).toBeNull()
     expect(handoverPhase({ ...ho, isWindingDown: true }, 92_000)).toBe('winding')
     expect(handoverPhase(ho, 190_000)).toBe('winding')
     expect(handoverPhase({ ...ho, isWriting: true }, 190_000)).toBe('writing')
@@ -284,16 +260,6 @@ test('a new session lists only the commits made since it began, in its linked wo
   await ui.unmount()
 })
 
-describe('colours and replies', () => {
-  test('read the resume message the closing reply ends on', () => {
-    const reply = 'Done.\n\nRun `/clear`, then send:\n\n```\nResume the session-panel work:\n  open the PR.\n```\n'
-    expect(resumeMessage(reply)).toBe('Resume the session-panel work: open the PR.')
-    expect(resumeMessage('```\nno clear before\n```')).toBeNull()
-    expect(resumeMessage('Run /clear.')).toBeNull()
-  })
-
-})
-
 test('the documents the session writes list under their kind, linked, by name, artifacts first', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
@@ -356,10 +322,10 @@ test('the Config tab lists each value the pane reads, as in effect, with its def
 test('the Config tab shows the thresholds this session runs with, and those set since for the next session', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 50_000 } as never, rateLimits: [] } }))
-  const state = { thresholds: { suggest_tokens: 200_000, warn_at_tokens: 225_000, trigger_tokens: 250_000 }, plugin_version: '0.20.0' }
+  const state = { on: true, thresholds: { suggest: 200_000, warn_at: 225_000, trigger: 250_000 }, pending: { trigger: 120_000 } }
   on('process.run', ($, e) => {
-    const isHandover = e.argv.some(arg => arg.includes('handover-fundrivendev'))
-    return { value: { exitCode: isHandover ? 0 : 1, stdout: isHandover ? `on\n@@\n${JSON.stringify(state)}` : '', stderr: '' } } as never
+    const answer = e.argv.includes(HANDOVER_STATE) ? { exitCode: 0, stdout: JSON.stringify(state) } : { exitCode: 1, stdout: '' }
+    return { value: { stderr: '', ...answer } } as never
   })
   on('session.id', () => ({ value: 's1' }) as never)
   on('session.start', ($, e) => ({ cwd: e.cwd }))
@@ -455,8 +421,8 @@ test('the handover section leaves its states to Help, and Hand over now starts t
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 50_000 } as never, rateLimits: [] } }))
   on('process.run', ($, e) => {
-    const isHandover = e.argv.some(arg => arg.includes('handover-fundrivendev'))
-    return { value: { exitCode: isHandover ? 0 : 1, stdout: isHandover ? 'on\n@@\n{}' : '', stderr: '' } } as never
+    const answer = e.argv.includes(HANDOVER_STATE) ? { exitCode: 0, stdout: '{"on": true}' } : { exitCode: 1, stdout: '' }
+    return { value: { stderr: '', ...answer } } as never
   })
   on('session.id', () => ({ value: 's1' }) as never)
   on('session.start', ($, e) => ({ cwd: e.cwd }))
@@ -484,27 +450,53 @@ test('the handover section leaves its states to Help, and Hand over now starts t
   await ui.unmount()
 })
 
+test('a handover plugin older than its state command leaves the section unknown', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 50_000 } as never, rateLimits: [] } }))
+  on('process.run', ($, e) => {
+    const answer = e.argv.includes(HANDOVER_STATE) ? { exitCode: 2, stdout: '', stderr: "handover.py: error: argument cmd: invalid choice: 'state'" } : { exitCode: 1, stdout: '' }
+    return { value: { stderr: '', ...answer } } as never
+  })
+  on('session.id', () => ({ value: 's1' }) as never)
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.model', () => ({ value: 'opus' }))
+  on('command.register', () => ({ value: undefined }) as never)
+  on('session.messages', () => ({ value: [] }))
+  on('ui.open', () => ({ value: undefined }) as never)
+  on('env.get', () => ({ value: undefined }))
+  on('settings.read', () => ({ value: {} }))
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+
+  const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+  expect(await ui.find({ text: /^Handover state unknown: .*older than 0\.29\.0\.$/ })).toBeDefined()
+  // Nothing is known of a loaded handover either: no `loaded none` line claims there was none.
+  expect(await ui.find({ text: /^none$/ })).toBeUndefined()
+  expect(await ui.find({ key: 'handover:trigger' })).toBeUndefined()
+  await ui.unmount()
+})
+
 const RESUME = 'Resume the session-panel work: open the PR.'
-const RESUME_REPLY = 'Done.\n\nRun `/clear`, then send:\n\n```\nResume the session-panel work:\n  open the PR.\n```\n'
 
 test('a written handover starts the next session with its resume message in one press, titled from its handover', async ($, on) => {
   const clock = mock.clock(on, { now: 1_000 })
   let sid = 's1'
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 50_000 } as never, rateLimits: [] } }))
+  const state = {
+    on: true,
+    written: { path: '/h/written.md', title: null, lines: null, modified_at: null },
+    loaded: { path: '/h/loaded.md', title: 'Ship the session panel', lines: 12, modified_at: 1 },
+    resume: RESUME,
+  }
   on('process.run', ($, e) => {
-    if (e.argv.some(arg => arg.includes('handover-fundrivendev'))) {
-      const state = { written: { ok: true }, path: '/h/written.md', loaded_from: '/h/loaded.md' }
-      return { value: { exitCode: 0, stdout: `on\n@@\n${JSON.stringify(state)}`, stderr: '' } } as never
-    }
-    if (e.argv.includes('/h/loaded.md')) return { value: { exitCode: 0, stdout: '---\nsummary: "Ship the session panel"\n---\n@@\n12\n1000', stderr: '' } } as never
-    return { value: { exitCode: 1, stdout: '', stderr: '' } } as never
+    const answer = e.argv.includes(HANDOVER_STATE) ? { exitCode: 0, stdout: JSON.stringify(state) } : { exitCode: 1, stdout: '' }
+    return { value: { stderr: '', ...answer } } as never
   })
   on('session.id', () => ({ value: sid }) as never)
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('session.model', () => ({ value: 'opus' }))
   on('command.register', () => ({ value: undefined }) as never)
   on('command.list', () => ({ value: [{ name: 'rename' }] }) as never)
-  on('session.messages', () => ({ value: [{ role: 'assistant', text: RESUME_REPLY }] }) as never)
+  on('session.messages', () => ({ value: [] }))
   on('ui.open', () => ({ value: undefined }) as never)
   on('ui.copy', () => ({ value: undefined }) as never)
   on('env.get', () => ({ value: undefined }))
