@@ -57,6 +57,8 @@ def bash_writes(command):
     return bool(BASH_WRITE.search(QUOTED.sub("''", bare)))
 
 
+# The patterns also match French words, so that briefs written in French (older sessions) get the same classes:
+# removing them would move those briefs to "other" and shift the baseline.
 CLASSES = [
     ("review", r"review|revue|relecture|audit|verif|vérif|check\b|critique|adversar|judge|disprove|prove"),
     ("research", r"research|recherch|prior art|compare|compar|best practice|web\b|survey|état de l'art|docs?\b"),
