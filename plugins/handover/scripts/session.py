@@ -95,8 +95,8 @@ def legacy_phase(st):
 
 def converted(st):
     """The state, its phase flags from an older plugin version turned into the `phase` field."""
-    # A relay outcome comes with its phase since that field exists: without it, the file is an older one.
-    if not any(k in st for k in LEGACY) and ("phase" in st or not st.get("relay_outcome")):
+    # Without them, the file is a new one, or an old one a compaction reset: working, its relay outcome a fact.
+    if not any(k in st for k in LEGACY):
         return st
     meant, compacting = legacy_phase(st), st.get("compacting")
     for k in LEGACY:
@@ -178,7 +178,7 @@ def started(st, thresholds, version):
 def wind_down(st, cause, tokens):
     """The wind-down starts: the session starts no new task and finishes those in progress. False when it is
     winding down already. Asked for during a compaction, it outlives a cancelled one."""
-    if st.get("wind_down"):
+    if wound_down(st):
         return False
     st.update(wind_down_tokens=tokens, cause=cause)
     enter(st, WINDING_DOWN)
@@ -191,7 +191,8 @@ def requested(st):
     st["user_notified"] = st["wind_down_sent"] = True
     for k in CLOSING:
         st.pop(k, None)
-    if settled(st) == HANDED_OVER:
+    if replied(st):
+        # Past the closing reply, the relay's end included: the handover and the reply are due again.
         enter(st, WINDING_DOWN)
 
 

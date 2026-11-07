@@ -54,10 +54,20 @@ PHASES = [
         None,
     ),
     ("relay limit", {"closing_reply": True, "relay_outcome": {"limit": True, "n": 5}}, S.HALTED, False, "limit"),
-    ("AFK deadline", {"relay_outcome": {"limit": True, "n": 2, "deadline": True}}, S.HALTED, False, "deadline"),
-    ("relay failed", {"relay_outcome": {"failed": True, "n": 1}}, S.HALTED, False, "failed"),
-    ("AFK run ended", {"relay_outcome": {"afk": "done", "n": 3}}, S.HALTED, False, "afk"),
+    (
+        "AFK deadline",
+        {"closing_reply": True, "relay_outcome": {"limit": True, "n": 2, "deadline": True}},
+        S.HALTED,
+        False,
+        "deadline",
+    ),
+    ("relay failed", {"closing_reply": True, "relay_outcome": {"failed": True, "n": 1}}, S.HALTED, False, "failed"),
+    ("AFK run ended", {"closing_reply": True, "relay_outcome": {"afk": "done", "n": 3}}, S.HALTED, False, "afk"),
 ]
+
+
+# An older version's halted session, after a compaction reset its flags: working again.
+PHASES.append(("halted, then compacted", {"relay_outcome": {"limit": True, "n": 5}}, S.WORKING, False, None))
 
 
 class Phase(unittest.TestCase):
@@ -145,6 +155,27 @@ class Transitions(unittest.TestCase):
         with S.locked("old") as st:
             self.assertEqual(st, {"phase": S.HANDED_OVER})
         self.assertEqual(H.read_json(S.path("old")), {"phase": S.HANDED_OVER})
+
+    def test_a_compaction_ends_a_halted_session_s_wind_down(self):
+        st = {}
+        S.wind_down(st, "trigger", 1)
+        S.reply_written(st)
+        S.halted(st, "limit", 5)
+        S.compaction_starts(st)
+        S.compacted(st)
+        st = S.converted(st)
+        self.assertEqual(S.phase(st), S.WORKING)
+        self.assertTrue(S.wind_down(st, "trigger", 2))
+
+    def test_a_handover_asked_after_the_relay_ended_owes_a_new_reply(self):
+        for reason in ("afk", "limit"):
+            with self.subTest(reason):
+                st = {}
+                S.wind_down(st, "trigger", 1)
+                S.reply_written(st)
+                S.halted(st, reason, 5, afk="done")
+                S.requested(st)
+                self.assertEqual(S.settled(st), S.WINDING_DOWN)
 
     def test_a_restart_keeps_the_thresholds(self):
         # The survey's contradiction: each SessionStart, a compaction's or a resume's, recomputed them.
