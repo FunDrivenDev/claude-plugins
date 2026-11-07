@@ -545,7 +545,7 @@ def agents_busy(sid, inp=None):
 def refuses_agents(st):
     """Past the suggestion, winding down, or past an AFK deadline: no new work, so no new subagent."""
     afk = st.get("afk") or {}
-    return bool(st.get("suggested") or st.get("wind_down") or afk.get("deadline_told"))
+    return bool(st.get("suggested") or S.wound_down(st) or afk.get("deadline_told"))
 
 
 NO_NEW_AGENT = (
@@ -835,13 +835,13 @@ def cmd_wake_timeout(args):
         # That turn's Stop writes the handover.
         return 0
     with S.locked(args.session) as st:
-        if st.get("closing_reply") or st.get("reply_due") or not st.get("woken"):
+        if S.replied(st) or st.get("reply_due") or not st.get("woken"):
             return 0
         S.reply_asked(st, False)
         cause = st.get("cause") or "trigger"
     outcome, _ = write_now(args.session, cause, WRITER_TIMEOUT)
     with S.locked(args.session) as st:
-        if st.get("closing_reply"):
+        if S.replied(st):
             return 0
         tokens, _ = T.context_tokens(args.transcript)
         S.reply_written(st)
@@ -1280,9 +1280,9 @@ def on_activity(inp, cfg, event):
         st.setdefault("project", project_of(inp))
         # The session works again: a compaction it was in is over, or was cancelled.
         S.active(st)
-        if st.get("wind_down") and event == "PostToolUse" and inp.get("tool_name") == "TaskStop":
+        if S.wound_down(st) and event == "PostToolUse" and inp.get("tool_name") == "TaskStop":
             session_stopped(st, sid, inp.get("tool_response"))
-        if not st.get("wind_down") and not st.get("suggested") and event == "PostToolUse" and suggesting(cfg, tokens):
+        if not S.wound_down(st) and not st.get("suggested") and event == "PostToolUse" and suggesting(cfg, tokens):
             st["suggested"] = True
             record("suggestion_sent", sid, tokens=tokens, suggest=cfg["suggest"], trigger=cfg["trigger"])
             later = f"the automatic handover at {cfg['trigger'] // 1000}K" if cfg["trigger"] else "auto-compaction"
@@ -1292,7 +1292,7 @@ def on_activity(inp, cfg, event):
             }
         if cfg["trigger"] and tokens >= cfg["trigger"]:
             start_wind_down(st, sid, "trigger", tokens, cfg)
-        wind_down, closing = st.get("wind_down"), st.get("wind_down") and not st.get("closing_reply")
+        wind_down, closing = S.wound_down(st), S.settled(st) == S.WINDING_DOWN
         if wind_down and not st.get("user_notified"):
             st["user_notified"] = True
             record("user_notified", sid, tokens=tokens)
@@ -1786,7 +1786,7 @@ def afk_on_activity(st, sid, inp, event):
             }
         return None
     # A wind-down under way, or one the relay could not make: the handover flow owns this stop.
-    if (st.get("wind_down") and not st.get("closing_reply")) or st.get("relay_outcome"):
+    if S.settled(st) == S.WINDING_DOWN or st.get("relay_outcome"):
         return None
     last = inp.get("last_assistant_message") or T.last_assistant_text(inp["transcript_path"]) or ""
     if blocked_by_refusal(st, last):
@@ -2112,7 +2112,7 @@ def on_pre_tool_use(inp):
         with S.locked(sid) as st:
             st["agents_refused"] = st.get("agents_refused", 0) + 1
             st["refused_call"] = refused_call(tool, ti)
-            if afk_goes_on(st) and not st.get("wind_down"):
+            if afk_goes_on(st) and not S.wound_down(st):
                 # Refused here, the work would wait for the user: the next session starts with it instead.
                 request_handover(
                     st,
@@ -2871,7 +2871,7 @@ def on_precompact(inp):
             sid,
             tokens=tokens,
             kind=inp.get("trigger"),
-            wind_down=bool(st.get("wind_down")),
+            wind_down=S.wound_down(st),
             compact_window=compact_window(),
         )
         # No wind-down: the handover is kept fresh for the summary the compaction loads it next to.

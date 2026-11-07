@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { ago, cleanTitle, clockTime, handoverPhase, phaseLine, describeCall, fileMeta, handoverStatus, handoverTitle, headline, lastSentence, previousPrompts, promptText, readThresholds, resumeMessage, writerError } from '../hooks/panel'
+import { ago, cleanTitle, clockTime, handoverPhase, phaseLine, describeCall, fileMeta, handoverStatus, handoverTitle, headline, isWoundDown, lastSentence, previousPrompts, promptText, readThresholds, resumeMessage, writerError } from '../hooks/panel'
 
 const PANE = {
   component: 'Pane',
@@ -16,6 +16,17 @@ const PANE = {
 } as const
 
 const typed = (text: string) => ({ text, wait: false, origin: { kind: 'composer' } as const })
+
+describe('isWoundDown', () => {
+  test('reads the phase, the interrupted one in a compaction, and an older plugin version\'s flag', () => {
+    expect(isWoundDown({})).toBe(false)
+    expect(isWoundDown({ phase: 'winding_down' })).toBe(true)
+    expect(isWoundDown({ phase: 'handed_over' })).toBe(true)
+    expect(isWoundDown({ phase: 'compacting' })).toBe(false)
+    expect(isWoundDown({ phase: 'compacting', phase_before: 'winding_down' })).toBe(true)
+    expect(isWoundDown({ wind_down: true })).toBe(true)
+  })
+})
 
 describe('helpers', () => {
   test('names models and durations calmly', async () => {

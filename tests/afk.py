@@ -62,7 +62,7 @@ class RefusedSubagent(unittest.TestCase):
         session("a1")
         self.assertEqual(refuse("a1"), H.AFK_AGENT_HANDOVER)
         st = state("a1")
-        self.assertTrue(st["wind_down"])
+        self.assertTrue(S.wound_down(st))
         self.assertIn("Workflow gs-dev-toolkit:review", st["focus"])
         self.assertIn("/tmp/wt", st["focus"])
         self.assertEqual(requested("a1"), ["agent_refused"])
@@ -77,14 +77,14 @@ class RefusedSubagent(unittest.TestCase):
     def test_outside_afk_the_refusal_only_tells_the_session(self):
         session("a3", afk=False)
         self.assertEqual(refuse("a3"), H.NO_NEW_AGENT)
-        self.assertFalse(state("a3").get("wind_down"))
+        self.assertFalse(S.wound_down(state("a3")))
 
     def test_past_the_afk_deadline_no_handover_starts(self):
         session("a4")
         with S.locked("a4") as st:
             st["afk"]["deadline_told"] = True
         self.assertEqual(refuse("a4"), H.NO_NEW_AGENT)
-        self.assertFalse(state("a4").get("wind_down"))
+        self.assertFalse(S.wound_down(state("a4")))
 
 
 class BlockedByRefusal(unittest.TestCase):
@@ -95,7 +95,7 @@ class BlockedByRefusal(unittest.TestCase):
         self.assertIn("Workflow gs-dev-toolkit:review", out["reason"])
         st = state("b1")
         self.assertFalse(st["afk"].get("ended"))
-        self.assertTrue(st["wind_down"])
+        self.assertTrue(S.wound_down(st))
         self.assertEqual(requested("b1"), ["afk_blocked"])
 
     def test_a_closing_reply_blocked_by_the_refusal_still_relays(self):
@@ -128,6 +128,27 @@ class Recovery(unittest.TestCase):
             H.terminal = real
         self.assertNotIn("recovering", state("r1"))
         self.assertIn("ended", state("r1")["afk"])
+
+
+class FailedRelay(unittest.TestCase):
+    def test_a_failed_relay_never_resumes_the_run(self):
+        # The relay outcome stays a fact past the phase: a session asked again, or compacted, is not kept going.
+        for after in ("request", "compaction"):
+            with self.subTest(after):
+                st = {"transcript": TRANSCRIPT}
+                session("f1")
+                st = state("f1")
+                S.wind_down(st, "trigger", 1)
+                S.reply_written(st)
+                S.halted(st, "failed", 1)
+                if after == "request":
+                    S.requested(st)
+                    S.reply_written(st)
+                else:
+                    S.compaction_starts(st)
+                    S.compacted(st)
+                inp = {"last_assistant_message": "done", "transcript_path": TRANSCRIPT}
+                self.assertIsNone(H.afk_on_activity(st, "f1", inp, "Stop"))
 
 
 if __name__ == "__main__":

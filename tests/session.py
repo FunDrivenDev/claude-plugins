@@ -20,7 +20,7 @@ NOW = time.time()
 WRITTEN = {"ok": True, "at": NOW}
 ERROR = {"at": NOW, "message": "the writer timed out", "reported": True}
 
-# (name, state, phase, closing reply owed, halt reason)
+# (name, state an older plugin version wrote, phase, closing reply owed, halt reason): the conversion of its flags.
 PHASES = [
     ("fresh session", {}, S.WORKING, False, None),
     ("suggested", {"suggested": True}, S.WORKING, False, None),
@@ -54,16 +54,32 @@ PHASES = [
         None,
     ),
     ("relay limit", {"closing_reply": True, "relay_outcome": {"limit": True, "n": 5}}, S.HALTED, False, "limit"),
-    ("AFK deadline", {"relay_outcome": {"limit": True, "n": 2, "deadline": True}}, S.HALTED, False, "deadline"),
-    ("relay failed", {"relay_outcome": {"failed": True, "n": 1}}, S.HALTED, False, "failed"),
-    ("AFK run ended", {"relay_outcome": {"afk": "done", "n": 3}}, S.HALTED, False, "afk"),
+    (
+        "AFK deadline",
+        {"closing_reply": True, "relay_outcome": {"limit": True, "n": 2, "deadline": True}},
+        S.HALTED,
+        False,
+        "deadline",
+    ),
+    ("relay failed", {"closing_reply": True, "relay_outcome": {"failed": True, "n": 1}}, S.HALTED, False, "failed"),
+    ("AFK run ended", {"closing_reply": True, "relay_outcome": {"afk": "done", "n": 3}}, S.HALTED, False, "afk"),
 ]
+
+
+# An older version's halted session asked for a handover again: winding down.
+PHASES.append(
+    ("halted, asked again", {"wind_down": True, "relay_outcome": {"limit": True, "n": 5}}, S.WINDING_DOWN, False, None)
+)
+# An older version's halted session, after a compaction reset its flags: working again.
+PHASES.append(("halted, then compacted", {"relay_outcome": {"limit": True, "n": 5}}, S.WORKING, False, None))
 
 
 class Phase(unittest.TestCase):
     def test_table(self):
-        for name, st, phase, owed, reason in PHASES:
+        for name, old, phase, owed, reason in PHASES:
             with self.subTest(name):
+                st = S.converted(dict(old))
+                self.assertFalse(set(S.LEGACY) & set(st))
                 self.assertEqual(S.phase(st), phase)
                 self.assertEqual(S.reply_owed(st), owed)
                 self.assertEqual(S.halt_reason(st), reason)
@@ -97,7 +113,7 @@ class Transitions(unittest.TestCase):
 
     def test_a_cancelled_compaction_returns_to_the_phase_before_it(self):
         # The survey's contradiction: keep_fresh outlived a cancelled compaction, and kept the wind-down off.
-        st = {"keep_fresh": True}
+        st = S.converted({"keep_fresh": True})
         S.compaction_starts(st)
         self.assertEqual(S.phase(st), S.COMPACTING)
         S.active(st)
@@ -116,16 +132,54 @@ class Transitions(unittest.TestCase):
         self.assertEqual(S.phase(st), S.WINDING_DOWN)
 
     def test_a_compaction_starts_the_session_over(self):
-        st = {"wind_down": True, "compacting": True, "reply_due": True, "written": WRITTEN, "afk": {"goal": "g"}}
+        st = {"phase": S.COMPACTING, "phase_before": S.WINDING_DOWN, "reply_due": True, "written": WRITTEN}
+        st["afk"] = {"goal": "g"}
         S.compacted(st)
         self.assertEqual(st, {"afk": {"goal": "g"}})
 
     def test_a_handover_asked_again_owes_a_new_reply(self):
-        st = {"wind_down": True, "closing_reply": True, "reply_due": True, "held_since": NOW}
+        st = {"phase": S.HANDED_OVER, "reply_due": True, "held_since": NOW}
         S.requested(st)
         self.assertEqual(S.phase(st), S.WINDING_DOWN)
         self.assertFalse(S.reply_owed(st))
         self.assertTrue(st["user_notified"] and st["wind_down_sent"])
+
+    def test_a_compaction_while_winding_down_comes_back_to_it(self):
+        st = S.converted({"wind_down": True, "compacting": True})
+        self.assertEqual(st, {"phase": S.COMPACTING, "phase_before": S.WINDING_DOWN})
+        self.assertTrue(S.wound_down(st))
+        S.reply_written(st)
+        self.assertEqual(S.phase(st), S.COMPACTING)
+        S.active(st)
+        self.assertEqual(st, {"phase": S.HANDED_OVER})
+
+    def test_an_old_file_is_converted_once_read(self):
+        H.write_json(S.path("old"), {"wind_down": True, "closing_reply": True, "keep_fresh": True})
+        self.assertEqual(S.read("old"), {"phase": S.HANDED_OVER})
+        with S.locked("old") as st:
+            self.assertEqual(st, {"phase": S.HANDED_OVER})
+        self.assertEqual(H.read_json(S.path("old")), {"phase": S.HANDED_OVER})
+
+    def test_a_compaction_ends_a_halted_session_s_wind_down(self):
+        st = {}
+        S.wind_down(st, "trigger", 1)
+        S.reply_written(st)
+        S.halted(st, "limit", 5)
+        S.compaction_starts(st)
+        S.compacted(st)
+        st = S.converted(st)
+        self.assertEqual(S.phase(st), S.WORKING)
+        self.assertTrue(S.wind_down(st, "trigger", 2))
+
+    def test_a_handover_asked_after_the_relay_ended_owes_a_new_reply(self):
+        for reason in ("afk", "limit"):
+            with self.subTest(reason):
+                st = {}
+                S.wind_down(st, "trigger", 1)
+                S.reply_written(st)
+                S.halted(st, reason, 5, afk="done")
+                S.requested(st)
+                self.assertEqual(S.settled(st), S.WINDING_DOWN)
 
     def test_a_restart_keeps_the_thresholds(self):
         # The survey's contradiction: each SessionStart, a compaction's or a resume's, recomputed them.
@@ -136,7 +190,8 @@ class Transitions(unittest.TestCase):
 
 
 def line(st, tokens=0, prog=None):
-    return H.status_line(st, prog, tokens, CFG)
+    """The status line of a state written with an older plugin version's flags, read as cmd_statusline reads it."""
+    return H.status_line(S.converted(dict(st)), prog, tokens, CFG)
 
 
 class StatusLine(unittest.TestCase):

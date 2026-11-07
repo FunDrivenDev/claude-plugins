@@ -16,10 +16,13 @@ and the writer, an activity that runs in any phase (a refresh while working, the
 by its pid. Its result is a fact: `written`, `error`, `write_failed`.
 
 The module owns the session's state file, `sessions/<sid>.json`: `read` and `locked` are its only ways in, and the
-transitions below the only writers of the flags `phase()` computes the phase from. The phase is stored next
-(decision register 26-11-07-claude-plugins-architecture, D01-D05, D11-D16).
+transitions below the only writers of its `phase` field, absent while working, and of `phase_before`, the phase
+a compaction interrupted. A file an older plugin version wrote holds flags instead (`wind_down`, `closing_reply`,
+`compacting`, `keep_fresh`): `read` and `locked` convert it (decision register
+26-11-07-claude-plugins-architecture, D01-D05, D11-D16).
 """
 
+import contextlib
 import os
 import time
 
@@ -35,11 +38,13 @@ PHASES = (WORKING, COMPACTING, WINDING_DOWN, HANDED_OVER, RELAYING, HALTED)
 
 # What SessionStart records in every session, the plugin's hooks having run there or not.
 START_FIELDS = {"thresholds", "plugin_version"}
+# The flags an older plugin version kept the phase in.
+LEGACY = ("wind_down", "closing_reply", "compacting", "keep_fresh")
 # A compaction's handover is loaded next to its summary, and the session starts over from it.
 COMPACTED = (
-    "wind_down",
+    "phase",
+    "phase_before",
     "wind_down_tokens",
-    "keep_fresh",
     "cause",
     "suggested",
     "user_notified",
@@ -48,13 +53,11 @@ COMPACTED = (
     "reply_reminded",
     "held_since",
     "write_failed",
-    "closing_reply",
     "reply_offset",
     "written",
-    "compacting",
 )
 # Due again at a handover asked for after an earlier one.
-CLOSING = ("closing_reply", "reply_due", "reply_reminded", "held_since", "reply_offset")
+CLOSING = ("reply_due", "reply_reminded", "held_since", "reply_offset")
 
 
 def path(sid):
@@ -63,12 +66,14 @@ def path(sid):
 
 def read(sid):
     """The session's state, unlocked: a snapshot for a reader."""
-    return read_json(path(sid), {})
+    return converted(read_json(path(sid), {}))
 
 
+@contextlib.contextmanager
 def locked(sid):
     """The session's state, saved on exit; hooks and the writer never interleave."""
-    return locked_json(path(sid))
+    with locked_json(path(sid)) as st:
+        yield converted(st)
 
 
 def tracked(sid):
@@ -76,10 +81,11 @@ def tracked(sid):
     return bool(set(read(sid)) - START_FIELDS)
 
 
-def phase(st):
-    """The session's phase, from its state."""
-    if st.get("compacting"):
-        return COMPACTING
+def legacy_phase(st):
+    """The phase an older plugin version's flags meant."""
+    if st.get("wind_down") and not st.get("closing_reply"):
+        # A handover asked for again after the relay's end: its Stop writes it.
+        return WINDING_DOWN
     outcome = st.get("relay_outcome") or {}
     if outcome.get("at"):
         return RELAYING
@@ -88,6 +94,43 @@ def phase(st):
     if st.get("closing_reply"):
         return HANDED_OVER
     return WINDING_DOWN if st.get("wind_down") else WORKING
+
+
+def converted(st):
+    """The state, its phase flags from an older plugin version turned into the `phase` field."""
+    # Without them, the file is a new one, or an old one a compaction reset: working, its relay outcome a fact.
+    if not any(k in st for k in LEGACY):
+        return st
+    meant, compacting = legacy_phase(st), st.get("compacting")
+    for k in LEGACY:
+        st.pop(k, None)
+    if meant != WORKING:
+        st["phase"] = meant
+    if compacting:
+        compaction_starts(st)
+    return st
+
+
+def phase(st):
+    """The session's phase."""
+    return st.get("phase") or WORKING
+
+
+def settled(st):
+    """The phase, or in a compaction the phase it interrupted, and comes back to when cancelled."""
+    p = phase(st)
+    return st.get("phase_before") or WORKING if p == COMPACTING else p
+
+
+def wound_down(st):
+    """Whether the wind-down started, in this phase or the one a compaction interrupted: past it, the session
+    starts no new task."""
+    return settled(st) != WORKING
+
+
+def replied(st):
+    """Whether the closing reply is written: handed over, relaying, or halted."""
+    return settled(st) in (HANDED_OVER, RELAYING, HALTED)
 
 
 def reply_owed(st):
@@ -102,7 +145,7 @@ def reply_owed(st):
 def halt_reason(st):
     """Why the relay stopped, in a halted session: "afk", "deadline", "limit" or "failed"; None otherwise."""
     outcome = st.get("relay_outcome") or {}
-    if not outcome or outcome.get("at"):
+    if phase(st) != HALTED:
         return None
     if outcome.get("afk"):
         return "afk"
@@ -113,10 +156,19 @@ def halt_reason(st):
 
 def handing_over(st):
     """Whether the session's handover is due: winding down or past it, or kept fresh for a compaction."""
-    return bool(st.get("wind_down") or st.get("compacting"))
+    return phase(st) != WORKING
 
 
 # Transitions: each takes the state, held under `locked`, and changes it.
+
+
+def enter(st, p):
+    """The session moves to phase `p`; in a compaction, once the compaction is over or cancelled."""
+    key = "phase_before" if phase(st) == COMPACTING else "phase"
+    if p == WORKING:
+        st.pop(key, None)
+    else:
+        st[key] = p
 
 
 def started(st, thresholds, version):
@@ -129,9 +181,10 @@ def started(st, thresholds, version):
 def wind_down(st, cause, tokens):
     """The wind-down starts: the session starts no new task and finishes those in progress. False when it is
     winding down already. Asked for during a compaction, it outlives a cancelled one."""
-    if st.get("wind_down"):
+    if wound_down(st):
         return False
-    st.update(wind_down=True, wind_down_tokens=tokens, cause=cause)
+    st.update(wind_down_tokens=tokens, cause=cause)
+    enter(st, WINDING_DOWN)
     return True
 
 
@@ -141,16 +194,26 @@ def requested(st):
     st["user_notified"] = st["wind_down_sent"] = True
     for k in CLOSING:
         st.pop(k, None)
+    if replied(st):
+        # Past the closing reply, the relay's end included: the handover and the reply are due again.
+        enter(st, WINDING_DOWN)
 
 
 def compaction_starts(st):
-    st["compacting"] = True
+    if phase(st) != COMPACTING:
+        before = phase(st)
+        st["phase"] = COMPACTING
+        if before != WORKING:
+            st["phase_before"] = before
 
 
 def active(st):
     """The session works again: a compaction it was in is over, or was cancelled, back to the phase before it."""
-    st.pop("compacting", None)
-    st.pop("keep_fresh", None)
+    if phase(st) == COMPACTING:
+        st.pop("phase")
+        before = st.pop("phase_before", None)
+        if before:
+            st["phase"] = before
 
 
 def compacted(st):
@@ -176,11 +239,12 @@ def wrote(st, failed):
 
 
 def reply_written(st):
-    st["closing_reply"] = True
+    enter(st, HANDED_OVER)
 
 
 def relayed(st, n, mode):
     st["relay_outcome"] = {"at": time.time(), "n": n, "mode": mode}
+    enter(st, RELAYING)
 
 
 def halted(st, reason, n, afk=None):
@@ -191,3 +255,4 @@ def halted(st, reason, n, afk=None):
         st["relay_outcome"] = {"failed": True, "n": n}
     else:
         st["relay_outcome"] = {"limit": True, "n": n, **({"deadline": True} if reason == "deadline" else {})}
+    enter(st, HALTED)
