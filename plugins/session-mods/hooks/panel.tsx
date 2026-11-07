@@ -4,7 +4,7 @@ import type { EngineInterface, Hook, On, RenderElement, ToolCallInput, ToolCallR
 import type { Agent, Config, Doc, Entry, FileChange, Handover, HandoverFile, HandoverThresholds, Prompt, Repo, RepoChanges, Step, Tab, TrackedIssue, TrackedPr } from '../types'
 
 import { currentScheme, duration, prettyModel, recolor } from './appearance'
-import { LOG_FORMAT, parseLog, parseNumstat, parseStatus, treeRows } from './files'
+import { changesOf, treeRows } from './files'
 import { ARTIFACTS, DOC_CONTEXT, HANDOVER_DIR, PLANS_DIR, WRITTEN_SINCE, artifactOf, type DocContext, docContextOf, docGroups, docOf, docPaths, tilde, writtenSpots } from './documents'
 import { PR_COLOR, RANK, findRefs, linearOfResult, prState, refKey, refsOfGh, repoOfRemote, titleOfSlug } from './tracker'
 import type { GithubRef, LinearRef } from './tracker'
@@ -32,8 +32,6 @@ const expanded = atom({ plugin: 'session-mods', key: 'expanded' } as const, null
 const stepsOpen = atom({ plugin: 'session-mods', key: 'stepsOpen' } as const, false)
 const roots = atom({ plugin: 'session-mods', key: 'roots' } as const, [] as string[])
 const changes = atom({ plugin: 'session-mods', key: 'changes' } as const, [] as RepoChanges[])
-const UNTRACKED_COUNTED = 30
-const COMMITS_SHOWN = 8
 const EDITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Bash'])
 const prompts = atom({ plugin: 'session-mods', key: 'prompts' } as const, [] as (Prompt | string)[])
 const view = atom({ plugin: 'session-mods', key: 'view' } as const, 'overview' as 'overview' | 'prompts')
@@ -307,41 +305,10 @@ async function trackRepo($: EngineInterface, dir: string) {
   await update($, workedRepos, list => (list.some(r => r.common === common) ? list : [...list, { common, slug, name, worktree }]))
 }
 
-/** One repository's changes against HEAD, untracked files included; null when git cannot read it or it has none. */
-async function changesOf($: EngineInterface, root: string, since: number): Promise<RepoChanges | null> {
-  const git = (...args: string[]) => $.process.run(['git', '-C', root, ...args])
-  const status = await git('status', '--porcelain=v1', '-z', '--untracked-files=all')
-  if (status.exitCode !== 0) return null
-  const kinds = parseStatus(status.stdout)
-  // Independent reads, run side by side rather than one after another.
-  const [numstat, log, ahead, current] = await Promise.all([
-    git('diff', '--numstat', 'HEAD'),
-    git('log', `-n${COMMITS_SHOWN}`, `--since=@${since}`, `--format=${LOG_FORMAT}`),
-    git('rev-list', '@{u}..HEAD'),
-    git('branch', '--show-current'),
-  ])
-  const counts = parseNumstat(numstat.stdout)
-  let untracked = 0
-  const files = await Promise.all(
-    [...kinds].map(async ([path, kind]): Promise<FileChange> => {
-      let count = counts.get(path)
-      if (!count && kind === 'added' && untracked++ < UNTRACKED_COUNTED) {
-        const diff = await git('diff', '--no-index', '--numstat', '/dev/null', path)
-        count = [...parseNumstat(diff.stdout).values()][0]
-      }
-      return { path, status: kind, added: count?.added ?? 0, removed: count?.removed ?? 0 }
-    }),
-  )
-  const unpushed = ahead.exitCode === 0 ? new Set(ahead.stdout.split('\n').filter(Boolean)) : ('all' as const)
-  const commits = log.exitCode === 0 ? parseLog(log.stdout, unpushed) : []
-  const branch = current.stdout.trim() || 'detached'
-  return files.length || commits.length ? { root, branch, files, commits } : null
-}
-
 /** Reads each tracked repository's changes, the repositories side by side, kept in their order. */
 async function refreshFiles($: EngineInterface) {
   const since = Math.floor((await $.session.usage()).startedAt / 1000)
-  const found = await Promise.all((await read($, roots)).map(root => changesOf($, root, since)))
+  const found = await Promise.all((await read($, roots)).map(root => changesOf(args => $.process.run(['git', '-C', root, ...args]), root, since)))
   const next = found.filter((repo): repo is RepoChanges => repo !== null)
   await update($, changes, () => next)
 }

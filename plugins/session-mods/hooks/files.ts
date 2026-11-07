@@ -1,4 +1,10 @@
-import type { Commit, FileChange } from '../types'
+import type { Commit, FileChange, RepoChanges } from '../types'
+
+const UNTRACKED_COUNTED = 30
+const COMMITS_SHOWN = 8
+
+/** Runs git in one repository, its arguments after `git -C <root>`. */
+export type GitRun = (args: string[]) => Promise<{ exitCode: number; stdout: string }>
 
 /** `git status --porcelain=v1 -z` → each changed path and how it changed. */
 export const parseStatus = (out: string): Map<string, FileChange['status']> => {
@@ -92,3 +98,34 @@ export const parseLog = (out: string, unpushed: ReadonlySet<string> | 'all'): Co
       const [hash = '', at = '0', subject = '', body = ''] = record.split('\x1f')
       return { hash, subject, body: body.trim(), at: Number(at) * 1000, isPushed: unpushed !== 'all' && !unpushed.has(hash) }
     })
+
+/** One repository's changes against HEAD, untracked files included; null when git cannot read it or it has none. */
+export async function changesOf(run: GitRun, root: string, since: number): Promise<RepoChanges | null> {
+  const git = (...args: string[]) => run(args)
+  const status = await git('status', '--porcelain=v1', '-z', '--untracked-files=all')
+  if (status.exitCode !== 0) return null
+  const kinds = parseStatus(status.stdout)
+  // Independent reads, run side by side rather than one after another.
+  const [numstat, log, ahead, current] = await Promise.all([
+    git('diff', '--numstat', 'HEAD'),
+    git('log', `-n${COMMITS_SHOWN}`, `--since=@${since}`, `--format=${LOG_FORMAT}`),
+    git('rev-list', '@{u}..HEAD'),
+    git('branch', '--show-current'),
+  ])
+  const counts = parseNumstat(numstat.stdout)
+  let untracked = 0
+  const files = await Promise.all(
+    [...kinds].map(async ([path, kind]): Promise<FileChange> => {
+      let count = counts.get(path)
+      if (!count && kind === 'added' && untracked++ < UNTRACKED_COUNTED) {
+        const diff = await git('diff', '--no-index', '--numstat', '/dev/null', path)
+        count = [...parseNumstat(diff.stdout).values()][0]
+      }
+      return { path, status: kind, added: count?.added ?? 0, removed: count?.removed ?? 0 }
+    }),
+  )
+  const unpushed = ahead.exitCode === 0 ? new Set(ahead.stdout.split('\n').filter(Boolean)) : ('all' as const)
+  const commits = log.exitCode === 0 ? parseLog(log.stdout, unpushed) : []
+  const branch = current.stdout.trim() || 'detached'
+  return files.length || commits.length ? { root, branch, files, commits } : null
+}
