@@ -394,8 +394,9 @@ class EvalCases(unittest.TestCase):
                     g for g in tools if g.get("tool") == "Agent" and g.get("max") == "0" and "input_match" not in g
                 ]
                 self.assertTrue(wrote or alone, d.name)
-        rename = self.graders(self.EVALS / "write-rename-in-main")
-        self.assertIn({"type": "tool_used", "tool": "Agent", "min": "0", "max": "0", "arm": "both"}, rename)
+        for name in ("write-rename-in-main", "write-new-module-in-main"):
+            no_agent = {"type": "tool_used", "tool": "Agent", "min": "0", "max": "0", "arm": "both"}
+            self.assertIn(no_agent, self.graders(self.EVALS / name), name)
 
     def test_read_and_write_cases_are_balanced(self):
         kinds = [d.name.split("-")[0] for d in self.cases()]
