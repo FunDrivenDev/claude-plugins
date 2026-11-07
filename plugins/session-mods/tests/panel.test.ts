@@ -258,7 +258,6 @@ test('a new session lists only the commits made since it began, in its linked wo
   on('process.run', ($, e) => {
     const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     if (e.argv.includes('--show-toplevel')) return ok('/repo\n/main/.git/worktrees/repo\n/main/.git\n')
-    if (e.argv.includes('--git-common-dir')) return ok('/main/.git/worktrees/repo\n/main/.git\n')
     if (e.argv.includes('log')) {
       logs.push([...e.argv])
       return ok('')

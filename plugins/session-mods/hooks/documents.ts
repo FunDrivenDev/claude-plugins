@@ -13,6 +13,37 @@ export type DocContext = { home: string; tmp: string[]; project: string | null; 
 /** A file as read on disk: its real path, and the git folder of the repository it lies in (null outside one). */
 export type Spot = { path: string; real: string; repo: string | null }
 
+/** What `docContextOf` reads, one line each: `$HOME`, the project's git folder, then the real paths of the temporary folders and of each folder named. */
+export const DOC_CONTEXT = `printf '%s\\n' "$HOME"
+git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo
+for d in /tmp "\${TMPDIR:-/tmp}" "$@"; do
+  case $d in "~/"*) d="$HOME/$(printf %s "$d" | cut -c3-)";; esac
+  (cd "$d" 2>/dev/null && pwd -P) || echo "$d"
+done`
+
+/** What `writtenSpots` reads, three lines per file: each file changed since `$1` (epoch seconds): its path as named, its real path, and the git folder of its repository. */
+export const WRITTEN_SINCE = `start=$1; shift
+for f; do
+  [ -f "$f" ] || continue
+  [ "$(date -r "$f" +%s)" -ge "$start" ] || continue
+  d=$(cd "$(dirname "$f")" && pwd -P) || continue
+  printf '%s\\n%s/%s\\n%s\\n' "$f" "$d" "$(basename "$f")" "$(cd "$d" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+done`
+
+/** DOC_CONTEXT's output → the context; with the handover and plans folders as the folders named, in that order. */
+export const docContextOf = (stdout: string): DocContext => {
+  const [home = '', project = '', tmp = '', tmpdir = '', handovers = '', plans = ''] = stdout.split('\n')
+  return { home, project: project || null, tmp: [...new Set([tmp, tmpdir].filter(Boolean))], handovers, plans }
+}
+
+/** WRITTEN_SINCE's output → one spot per file; a trailing incomplete triple is dropped. */
+export const writtenSpots = (stdout: string): Spot[] => {
+  const lines = stdout.split('\n')
+  const spots: Spot[] = []
+  for (let k = 0; k + 2 < lines.length; k += 3) spots.push({ path: lines[k]!, real: lines[k + 1]!, repo: lines[k + 2] || null })
+  return spots
+}
+
 const titleOf = (folder: string): string => {
   const words = folder.replace(/[-_]+/g, ' ').trim()
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : 'Documents'

@@ -4,8 +4,8 @@ import type { EngineInterface, Hook, On, RenderElement, ToolCallInput, ToolCallR
 import type { Agent, Config, Doc, Entry, FileChange, Handover, HandoverFile, HandoverThresholds, Prompt, Repo, RepoChanges, Step, Tab, TrackedIssue, TrackedPr } from '../types'
 
 import { currentScheme, duration, prettyModel, recolor } from './appearance'
-import { LOG_FORMAT, parseLog, parseNumstat, parseStatus, treeRows } from './files'
-import { ARTIFACTS, HANDOVER_DIR, PLANS_DIR, artifactOf, type DocContext, docGroups, docOf, docPaths, tilde } from './documents'
+import { changesOf, treeRows } from './files'
+import { ARTIFACTS, DOC_CONTEXT, HANDOVER_DIR, PLANS_DIR, WRITTEN_SINCE, artifactOf, type DocContext, docContextOf, docGroups, docOf, docPaths, tilde, writtenSpots } from './documents'
 import { PR_COLOR, RANK, findRefs, linearOfResult, prState, refKey, refsOfGh, repoOfRemote, titleOfSlug } from './tracker'
 import type { GithubRef, LinearRef } from './tracker'
 
@@ -32,8 +32,6 @@ const expanded = atom({ plugin: 'session-mods', key: 'expanded' } as const, null
 const stepsOpen = atom({ plugin: 'session-mods', key: 'stepsOpen' } as const, false)
 const roots = atom({ plugin: 'session-mods', key: 'roots' } as const, [] as string[])
 const changes = atom({ plugin: 'session-mods', key: 'changes' } as const, [] as RepoChanges[])
-const UNTRACKED_COUNTED = 30
-const COMMITS_SHOWN = 8
 const EDITING_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Bash'])
 const prompts = atom({ plugin: 'session-mods', key: 'prompts' } as const, [] as (Prompt | string)[])
 const view = atom({ plugin: 'session-mods', key: 'view' } as const, 'overview' as 'overview' | 'prompts')
@@ -307,41 +305,10 @@ async function trackRepo($: EngineInterface, dir: string) {
   await update($, workedRepos, list => (list.some(r => r.common === common) ? list : [...list, { common, slug, name, worktree }]))
 }
 
-/** One repository's changes against HEAD, untracked files included; null when git cannot read it or it has none. */
-async function changesOf($: EngineInterface, root: string, since: number): Promise<RepoChanges | null> {
-  const git = (...args: string[]) => $.process.run(['git', '-C', root, ...args])
-  const status = await git('status', '--porcelain=v1', '-z', '--untracked-files=all')
-  if (status.exitCode !== 0) return null
-  const kinds = parseStatus(status.stdout)
-  // Independent reads, run side by side rather than one after another.
-  const [numstat, log, ahead, current] = await Promise.all([
-    git('diff', '--numstat', 'HEAD'),
-    git('log', `-n${COMMITS_SHOWN}`, `--since=@${since}`, `--format=${LOG_FORMAT}`),
-    git('rev-list', '@{u}..HEAD'),
-    git('branch', '--show-current'),
-  ])
-  const counts = parseNumstat(numstat.stdout)
-  let untracked = 0
-  const files = await Promise.all(
-    [...kinds].map(async ([path, kind]): Promise<FileChange> => {
-      let count = counts.get(path)
-      if (!count && kind === 'added' && untracked++ < UNTRACKED_COUNTED) {
-        const diff = await git('diff', '--no-index', '--numstat', '/dev/null', path)
-        count = [...parseNumstat(diff.stdout).values()][0]
-      }
-      return { path, status: kind, added: count?.added ?? 0, removed: count?.removed ?? 0 }
-    }),
-  )
-  const unpushed = ahead.exitCode === 0 ? new Set(ahead.stdout.split('\n').filter(Boolean)) : ('all' as const)
-  const commits = log.exitCode === 0 ? parseLog(log.stdout, unpushed) : []
-  const branch = current.stdout.trim() || 'detached'
-  return files.length || commits.length ? { root, branch, files, commits } : null
-}
-
 /** Reads each tracked repository's changes, the repositories side by side, kept in their order. */
 async function refreshFiles($: EngineInterface) {
   const since = Math.floor((await $.session.usage()).startedAt / 1000)
-  const found = await Promise.all((await read($, roots)).map(root => changesOf($, root, since)))
+  const found = await Promise.all((await read($, roots)).map(root => changesOf(args => $.process.run(['git', '-C', root, ...args]), root, since)))
   const next = found.filter((repo): repo is RepoChanges => repo !== null)
   await update($, changes, () => next)
 }
@@ -465,23 +432,6 @@ async function refreshPr($: EngineInterface) {
   for (const pr of (await read($, tracker)).prs ?? []) await noteGithub($, { platform: 'github', repo: pr.repo, number: pr.number, type: 'pull' }, pr.rank)
 }
 
-/** `$HOME`, the project's git folder, then the real paths of the temporary folders and of each folder named. */
-const DOC_CONTEXT = `printf '%s\\n' "$HOME"
-git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo
-for d in /tmp "\${TMPDIR:-/tmp}" "$@"; do
-  case $d in "~/"*) d="$HOME/$(printf %s "$d" | cut -c3-)";; esac
-  (cd "$d" 2>/dev/null && pwd -P) || echo "$d"
-done`
-
-/** Each file changed since `$1` (epoch seconds): its path as named, its real path, and the git folder of its repository. */
-const WRITTEN_SINCE = `start=$1; shift
-for f; do
-  [ -f "$f" ] || continue
-  [ "$(date -r "$f" +%s)" -ge "$start" ] || continue
-  d=$(cd "$(dirname "$f")" && pwd -P) || continue
-  printf '%s\\n%s/%s\\n%s\\n' "$f" "$d" "$(basename "$f")" "$(cd "$d" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
-done`
-
 /** Where documents are told apart, read again once the handover or plans folder changes. */
 async function contextOfDocs($: EngineInterface): Promise<DocContext> {
   const c = await read($, config)
@@ -489,9 +439,8 @@ async function contextOfDocs($: EngineInterface): Promise<DocContext> {
   const key = dirs.join('\n')
   if (docContext?.key === key) return docContext.ctx
   const out = await $.process.run(['sh', '-c', DOC_CONTEXT, 'sh', ...dirs])
-  const [home = '', project = '', tmp = '', tmpdir = '', handovers = '', plans = ''] = out.stdout.split('\n')
-  const ctx = { home, project: project || null, tmp: [...new Set([tmp, tmpdir].filter(Boolean))], handovers, plans }
-  if (home) docContext = { key, ctx }
+  const ctx = docContextOf(out.stdout)
+  if (ctx.home) docContext = { key, ctx }
   return ctx
 }
 
@@ -501,12 +450,7 @@ async function keepDocs($: EngineInterface, paths: string[], since = 0) {
   if (!named.length) return
   const ctx = await contextOfDocs($)
   const out = await $.process.run(['sh', '-c', WRITTEN_SINCE, 'sh', String(since), ...named])
-  const lines = out.stdout.split('\n')
-  const found: Doc[] = []
-  for (let k = 0; k + 2 < lines.length; k += 3) {
-    const doc = docOf({ path: lines[k]!, real: lines[k + 1]!, repo: lines[k + 2] || null }, ctx)
-    if (doc) found.push(doc)
-  }
+  const found = writtenSpots(out.stdout).flatMap(spot => docOf(spot, ctx) ?? [])
   if (found.length) await addDocs($, found)
 }
 
