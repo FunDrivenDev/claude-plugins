@@ -3,9 +3,9 @@ import { expect, test } from 'claude-code/testing'
 import { handoverOf, type StateRun } from '../hooks/handover'
 
 /** A runner answering `stdout` with `exitCode`, recording the sessions it was asked about. */
-const runner = (exitCode: number, stdout: string, asked: string[] = []): StateRun => async sid => {
+const runner = (exitCode: number, stdout: string, asked: string[] = [], stderr = ''): StateRun => async sid => {
   asked.push(sid)
-  return { exitCode, stdout }
+  return { exitCode, stdout, stderr }
 }
 
 const STATE = {
@@ -58,7 +58,11 @@ test('without an answer, the handover section is unknown, never a crash', async 
   const cases: [StateRun, RegExp][] = [
     [runner(3, ''), /not installed/],
     // A plugin older than the command: argparse refuses `state`.
-    [runner(2, ''), /older than 0\.29\.0/],
+    [runner(2, '', [], "usage: handover.py ...\nhandover.py: error: argument cmd: invalid choice: 'state' (choose from ...)"), /predates its state command: it is older than 0\.29\.0$/],
+    // Any other failure says what failed, never that the plugin is old.
+    [runner(2, '', [], "python3: can't open file '/gone/scripts/handover.py': [Errno 2] No such file or directory\n"), /^the handover state command failed \(exit 2\): python3: can't open file/],
+    [runner(1, '', [], 'Traceback (most recent call last):\n  ...\nOverflowError: cannot convert float infinity to integer'), /failed \(exit 1\): OverflowError: cannot convert/],
+    [runner(1, ''), /^the handover state command failed \(exit 1\)$/],
     [runner(0, 'not json'), /no JSON/],
     [runner(0, '[1, 2]'), /no JSON/],
     [async () => Promise.reject(new Error('spawn failed')), /did not run: Error: spawn failed/],

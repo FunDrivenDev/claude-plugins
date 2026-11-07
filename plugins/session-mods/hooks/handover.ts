@@ -1,7 +1,7 @@
 import type { Handover, HandoverFile, HandoverThresholds } from '../types'
 
 /** Runs the installed handover plugin's `state` command for a session. */
-export type StateRun = (sid: string) => Promise<{ exitCode: number; stdout: string }>
+export type StateRun = (sid: string) => Promise<{ exitCode: number; stdout: string; stderr?: string }>
 
 /** The exit code of HANDOVER_STATE when no handover plugin is installed. */
 const NOT_INSTALLED = 3
@@ -69,7 +69,13 @@ export async function handoverOf(run: StateRun, sid: string): Promise<Handover> 
   const out = await run(sid).catch((e: unknown) => ({ exitCode: -1, stdout: '', failure: String(e) }))
   if ('failure' in out) return unknownHandover(`the handover state command did not run: ${out.failure}`)
   if (out.exitCode === NOT_INSTALLED) return unknownHandover('the handover plugin is not installed')
-  if (out.exitCode !== 0) return unknownHandover(`the installed handover plugin gives no state (exit ${out.exitCode}): it is older than 0.29.0`)
+  if (out.exitCode !== 0) {
+    const stderr = out.stderr ?? ''
+    // argparse refuses a command it does not know: the installed plugin predates `state`.
+    if (/invalid choice: 'state'/.test(stderr)) return unknownHandover('the installed handover plugin predates its state command: it is older than 0.29.0')
+    const last = stderr.trim().split('\n').pop()?.trim()
+    return unknownHandover(`the handover state command failed (exit ${out.exitCode})${last ? `: ${last.slice(0, 200)}` : ''}`)
+  }
   let parsed: unknown
   try {
     parsed = JSON.parse(out.stdout)

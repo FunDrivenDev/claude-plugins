@@ -1154,7 +1154,7 @@ export const registerPanel = (on: On) => {
 
         {section('Handover')}
         <Box flexDirection="column" marginTop={1} marginBottom={1}>
-          {ho?.isOn && <Box marginBottom={1}>{handoverFile('loaded', ho.loaded)}</Box>}
+          {ho?.isOn && !ho.unknown && <Box marginBottom={1}>{handoverFile('loaded', ho.loaded)}</Box>}
           {handoverRows}
         </Box>
 

@@ -324,8 +324,8 @@ test('the Config tab shows the thresholds this session runs with, and those set 
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 50_000 } as never, rateLimits: [] } }))
   const state = { on: true, thresholds: { suggest: 200_000, warn_at: 225_000, trigger: 250_000 }, pending: { trigger: 120_000 } }
   on('process.run', ($, e) => {
-    const isHandover = e.argv.includes(HANDOVER_STATE)
-    return { value: { exitCode: isHandover ? 0 : 1, stdout: isHandover ? JSON.stringify(state) : '', stderr: '' } } as never
+    const answer = e.argv.includes(HANDOVER_STATE) ? { exitCode: 0, stdout: JSON.stringify(state) } : { exitCode: 1, stdout: '' }
+    return { value: { stderr: '', ...answer } } as never
   })
   on('session.id', () => ({ value: 's1' }) as never)
   on('session.start', ($, e) => ({ cwd: e.cwd }))
@@ -421,8 +421,8 @@ test('the handover section leaves its states to Help, and Hand over now starts t
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 50_000 } as never, rateLimits: [] } }))
   on('process.run', ($, e) => {
-    const isHandover = e.argv.includes(HANDOVER_STATE)
-    return { value: { exitCode: isHandover ? 0 : 1, stdout: isHandover ? '{"on": true}' : '', stderr: '' } } as never
+    const answer = e.argv.includes(HANDOVER_STATE) ? { exitCode: 0, stdout: '{"on": true}' } : { exitCode: 1, stdout: '' }
+    return { value: { stderr: '', ...answer } } as never
   })
   on('session.id', () => ({ value: 's1' }) as never)
   on('session.start', ($, e) => ({ cwd: e.cwd }))
@@ -453,7 +453,10 @@ test('the handover section leaves its states to Help, and Hand over now starts t
 test('a handover plugin older than its state command leaves the section unknown', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 50_000 } as never, rateLimits: [] } }))
-  on('process.run', ($, e) => ({ value: { exitCode: e.argv.includes(HANDOVER_STATE) ? 2 : 1, stdout: '', stderr: '' } }) as never)
+  on('process.run', ($, e) => {
+    const answer = e.argv.includes(HANDOVER_STATE) ? { exitCode: 2, stdout: '', stderr: "handover.py: error: argument cmd: invalid choice: 'state'" } : { exitCode: 1, stdout: '' }
+    return { value: { stderr: '', ...answer } } as never
+  })
   on('session.id', () => ({ value: 's1' }) as never)
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('session.model', () => ({ value: 'opus' }))
@@ -466,6 +469,8 @@ test('a handover plugin older than its state command leaves the section unknown'
 
   const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
   expect(await ui.find({ text: /^Handover state unknown: .*older than 0\.29\.0\.$/ })).toBeDefined()
+  // Nothing is known of a loaded handover either: no `loaded none` line claims there was none.
+  expect(await ui.find({ text: /^none$/ })).toBeUndefined()
   expect(await ui.find({ key: 'handover:trigger' })).toBeUndefined()
   await ui.unmount()
 })
@@ -476,17 +481,15 @@ test('a written handover starts the next session with its resume message in one 
   const clock = mock.clock(on, { now: 1_000 })
   let sid = 's1'
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 50_000 } as never, rateLimits: [] } }))
+  const state = {
+    on: true,
+    written: { path: '/h/written.md', title: null, lines: null, modified_at: null },
+    loaded: { path: '/h/loaded.md', title: 'Ship the session panel', lines: 12, modified_at: 1 },
+    resume: RESUME,
+  }
   on('process.run', ($, e) => {
-    if (e.argv.includes(HANDOVER_STATE)) {
-      const state = {
-        on: true,
-        written: { path: '/h/written.md', title: null, lines: null, modified_at: null },
-        loaded: { path: '/h/loaded.md', title: 'Ship the session panel', lines: 12, modified_at: 1 },
-        resume: RESUME,
-      }
-      return { value: { exitCode: 0, stdout: JSON.stringify(state), stderr: '' } } as never
-    }
-    return { value: { exitCode: 1, stdout: '', stderr: '' } } as never
+    const answer = e.argv.includes(HANDOVER_STATE) ? { exitCode: 0, stdout: JSON.stringify(state) } : { exitCode: 1, stdout: '' }
+    return { value: { stderr: '', ...answer } } as never
   })
   on('session.id', () => ({ value: sid }) as never)
   on('session.start', ($, e) => ({ cwd: e.cwd }))
