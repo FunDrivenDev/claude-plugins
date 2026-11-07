@@ -662,6 +662,13 @@ class Selection(unittest.TestCase):
         none = T.detect({})
         self.assertEqual((none.name, none.relays, none.types), ("none", False, False))
 
+    def test_only_rex_recovers(self):
+        # handover.py's resume_command types `toolbox rex-session run --resume`: an adapter of another host
+        # that set `recovers` would get a Rex launcher typed into its pane. Give it its own resume first.
+        adapters = [c for c in vars(T).values() if isinstance(c, type) and issubclass(c, T.Terminal)]
+        self.assertEqual({c.name for c in adapters}, {"none", "loop", "tmux", "rex", "command"})
+        self.assertEqual({c.name for c in adapters if c.recovers}, {"rex"})
+
     def test_the_detached_relay_rebuilds_the_adapter_from_its_description(self):
         d = T.detect({"TMUX_PANE": "%7"}).describe()
         self.assertEqual(T.adapter(d["adapter"], d["address"]).describe(), d)

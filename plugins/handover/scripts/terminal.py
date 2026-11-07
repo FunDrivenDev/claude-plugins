@@ -14,7 +14,9 @@ named it itself or the adapter cannot tell. The plugin keeps that label in the t
 
 An adapter whose host can end a session and restore its pane sets `recovers`, and answers `instance()`, what
 identifies its server now, and `survey(instance)`: "gone", the server does not answer; "restarted", another
-server than `instance` holds the pane; "ended", anything else.
+server than `instance` holds the pane; "ended", anything else. Only Rex does: handover.py resumes a restarted
+session by typing `toolbox rex-session run --resume` (resume_command), so another adapter that set `recovers`
+would need its own resume first; the contract's Selection case pins this.
 
 `detect()` picks the adapter from the `terminal` option and the environment, innermost host first, and
 `adapter()` rebuilds one from its name and address, for the detached half of the relay:
