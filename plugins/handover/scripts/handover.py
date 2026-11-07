@@ -1655,9 +1655,9 @@ AFK_RULES = (
 )
 
 AFK_DELEGATE = (
-    " Implement each item yourself, and hand what only needs a result (an exploration, a diagnosis, a scoped "
-    "script) to a specialised typed subagent with a complete brief: this session's context then lasts "
-    "across many items."
+    " Implement each item yourself, and hand the read-only tasks that only need a result (an exploration, a "
+    "diagnosis, a review, a web research) to a specialised typed subagent with a complete brief: this "
+    "session's context then lasts across many items."
 )
 
 AFK_CONTINUE = (
@@ -2762,9 +2762,9 @@ STOP_ENDLESS = (
 
 DELEGATE = (
     "Context budget: this session hands over to a fresh one once its context fills up. Delegate the tasks "
-    "where only the result matters to you: an exploration, a diagnosis, writing a scoped script and the like. "
+    "that only read and whose result alone matters to you: an exploration, a diagnosis, a review, a web research. "
     "The tokens spent reaching that result stay out of your context. Implement yourself: your context is "
-    "what lets you meet the goal, so the change, its tests and their fixes stay in this session. Pick the "
+    "what lets you meet the goal, so the plan, the change, its tests and their fixes stay in this session. Pick the "
     "specialised typed subagent that fits the task, and avoid general-purpose, whose starting context is "
     "large. Run independent ones in parallel. Brief each fully, since it starts without your context (goal, "
     "constraints, files, how to verify, what to report), and ask for a short report: conclusions, paths, "
