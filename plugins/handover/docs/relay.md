@@ -44,7 +44,7 @@ Everything the plugin does to a terminal goes through one port, `scripts/termina
 | `command` | `terminal` set to `command` | through `terminal_command` | what your command does | what your command does | what your command does |
 | loop | `HANDOVER_RELAY_FILE` | restarts `claude` | no | no | no |
 
-`handover.py terminal describe` prints what was found here. A relayed session names its tab `<chain> #<n>`, with `AFK` in front on a run; an AFK run's first session, before any chain, takes the start of its goal. The bell rings when a run ends, when it needs you, when a relay stalls and when a run is lost, never on an ordinary handover.
+`handover.py terminal describe` prints what was found here. A relayed session names its tab `<chain> #<n>`, with `AFK` in front on a run; an AFK run's first session, before any chain, takes the start of its goal. A Rex tab that someone labelled keeps its label instead: a dispatcher's `rex window new <label>` or `rex new --window <label>`, or a `rex window rename` by hand mid-chain, gives `<label>` on the chain's first session and `<label> #<n>` from the second on. The plugin reads the label back from the tab at each title change, so callers pass nothing; Rex's own `Window <id>` names, and titles the plugin made, count as no label. Under tmux the window still takes the chain's titles: `toolbox session create --name` names the tmux session, which they leave alone. The bell rings when a run ends, when it needs you, when a relay stalls and when a run is lost, never on an ordinary handover.
 
 ### Rex
 

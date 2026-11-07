@@ -1772,7 +1772,7 @@ def afk_start(st, sid, goal, until, how, yolo=False):
         st["afk"]["baseline"] = extra["baseline"] = baseline_mode(st.get("project"))
         extra.update(plugin_root=plugin_root(), plugin_sha=plugin_sha())
     record("afk_started", sid, run=st["afk"]["run"], how=how, until=until, goal=goal[:200], yolo=yolo, **extra)
-    terminal().set_title(tab_title(st.get("chain") or {}, st["afk"]))
+    retitle(terminal(), st.get("chain") or {}, st["afk"])
     return st["afk"]
 
 
@@ -2610,12 +2610,38 @@ def alert(message, term=None, state="error"):
         term.report_status(state, message)
 
 
-def tab_title(chain, afk):
-    """The tab of a session: the chain's name without the handover's folder and time, or on a chain's first
-    session the AFK goal, and its rank."""
-    name = re.sub(r"^\d+h\d+-", "", os.path.basename(chain.get("base") or "")).replace("-", " ").strip()
-    name = name or " ".join((afk or {}).get("goal", "").split())[:40] or "relay"
-    return f"{'AFK ' if afk else ''}{name} #{(chain.get('n') or 0) + 1}"
+def tab_names(chain, afk):
+    """The names this plugin gives a tab nobody labelled: the chain's name without the handover's folder and time,
+    the start of the AFK goal, and `relay`, the first one set in a session's title."""
+    base = re.sub(r"^\d+h\d+-", "", os.path.basename(chain.get("base") or "")).replace("-", " ").strip()
+    goal = " ".join((afk or {}).get("goal", "").split())[:40]
+    return [name for name in (base, goal, "relay") if name]
+
+
+def tab_title(chain, afk, label=""):
+    """The tab of a session: the label someone gave it, ranked from the chain's second session on; else the chain's
+    name, or on a chain's first session the AFK goal, `AFK` in front on a run, and its rank."""
+    n = (chain.get("n") or 0) + 1
+    if label:
+        return label if n == 1 else f"{label} #{n}"
+    return f"{'AFK ' if afk else ''}{tab_names(chain, afk)[0]} #{n}"
+
+
+def tab_label(title, chain, afk):
+    """The label someone gave the tab, read back from its title: the title less the rank this plugin adds, none
+    when what is left is a name the plugin gave it (tab_names) or the title is an AFK run's."""
+    title = " ".join((title or "").split())
+    m = re.fullmatch(r"(.+) #\d+", title)
+    if not m:
+        return title
+    if title.startswith("AFK ") or m.group(1) in tab_names(chain, afk):
+        return ""
+    return m.group(1)
+
+
+def retitle(term, chain, afk):
+    """Names the session's tab (tab_title), keeping the label a dispatcher or the user gave it."""
+    return term.set_title(tab_title(chain, afk, tab_label(term.label(), chain, afk)))
 
 
 def cmd_relay_drive(args):
@@ -2858,7 +2884,7 @@ def after_recovery(inp):
         afk["instance"] = terminal().instance()
         record("afk_recovered", sid, run=afk["run"])
         chain = st.get("chain") or {}
-    terminal().set_title(tab_title(chain, afk))
+    retitle(terminal(), chain, afk)
     return {
         "systemMessage": f"handover: AFK run resumed after a restart of the terminal{afk_texts(afk)['until']}",
         "hookSpecificOutput": {
@@ -2992,7 +3018,7 @@ def take_relay(inp):
     afk = afk_active(st)
     term = terminal()
     term.report_status("clear")
-    term.set_title(tab_title(chain, afk))
+    retitle(term, chain, afk)
     with locked_state(inp["session_id"]) as new:
         new.update(
             transcript=inp.get("transcript_path"), project=project_of(inp), loaded_from=st["path"], relayed_from=chain
