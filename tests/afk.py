@@ -115,5 +115,19 @@ class BlockedByRefusal(unittest.TestCase):
         self.assertEqual(state("b4")["afk"]["ended"], "done")
 
 
+class Recovery(unittest.TestCase):
+    def test_only_a_rex_pane_is_recovered(self):
+        # The resume typed after a restart is a Rex launcher: another host that set `recovers` ends the run.
+        real = H.terminal
+        H.terminal = lambda: type("Host", (), {"name": "tmux", "recovers": True, "address": "%1"})()
+        try:
+            session("r1")
+            H.on_session_end({"session_id": "r1", "reason": "other", "transcript_path": TRANSCRIPT, "cwd": HOME})
+        finally:
+            H.terminal = real
+        self.assertNotIn("recovering", state("r1"))
+        self.assertIn("ended", state("r1")["afk"])
+
+
 if __name__ == "__main__":
     unittest.main()

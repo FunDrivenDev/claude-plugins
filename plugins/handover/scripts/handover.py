@@ -2957,7 +2957,8 @@ def on_session_end(inp):
     with locked_state(sid) as st:
         if afk_active(st) and not st.get("relay_outcome"):
             term = terminal()
-            if inp.get("reason") == "other" and term.recovers:
+            # resume_command types a Rex launcher: another host that recovers needs its own resume first.
+            if inp.get("reason") == "other" and term.recovers and term.name == "rex":
                 # A tab closed or a host restarted: relay-recover tells them apart, and resumes after a restart.
                 st["recovering"] = time.time()
                 record("afk_recovering", sid, run=st["afk"]["run"])
