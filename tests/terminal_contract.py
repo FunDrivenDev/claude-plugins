@@ -729,10 +729,11 @@ class Signals(unittest.TestCase):
             return True
 
     def chain(self, tab, sessions=3, first=0, afk=None):
-        """The tab's titles over a chain's sessions, from rank `first` + 1."""
+        """The tab's titles over a chain's sessions, from rank `first` + 1: an AFK run's unless `afk` is {}."""
+        afk = {"goal": "ship it"} if afk is None else afk or None
         titles = []
         for n in range(first, first + sessions):
-            H.retitle(tab, {"base": CHAIN, "n": n} if n else {}, afk or {"goal": "ship it"})
+            H.retitle(tab, {"base": CHAIN, "n": n} if n else {}, afk)
             titles.append(tab.title)
         return titles
 
@@ -764,6 +765,27 @@ class Signals(unittest.TestCase):
         afk = {"goal": "next run"}
         self.assertEqual(self.chain(labelled, 2, afk=afk), ["toolbox-watch", "toolbox-watch #2"])
         self.assertEqual(self.chain(unlabelled, 2, afk=afk), ["AFK next run #1", "AFK port the relay #2"])
+
+    def test_a_tab_the_plugin_titled_without_a_record_counts_as_unlabelled(self):
+        """Titled before 0.25.0, or idle past TAB_DAYS: the shape of an unlabelled title tells."""
+        cases = {
+            "AFK ship it #1": ["AFK port the relay #2", "AFK port the relay #3"],
+            "AFK an older chain #4": ["AFK port the relay #2", "AFK port the relay #3"],
+            "toolbox-watch": ["toolbox-watch #2", "toolbox-watch #3"],
+        }
+        for title, titles in cases.items():
+            with self.subTest(title):
+                self.assertEqual(self.chain(self.Tab(title), 2, 1), titles)
+        self.assertEqual(self.chain(self.Tab("port the relay #2"), 1, 2, afk={}), ["port the relay #3"])
+
+    def test_an_unreadable_record_counts_as_none(self):
+        for record in ("null", "[1]", "{not json"):
+            with self.subTest(record):
+                tab = self.Tab("toolbox-watch")
+                os.makedirs(os.path.dirname(H.tab_path(tab)), exist_ok=True)
+                with open(H.tab_path(tab), "w", encoding="utf-8") as f:
+                    f.write(record)
+                self.assertEqual(self.chain(tab, 1, 1), ["toolbox-watch #2"])
 
     def test_a_title_set_again_is_read_as_the_plugin_s(self):
         """A recovery names the tab as it already is."""

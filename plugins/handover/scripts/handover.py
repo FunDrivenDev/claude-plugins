@@ -2610,19 +2610,31 @@ def alert(message, term=None, state="error"):
         term.report_status(state, message)
 
 
-TAB_DAYS = 30
+TAB_DAYS = 90
+
+
+def tab_names(chain, afk):
+    """The names a tab nobody labelled takes, the first one in its title: the chain's name without the handover's
+    folder and time, the start of the AFK goal, `relay`."""
+    base = re.sub(r"^\d+h\d+-", "", os.path.basename(chain.get("base") or "")).replace("-", " ").strip()
+    goal = " ".join((afk or {}).get("goal", "").split())[:40]
+    return [name for name in (base, goal, "relay") if name]
 
 
 def tab_title(chain, afk, label=""):
-    """The tab of a session: the label someone gave it, ranked from the chain's second session on; else the chain's
-    name without the handover's folder and time, or on a chain's first session the AFK goal, `AFK` in front on a
-    run, and its rank."""
+    """The tab of a session: the label someone gave it, ranked from the chain's second session on; else its name
+    (tab_names), `AFK` in front on a run, and its rank."""
     n = (chain.get("n") or 0) + 1
     if label:
         return label if n == 1 else f"{label} #{n}"
-    name = re.sub(r"^\d+h\d+-", "", os.path.basename(chain.get("base") or "")).replace("-", " ").strip()
-    name = name or " ".join((afk or {}).get("goal", "").split())[:40] or "relay"
-    return f"{'AFK ' if afk else ''}{name} #{n}"
+    return f"{'AFK ' if afk else ''}{tab_names(chain, afk)[0]} #{n}"
+
+
+def unlabelled_title(title, chain, afk):
+    """Whether `title` has the shape of one the plugin gives a tab nobody labelled: for a tab without a record,
+    titled before 0.25.0 or idle past TAB_DAYS."""
+    m = re.fullmatch(r"(AFK )?(.+) #\d+", title)
+    return bool(m) and (bool(m.group(1)) or m.group(2) in tab_names(chain, afk))
 
 
 def tab_path(term):
@@ -2637,8 +2649,12 @@ def retitle(term, chain, afk):
     from, none for a tab nobody labelled."""
     path = tab_path(term)
     last = read_json(path, {})
+    last = last if isinstance(last, dict) else {}
     now = term.label()
-    label = last.get("label", "") if now and now == last.get("title") else now
+    if "title" in last:
+        label = last.get("label") or "" if now == last["title"] else now
+    else:
+        label = "" if unlabelled_title(now, chain, afk) else now
     title = tab_title(chain, afk, label)
     if not term.set_title(title):
         return False
