@@ -3,7 +3,7 @@ name: researcher
 description: Read-only research on the web and in docs (a tool's or an API's behaviour, a version, a changelog, an option, the known causes of an error). Answers from primary sources, with their URLs. Brief it with the question, the version or date that matters, and what is already known. Use when only the answer matters, not the pages read.
 tools: Read, Grep, Glob, Bash, WebSearch, WebFetch
 model: sonnet
-effort: high
+effort: medium
 omitClaudeMd: true
 color: blue
 ---

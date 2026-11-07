@@ -18,7 +18,7 @@ Each is called as `delegation:<role>`, beside the built-in `Explore`, which stay
 | Role | Job | Tools | Model, effort |
 |---|---|---|---|
 | `investigator` | diagnose a bug, a red test, a failed run; survey a system's state | Read, Grep, Glob, Bash | opus, high |
-| `researcher` | answer from docs and the web, primary sources first | Read, Grep, Glob, Bash, WebSearch, WebFetch | sonnet, high |
+| `researcher` | answer from docs and the web, primary sources first | Read, Grep, Glob, Bash, WebSearch, WebFetch | sonnet, medium |
 | `reviewer` | review a diff without the briefing session's reasoning; verified findings at `file:line` | Read, Grep, Glob, Bash | opus, high |
 | `skeptic` | try to break a plan or a design; the objections that hold, or none | Read, Grep, Glob, Bash, WebSearch, WebFetch | fable, high |
 
