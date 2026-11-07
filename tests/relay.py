@@ -83,6 +83,44 @@ class Handshake(unittest.TestCase):
         self.assertEqual(leftovers(), ["proj.json"])
         self.assertEqual(R.claim("proj", "new", now=NOW)["session"], "old")
 
+    def test_another_session_takes_an_offer_while_its_maker_looks_at_it(self):
+        R.offer("proj", "old", "rex", now=NOW)
+        real, won = R.read_json, {}
+
+        def racing(path, default=None):
+            R.read_json = real
+            got = real(path, default)
+            won["new"] = R.claim("proj", "new", now=NOW)
+            return got
+
+        R.read_json = racing
+        try:
+            self.assertIsNone(R.claim("proj", "old", now=NOW))
+        finally:
+            R.read_json = real
+        self.assertEqual(won["new"]["session"], "old")
+
+    def test_an_own_offer_put_back_never_overwrites_a_newer_one(self):
+        # The maker looks before its offer is written, moves it, then another session offers: that one stays.
+        real = R.read_json
+        R.offer("proj", "old", "rex", now=NOW)
+        calls = []
+
+        def late(path, default=None):
+            calls.append(path)
+            if len(calls) == 1:
+                return None
+            R.offer("proj", "newer", "rex", now=NOW + 1)
+            return real(path, default)
+
+        R.read_json = late
+        try:
+            self.assertIsNone(R.claim("proj", "old", now=NOW))
+        finally:
+            R.read_json = real
+        self.assertEqual(read_json(R.offer_path("proj"))["session"], "newer")
+        self.assertEqual(leftovers(), ["proj.json"])
+
     def test_an_offer_of_another_project_is_not_taken(self):
         R.offer("other", "old", "rex", now=NOW)
         self.assertIsNone(R.claim("proj", "new", now=NOW))

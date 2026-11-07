@@ -42,6 +42,10 @@ def claim(key, sid, now=None):
     path = offer_path(key)
     now = time.time() if now is None else now
     sweep(key, now)
+    seen = read_json(path)
+    if isinstance(seen, dict) and seen.get("session") == sid:
+        # Its own offer waits for the next session, left in place: a claim moving it would hide it from that one.
+        return None
     taken = f"{path}.{sid}.{os.getpid()}.claimed"
     try:
         # A rename moves the file once: the session whose rename fails lost the race. What it judges is the file it
@@ -53,7 +57,7 @@ def claim(key, sid, now=None):
     valid = isinstance(pending, dict) and isinstance(pending.get("session"), str)
     at = pending.get("at") if valid else None
     if valid and pending["session"] == sid:
-        # Its own offer waits for the next session: put back, unless a newer one is there.
+        # Its own offer, written after the look above: put back, unless a newer one is there.
         with contextlib.suppress(OSError):
             os.link(taken, path)
     with contextlib.suppress(OSError):
