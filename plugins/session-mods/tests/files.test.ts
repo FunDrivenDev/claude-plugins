@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { parseNumstat, parseStatus, treeRows } from '../hooks/files'
+import { parseLog, parseNumstat, parseStatus, treeRows } from '../hooks/files'
 
 test('git status and numstat read into changes', async () => {
   const kinds = parseStatus(' M src/a.ts\0?? src/new.ts\0 D old.md\0R  b.ts\0a.ts\0')
@@ -25,4 +25,14 @@ test('changes draw as a tree, single-child directories folded', async () => {
     '│ └ b.ts',
     '└ README.md',
   ])
+})
+
+test('git log reads into commits, pushed unless the upstream lacks them, all unpushed without an upstream', () => {
+  const out = 'aaa\x1f1700000000\x1fFirst\x1fBody line\n\x1e\nbbb\x1f1700000060\x1fSecond\x1f\x1e\n'
+  expect(parseLog(out, new Set(['bbb']))).toEqual([
+    { hash: 'aaa', subject: 'First', body: 'Body line', at: 1_700_000_000_000, isPushed: true },
+    { hash: 'bbb', subject: 'Second', body: '', at: 1_700_000_060_000, isPushed: false },
+  ])
+  expect(parseLog(out, 'all').map(c => c.isPushed)).toEqual([false, false])
+  expect(parseLog('', new Set())).toEqual([])
 })

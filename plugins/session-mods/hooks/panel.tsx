@@ -5,7 +5,7 @@ import type { Agent, Config, Doc, Entry, FileChange, Handover, HandoverFile, Han
 
 import { currentScheme, duration, prettyModel, recolor } from './appearance'
 import { LOG_FORMAT, parseLog, parseNumstat, parseStatus, treeRows } from './files'
-import { ARTIFACTS, HANDOVER_DIR, PLANS_DIR, artifactOf, type DocContext, docGroups, docOf, docPaths, tilde } from './documents'
+import { ARTIFACTS, DOC_CONTEXT, HANDOVER_DIR, PLANS_DIR, WRITTEN_SINCE, artifactOf, type DocContext, docContextOf, docGroups, docOf, docPaths, tilde, writtenSpots } from './documents'
 import { PR_COLOR, RANK, findRefs, linearOfResult, prState, refKey, refsOfGh, repoOfRemote, titleOfSlug } from './tracker'
 import type { GithubRef, LinearRef } from './tracker'
 
@@ -465,23 +465,6 @@ async function refreshPr($: EngineInterface) {
   for (const pr of (await read($, tracker)).prs ?? []) await noteGithub($, { platform: 'github', repo: pr.repo, number: pr.number, type: 'pull' }, pr.rank)
 }
 
-/** `$HOME`, the project's git folder, then the real paths of the temporary folders and of each folder named. */
-const DOC_CONTEXT = `printf '%s\\n' "$HOME"
-git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo
-for d in /tmp "\${TMPDIR:-/tmp}" "$@"; do
-  case $d in "~/"*) d="$HOME/$(printf %s "$d" | cut -c3-)";; esac
-  (cd "$d" 2>/dev/null && pwd -P) || echo "$d"
-done`
-
-/** Each file changed since `$1` (epoch seconds): its path as named, its real path, and the git folder of its repository. */
-const WRITTEN_SINCE = `start=$1; shift
-for f; do
-  [ -f "$f" ] || continue
-  [ "$(date -r "$f" +%s)" -ge "$start" ] || continue
-  d=$(cd "$(dirname "$f")" && pwd -P) || continue
-  printf '%s\\n%s/%s\\n%s\\n' "$f" "$d" "$(basename "$f")" "$(cd "$d" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
-done`
-
 /** Where documents are told apart, read again once the handover or plans folder changes. */
 async function contextOfDocs($: EngineInterface): Promise<DocContext> {
   const c = await read($, config)
@@ -489,9 +472,8 @@ async function contextOfDocs($: EngineInterface): Promise<DocContext> {
   const key = dirs.join('\n')
   if (docContext?.key === key) return docContext.ctx
   const out = await $.process.run(['sh', '-c', DOC_CONTEXT, 'sh', ...dirs])
-  const [home = '', project = '', tmp = '', tmpdir = '', handovers = '', plans = ''] = out.stdout.split('\n')
-  const ctx = { home, project: project || null, tmp: [...new Set([tmp, tmpdir].filter(Boolean))], handovers, plans }
-  if (home) docContext = { key, ctx }
+  const ctx = docContextOf(out.stdout)
+  if (ctx.home) docContext = { key, ctx }
   return ctx
 }
 
@@ -501,12 +483,7 @@ async function keepDocs($: EngineInterface, paths: string[], since = 0) {
   if (!named.length) return
   const ctx = await contextOfDocs($)
   const out = await $.process.run(['sh', '-c', WRITTEN_SINCE, 'sh', String(since), ...named])
-  const lines = out.stdout.split('\n')
-  const found: Doc[] = []
-  for (let k = 0; k + 2 < lines.length; k += 3) {
-    const doc = docOf({ path: lines[k]!, real: lines[k + 1]!, repo: lines[k + 2] || null }, ctx)
-    if (doc) found.push(doc)
-  }
+  const found = writtenSpots(out.stdout).flatMap(spot => docOf(spot, ctx) ?? [])
   if (found.length) await addDocs($, found)
 }
 

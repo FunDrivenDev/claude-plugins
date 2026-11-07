@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { artifactOf, docGroups, docOf, docPaths } from '../hooks/documents'
+import { artifactOf, docContextOf, docGroups, docOf, docPaths, writtenSpots } from '../hooks/documents'
 
 const ctx = {
   home: '/Users/me',
@@ -47,4 +47,27 @@ test('documents group as artifacts, handovers and plans first, then the other fo
   const docs = ['/Users/me/k/x.md', '/Users/me/.claude/plans/p.md', '/Users/me/Code/notes/claude/agent-handovers/h.md'].map(p => docOf(at(p), ctx)!)
   const art = artifactOf({}, { url: 'https://claude.ai/artifact/1', title: 'A' })!
   expect(docGroups([...docs, art]).map(g => g.kind)).toEqual(['Artifacts', 'Agent handovers', 'Plans', 'K'])
+})
+
+test('the context script reads into home, project, the temporary folders and the named folders, in that order', () => {
+  const out = '/Users/me\n/Users/me/Code/repo/.git\n/private/tmp\n/private/var/folders/x/T\n/Users/me/notes/handovers\n/Users/me/.claude/plans\n'
+  expect(docContextOf(out)).toEqual({
+    home: '/Users/me',
+    project: '/Users/me/Code/repo/.git',
+    tmp: ['/private/tmp', '/private/var/folders/x/T'],
+    handovers: '/Users/me/notes/handovers',
+    plans: '/Users/me/.claude/plans',
+  })
+  expect(docContextOf('/Users/me\n\n/private/tmp\n/private/tmp\n/h\n/p\n')).toMatchObject({ project: null, tmp: ['/private/tmp'] })
+  expect(docContextOf('')).toMatchObject({ home: '', project: null, tmp: [] })
+})
+
+test('the written-since script reads three lines per file, a file outside a repository with an empty third', () => {
+  const out = '~/notes/a.md\n/Users/me/notes/a.md\n\nplan.md\n/Users/me/Code/repo/plan.md\n/Users/me/Code/repo/.git\n'
+  expect(writtenSpots(out)).toEqual([
+    { path: '~/notes/a.md', real: '/Users/me/notes/a.md', repo: null },
+    { path: 'plan.md', real: '/Users/me/Code/repo/plan.md', repo: '/Users/me/Code/repo/.git' },
+  ])
+  expect(writtenSpots('')).toEqual([])
+  expect(writtenSpots('cut.md\n/x/cut.md')).toEqual([])
 })
