@@ -34,6 +34,8 @@ A file counts once an editing tool wrote it, a shell command named it by an abso
 
 What the `handover` plugin's status line says (when the handover triggers, or that it is ready or writing), the handover this session loaded on a line of its own beneath the section's title (`loaded none` until one loads), a blank line on either side, and the one it wrote beneath the status. Each shows by its title (front matter `summary`, else its `# Handover:` heading), linked to its file and followed, greyed, by its line count and last change (`(142 lines · 2026-10-07 09:32)`).
 
+The pane renders what the handover plugin answers: it runs the installed plugin's `handover.py state --session <id> --json` (handover 0.29.0 and later) and reads none of its files. Without that answer (the plugin not installed, or older), the section reads `Handover state unknown` and why.
+
 While a handover is under way the status line animates its phase: `◐ Winding down` (the tasks in progress finish), `✎··· Writing the handover`, then `● Ready for the next session`.
 
 While no handover is under way, wherever the context stands, `⚡ Hand over now` starts the wind-down at once (`/handover:trigger`): the work in progress and its sub-agents finish, then the handover is written.

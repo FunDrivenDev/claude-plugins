@@ -84,14 +84,16 @@ export type HandoverThresholds = { suggest: number; warnAt: number; trigger: num
 export type Handover = {
   /** The handover plugin runs in this session. */
   isOn: boolean
+  /** Why the handover plugin gives no state (not installed, or older than its `state` command); null when it does. */
+  unknown: string | null
   /** The handover this session started from, and the one it wrote. */
   loaded: HandoverFile | null
   written: HandoverFile | null
-  /** The token thresholds this session runs with, as the handover plugin recorded them in its state at session start; null when they could not be read. */
+  /** The token thresholds this session runs with, as the handover plugin recorded them at session start; null when unknown. */
   thresholds: HandoverThresholds | null
   /** Why the thresholds could not be read, when they could not. */
   thresholdsError: string | null
-  /** Thresholds set in settings since the session started, which apply from the next session; null when none differs. */
+  /** Thresholds the handover plugin's options resolve to now, which apply from the next session; null when none differs. */
   pending: Partial<HandoverThresholds> | null
   isWriting: boolean
   /** The wind-down has started (the trigger, a request or /handover:trigger): no new task, those in progress finish. */

@@ -1,10 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Hook, On, RenderElement, ToolCallInput, ToolCallResult, UiCopyArgs } from 'claude-code'
 
-import type { Agent, Config, Doc, Entry, FileChange, Handover, HandoverFile, HandoverThresholds, Prompt, Repo, RepoChanges, Step, Tab, TrackedIssue, TrackedPr } from '../types'
+import type { Agent, Config, Doc, Entry, FileChange, Handover, HandoverFile, Prompt, Repo, RepoChanges, Step, Tab, TrackedIssue, TrackedPr } from '../types'
 
 import { currentScheme, duration, prettyModel, recolor } from './appearance'
 import { changesOf, treeRows } from './files'
+import { HANDOVER_STATE, handoverOf } from './handover'
 import { ARTIFACTS, DOC_CONTEXT, HANDOVER_DIR, PLANS_DIR, WRITTEN_SINCE, artifactOf, type DocContext, docContextOf, docGroups, docOf, docPaths, tilde, writtenSpots } from './documents'
 import { PR_COLOR, RANK, findRefs, linearOfResult, prState, refKey, refsOfGh, repoOfRemote, titleOfSlug } from './tracker'
 import type { GithubRef, LinearRef } from './tracker'
@@ -64,13 +65,6 @@ let hasLinearApp = false
 const home = atom({ plugin: 'session-mods', key: 'home' } as const, null as string | null)
 const LINEAR_ID = /\b[A-Z][A-Z0-9]{1,9}-\d+\b/g
 const ISSUE_ICON = { github: { glyph: '◉', color: '#3fb950' }, linear: { glyph: '◐', color: '#5e6ad2' } } as const
-
-/** The message the closing reply hands the next session: its code block after `/clear`, on one line, as the handover plugin reads it. */
-export const resumeMessage = (reply: string): string | null => {
-  const at = reply.search(/\/clear\b/)
-  const block = at < 0 ? null : /```[^\n]*\n([\s\S]*?)```/.exec(reply.slice(at))
-  return block ? block[1]!.split(/\s+/).filter(Boolean).join(' ') || null : null
-}
 
 /** How long ago, coarsely: minutes within the hour, then hours, then days. */
 export const ago = (ms: number): string => {
@@ -156,13 +150,6 @@ export const lastSentence = (text: string): string | null => {
 
 /** A step is current while its answer streams or a call it made has not returned. */
 export const isRunning = (s: Step): boolean => !s.isDone || !(s.toolIds ?? []).every(id => s.doneIds?.includes(id))
-
-/** A handover's title: its front matter's `summary`, else its `# Handover:` heading. */
-export const handoverTitle = (text: string): string | null => {
-  const front = /^---\n([\s\S]*?)\n---/.exec(text)?.[1]
-  const summary = front && /^summary:\s*["']?(.+?)["']?\s*$/m.exec(front)?.[1]
-  return summary || /^#\s*Hand(?:over|off):\s*(.+)$/m.exec(text)?.[1]?.trim() || null
-}
 
 /** The hint beside Last prompt, `11 previous prompts`: how many came before it. */
 export const previousPrompts = (n: number): string =>
@@ -488,100 +475,9 @@ async function readConfig($: EngineInterface) {
   await update($, config, c => ({ ...c, plansDirectory, handoverDir }))
 }
 
-const HANDOVER_READ = `d="$HOME/.claude/plugins/data/handover-fundrivendev"
-test -d "$d" || d="$HOME/.claude/plugins/data/handover-fundriven"
-test -e "$d/live/$1" && echo on
-echo "@@"; cat "$d/sessions/$1.json" 2>/dev/null`
-
-/** A handover's first lines, for its title, then its line count and last change (`date -r` works on macOS and GNU). */
-const HANDOVER_FILE = `head -n 40 "$1" || exit 1
-printf '\\n@@\\n'; wc -l < "$1"; date -r "$1" +%s`
-
-/**
- * Whether the session's wind-down started: its `phase`, or in a compaction the phase it interrupted, is past
- * `working`. A handover plugin older than 0.28 kept a `wind_down` flag instead.
- */
-export const isWoundDown = (st: Record<string, unknown>): boolean => {
-  if (typeof st.phase !== 'string') return Boolean(st.wind_down)
-  const settled = st.phase === 'compacting' ? st.phase_before : st.phase
-  return typeof settled === 'string' && settled !== 'working'
-}
-
-/**
- * The thresholds this session runs with, as the handover plugin recorded them in its state at session start, or why
- * they are unknown: never a default of the pane's own. `pending` holds a threshold set in settings since, which applies
- * from the next session.
- */
-export const readThresholds = (
-  st: Record<string, unknown>,
-  options: Record<string, unknown>,
-): { thresholds: HandoverThresholds | null; thresholdsError: string | null; pending: Partial<HandoverThresholds> | null } => {
-  const failed = (thresholdsError: string) => ({ thresholds: null, thresholdsError, pending: null })
-  const saved = st.thresholds
-  if (typeof saved !== 'object' || saved === null) {
-    return failed("this session's handover state records no thresholds: its handover plugin is older than 0.20.0, which records them at session start")
-  }
-  const values: Record<string, unknown> = { ...saved }
-  const keys = { suggest: 'suggest_tokens', warnAt: 'warn_at_tokens', trigger: 'trigger_tokens' } as const
-  const bad = Object.values(keys).filter(key => typeof values[key] !== 'number')
-  const version = typeof st.plugin_version === 'string' ? ` (handover ${st.plugin_version})` : ''
-  if (bad.length) return failed(`in this session's handover state${version}, not a number: thresholds.${bad.join(', thresholds.')}`)
-  const thresholds = { suggest: values.suggest_tokens as number, warnAt: values.warn_at_tokens as number, trigger: values.trigger_tokens as number }
-  const pending: Partial<HandoverThresholds> = {}
-  for (const name of ['suggest', 'trigger'] as const) {
-    const set = Number(options[keys[name]])
-    if (options[keys[name]] !== undefined && options[keys[name]] !== '' && Number.isFinite(set) && set !== thresholds[name]) pending[name] = set
-  }
-  return { thresholds, thresholdsError: null, pending: Object.keys(pending).length ? pending : null }
-}
-
-/**
- * The writer's failure as the handover plugin's status line shows it: its state
- * records `{at, message, reported}`, and the status line cuts the message at 60.
- */
-export const writerError = (error: unknown): string | null => {
-  const message = typeof error === 'object' && error !== null ? (error as { message?: unknown }).message : undefined
-  return typeof message === 'string' && message ? message.slice(0, 60) : null
-}
-
-/** Reads the handover plugin's state for this session, as its status line does. */
+/** Asks the handover plugin for this session's handover state; it computes it, the pane only renders it. */
 async function readHandover($: EngineInterface) {
-  const sid = await $.session.id()
-  const out = await $.process.run(['sh', '-c', HANDOVER_READ, 'sh', sid])
-  const [live = '', state = ''] = out.stdout.split('@@\n')
-  const parse = (text: string): Record<string, unknown> => {
-    try {
-      return JSON.parse(text) as Record<string, unknown>
-    } catch {
-      return {}
-    }
-  }
-  const st = parse(state)
-  const settings = (await $.settings.read().catch(() => ({}))) as Record<string, unknown>
-  const titled = async (path: unknown): Promise<HandoverFile | null> => {
-    if (typeof path !== 'string' || !path) return null
-    const out = await $.process.run(['sh', '-c', HANDOVER_FILE, 'sh', path])
-    const cut = out.stdout.lastIndexOf('\n@@\n')
-    if (out.exitCode !== 0 || cut < 0) return { path, title: null, lines: null, modifiedAt: null }
-    const [lines, seconds] = out.stdout.slice(cut + 4).split('\n').map(n => Number.parseInt(n.trim(), 10))
-    const known = (n: number | undefined) => (n !== undefined && Number.isFinite(n) ? n : null)
-    const at = known(seconds)
-    return { path, title: handoverTitle(out.stdout.slice(0, cut)), lines: known(lines), modifiedAt: at === null ? null : at * 1000 }
-  }
-  const written = st.written as { ok?: boolean } | undefined
-  const said = written?.ok ? (await $.session.messages()).filter(m => m.role === 'assistant').pop()?.text : undefined
-  const writer = st.writer as { since?: number } | undefined
-  const now = (await $.clock.now()) / 1000
-  const next: Handover = {
-    isOn: live.trim() === 'on',
-    loaded: await titled(st.loaded_from),
-    written: written?.ok ? await titled(st.path) : null,
-    ...readThresholds(st, handoverOptions(settings)),
-    isWriting: typeof writer?.since === 'number' && now - writer.since < 660,
-    isWindingDown: isWoundDown(st),
-    error: writerError(st.error),
-    resume: said ? resumeMessage(said) : null,
-  }
+  const next = await handoverOf(sid => $.process.run(['sh', '-c', HANDOVER_STATE, 'sh', sid]), await $.session.id())
   await update($, handover, () => next)
   if (next.written) await keepDocs($, [next.written.path])
 }
@@ -1077,6 +973,7 @@ export const registerPanel = (on: On) => {
 
     const handoverRows = (() => {
       if (!ho) return [<Text dimColor>Not read yet.</Text>]
+      if (ho.unknown) return [<Text dimColor wrap="wrap">Handover state unknown: {ho.unknown}.</Text>]
       if (!ho.isOn) return [<Text dimColor>The handover plugin is off in this session.</Text>]
       const status = handoverStatus(ho, usage.context.tokens ?? 0)
       const phase = handoverPhase(ho, usage.context.tokens ?? 0)
