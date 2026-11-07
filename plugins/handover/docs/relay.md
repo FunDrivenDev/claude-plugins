@@ -24,7 +24,7 @@ The launcher is the [toolbox](https://github.com/FunDrivenDev/toolbox) CLI (`bre
 ```zsh
 toolbox session create                      # Claude Code with the relay; outside tmux, in a session that closes with the tab; inside tmux, in the current pane
 toolbox session create --name <name>        # a named session that outlives the tab; inside tmux, renames the current one
-toolbox session create --afk --yolo '<goal>' [--until <when>] [-- <claude options>]   # an AFK run
+toolbox session create --afk --yolo --prompt='<goal>' [--until <when>] [-- <claude options>]   # an AFK run
 toolbox session list                        # the sessions
 toolbox session attach <name>               # rejoins one
 toolbox session run [claude args]           # the relay itself, arguments passed to claude untouched
