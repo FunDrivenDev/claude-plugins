@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { ago, cleanTitle, clockTime, handoverPhase, phaseLine, describeCall, duration, fileMeta, handoverStatus, handoverTitle, headline, lastSentence, prettyModel, previousPrompts, promptText, readThresholds, recolor, resumeMessage } from '../hooks/panel'
+import { ago, cleanTitle, clockTime, handoverPhase, phaseLine, describeCall, duration, fileMeta, handoverStatus, handoverTitle, headline, lastSentence, prettyModel, previousPrompts, promptText, readThresholds, recolor, resumeMessage, writerError } from '../hooks/panel'
 
 const PANE = {
   component: 'Pane',
@@ -53,6 +53,10 @@ describe('helpers', () => {
       "in this session's handover state (handover 0.20.0), not a number: thresholds.trigger_tokens",
     )
     expect(handoverPhase(ho, 92_000)).toBeNull()
+    expect(writerError({ at: 1, message: 'claude -p exited 1', reported: false })).toBe('claude -p exited 1')
+    expect(writerError({ at: 1, message: 'x'.repeat(100) })).toBe('x'.repeat(60))
+    expect(writerError('a bare string')).toBeNull()
+    expect(writerError(undefined)).toBeNull()
     expect(handoverPhase({ ...ho, isWindingDown: true }, 92_000)).toBe('winding')
     expect(handoverPhase(ho, 190_000)).toBe('winding')
     expect(handoverPhase({ ...ho, isWriting: true }, 190_000)).toBe('writing')
