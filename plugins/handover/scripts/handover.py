@@ -92,6 +92,7 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import notify as N
+import relay as R
 import session as S
 import terminal as TERM
 import transcript as T
@@ -1527,14 +1528,6 @@ def relay_start():
     return "claude-relay" if os.environ.get("HANDOVER_RELAY") == "1" else "skill"
 
 
-def relay_path(project):
-    return os.path.join(data_dir(), "relay", f"{project_key(project)}.json")
-
-
-def relay_marker(sid):
-    return os.path.join(data_dir(), "relay", f"{sid}.loaded.json")
-
-
 def chain_n(st):
     """The number of this session's handover in its relay chain, known before the handover is written."""
     return (st.get("chain") or {}).get("n") or (st.get("relayed_from") or {}).get("n", 0) + 1
@@ -1572,10 +1565,7 @@ def relay(st, sid, tokens, cfg, message):
         return "handover: cannot relay here: no terminal to type into, no toolbox session run. Run /clear."
     from_reply = bool(message)
     message = message or "Continue the work from the handover loaded above."
-    write_json(
-        relay_path(st.get("project") or os.getcwd()),
-        {"session": sid, "at": time.time(), "mode": term.name},
-    )
+    R.offer(project_key(st.get("project") or os.getcwd()), sid, term.name)
     cmd = ["relay-drive", "--session", sid]
     if term.types:
         cmd += [f"--terminal={term.name}", f"--address={term.address}", f"--message={message}"]
@@ -2735,14 +2725,7 @@ def cmd_relay_drive(args):
     t0 = time.time()
     if not submit("/clear"):
         return stalled(0)
-    marker = relay_marker(args.session)
-    deadline = time.time() + WAIT_SECONDS + 60
-    while not os.path.exists(marker) and time.time() < deadline:
-        time.sleep(1)
-    loaded = read_json(marker, {})
-    with contextlib.suppress(FileNotFoundError):
-        os.remove(marker)
-    if not loaded.get("ok"):
+    if not R.await_confirmation(args.session):
         return stalled(round(time.time() - t0))
     time.sleep(1)
     if not submit(args.message):
@@ -3050,15 +3033,15 @@ def on_session_start(inp):
 
 def take_relay(inp):
     """A session the relay started: load the handover of the session it replaces, and carry the chain on."""
-    path = relay_path(project_of(inp))
-    pending = read_json(path)
-    if not pending or pending["session"] == inp["session_id"] or time.time() - pending["at"] > CLEAR_HANDOVER_SECONDS:
+    key = project_key(project_of(inp))
+    pending = R.claim(key, inp["session_id"])
+    if not pending:
         return None
-    for p in (path, os.path.join(data_dir(), "latest", f"{project_key(project_of(inp))}.json")):
-        with contextlib.suppress(FileNotFoundError):
-            os.remove(p)
+    # Relayed, the session ending leaves no /clear pointer for a later session to load.
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(os.path.join(data_dir(), "latest", f"{key}.json"))
     t0 = time.time()
-    st = wait_for(pending["session"], WAIT_SECONDS)
+    st = wait_for(pending["session"], R.LOAD_SECONDS)
     text = read_handover(st) if (st.get("written") or {}).get("ok") else None
     record(
         "handover_loaded",
@@ -3068,7 +3051,7 @@ def take_relay(inp):
         waited_s=round(time.time() - t0),
         refresh_running=S.writing(st),
     )
-    write_json(relay_marker(pending["session"]), {"ok": bool(text)})
+    R.confirm(pending["session"], bool(text))
     if not text:
         return None
     chain = st.get("chain") or {}
