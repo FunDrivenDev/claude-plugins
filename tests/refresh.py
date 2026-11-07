@@ -37,8 +37,7 @@ def closed_session(sid, written_at=235_000):
     os.makedirs(os.path.join(DATA, "sessions"), exist_ok=True)
     st = {
         "transcript": transcript,
-        "wind_down": True,
-        "closing_reply": True,
+        "phase": "handed_over",
         "written": {"ok": True, "tokens": written_at},
         "reply_offset": os.path.getsize(transcript),
     }

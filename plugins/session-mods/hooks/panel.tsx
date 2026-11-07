@@ -498,6 +498,16 @@ const HANDOVER_FILE = `head -n 40 "$1" || exit 1
 printf '\\n@@\\n'; wc -l < "$1"; date -r "$1" +%s`
 
 /**
+ * Whether the session's wind-down started: its `phase`, or in a compaction the phase it interrupted, is past
+ * `working`. A handover plugin older than 0.28 kept a `wind_down` flag instead.
+ */
+export const isWoundDown = (st: Record<string, unknown>): boolean => {
+  if (typeof st.phase !== 'string') return Boolean(st.wind_down)
+  const settled = st.phase === 'compacting' ? st.phase_before : st.phase
+  return typeof settled === 'string' && settled !== 'working'
+}
+
+/**
  * The thresholds this session runs with, as the handover plugin recorded them in its state at session start, or why
  * they are unknown: never a default of the pane's own. `pending` holds a threshold set in settings since, which applies
  * from the next session.
@@ -568,7 +578,7 @@ async function readHandover($: EngineInterface) {
     written: written?.ok ? await titled(st.path) : null,
     ...readThresholds(st, handoverOptions(settings)),
     isWriting: typeof writer?.since === 'number' && now - writer.since < 660,
-    isWindingDown: Boolean(st.wind_down),
+    isWindingDown: isWoundDown(st),
     error: writerError(st.error),
     resume: said ? resumeMessage(said) : null,
   }
