@@ -296,6 +296,19 @@ class BashWrites(unittest.TestCase):
         flagged = [c for c in self.READS if M.bash_writes(c)]
         self.assertEqual(flagged, [])
 
+    def test_a_subagent_that_writes_through_bash_counts_as_wrote(self):
+        projects = pathlib.Path(tempfile.mkdtemp()) / "projects"
+        ts = "2026-10-01T10:00:00Z"
+        proj = projects / "-tmp-proj"
+        explore = {"subagent_type": "Explore", "description": "d", "prompt": "p"}
+        write(proj / "s1.jsonl", [assistant(ts, [("e1", "Agent", explore)]), result(ts, "e1", 500)])
+        sub = proj / "s1" / "subagents"
+        sub.mkdir(parents=True)
+        (sub / "agent-1.meta.json").write_text(json.dumps({"agentType": "Explore", "toolUseId": "e1"}))
+        bash = [("b1", "Bash", {"command": "cat f"}), ("b2", "Bash", {"command": "echo x > f"})]
+        write(sub / "agent-1.jsonl", [assistant(ts, bash)])
+        self.assertEqual(M.snapshot(projects)["agents"]["wrote"], 1)
+
 
 class EvalCases(unittest.TestCase):
     EVALS = SCRIPT.parent.parent / "evals"

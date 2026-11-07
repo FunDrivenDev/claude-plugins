@@ -210,7 +210,7 @@ def subagent(meta):
         m = json.loads(meta.read_text())
     except (OSError, json.JSONDecodeError):
         return None, None
-    tools, files, bash_writes, out_tok, peak, start, model, report = Counter(), set(), 0, 0, 0, 0, None, 0
+    tools, files, bash_wrote, out_tok, peak, start, model, report = Counter(), set(), 0, 0, 0, 0, None, 0
     seen = set()
     tr = meta.with_name(meta.name.replace(".meta.json", ".jsonl"))
     if tr.exists():
@@ -235,8 +235,8 @@ def subagent(meta):
                 if t["name"] == "Read" and inp.get("file_path"):
                     files.add(inp["file_path"])
                 if t["name"] == "Bash" and bash_writes(inp.get("command", "")):
-                    bash_writes += 1
-    writes = sum(tools[t] for t in WRITE_TOOLS) + bash_writes
+                    bash_wrote += 1
+    writes = sum(tools[t] for t in WRITE_TOOLS) + bash_wrote
     return m.get("toolUseId"), {
         "type": m.get("agentType"),
         "files": files,
