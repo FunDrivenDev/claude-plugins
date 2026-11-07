@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from typing import ClassVar
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "plugins" / "delegation" / "scripts" / "measure.py"
@@ -375,12 +376,19 @@ class EvalCases(unittest.TestCase):
 
 
 class Agents(unittest.TestCase):
-    """The plugin's agents are read-only roles with an allow-list, a set model and effort, no CLAUDE.md, and a report
+    """The plugin's agents are read-only roles with an exact, pinned allow-list, a set model and effort, no CLAUDE.md, and a report
     that opens on Status and closes on Unverified then Verify."""
 
     AGENTS = SCRIPT.parent.parent / "agents"
     ROLES = (("investigator", "opus"), ("researcher", "sonnet"), ("reviewer", "opus"), ("skeptic", "fable"))
     WRITE_TOOLS = frozenset({"Edit", "Write", "NotebookEdit", "Agent", "Task", "Workflow"})
+    # Each role's exact allow-list: a tool added, removed or renamed in an agent file needs this table changed on purpose.
+    TOOLS: ClassVar[dict[str, set[str]]] = {
+        "investigator": {"Read", "Grep", "Glob", "Bash"},
+        "researcher": {"Read", "Grep", "Glob", "Bash", "WebSearch", "WebFetch"},
+        "reviewer": {"Read", "Grep", "Glob", "Bash"},
+        "skeptic": {"Read", "Grep", "Glob", "Bash", "WebSearch", "WebFetch"},
+    }
 
     def parse(self, name):
         text = (self.AGENTS / f"{name}.md").read_text()
@@ -390,6 +398,7 @@ class Agents(unittest.TestCase):
 
     def test_the_four_roles_and_no_other(self):
         self.assertEqual(sorted(p.stem for p in self.AGENTS.glob("*.md")), [n for n, _ in self.ROLES])
+        self.assertEqual(sorted(self.TOOLS), [n for n, _ in self.ROLES], "TOOLS must pin every role and no other")
 
     def test_each_role_is_read_only_with_its_model_effort_and_no_claude_md(self):
         for name, model in self.ROLES:
@@ -397,7 +406,9 @@ class Agents(unittest.TestCase):
             self.assertEqual(meta["name"], name)
             tools = {t.strip() for t in meta["tools"].split(",")}
             self.assertFalse(tools & self.WRITE_TOOLS, f"{name} can write or delegate: {tools & self.WRITE_TOOLS}")
-            self.assertTrue({"Read", "Grep", "Glob"} <= tools, name)
+            self.assertEqual(
+                tools, self.TOOLS[name], f"{name}'s tools changed: change Agents.TOOLS on purpose if this is meant"
+            )
             self.assertEqual(meta["model"], model, name)
             self.assertEqual(meta["effort"], "high", name)
             self.assertEqual(meta["omitClaudeMd"], "true", name)
