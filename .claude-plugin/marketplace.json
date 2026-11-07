@@ -32,7 +32,7 @@
     },
     {
       "name": "delegation",
-      "description": "Typed read-only subagents (investigator, researcher, reviewer, skeptic) and a measure of how sessions delegate to them: snapshots of a date window and a before/after compare",
+      "description": "Typed read-only subagents (investigator, researcher, reviewer, skeptic), a guard-agent-type hook on catch-all subagent calls and the agents' Bash writes (off by default, log or block), and a measure of how sessions delegate to them: snapshots of a date window and a before/after compare",
       "source": "./plugins/delegation",
       "category": "productivity"
     }
