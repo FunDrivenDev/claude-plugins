@@ -3220,9 +3220,14 @@ def cmd_state(args):
     sid = args.session
     try:
         resolved = thresholds(config())
-    except ValueError:
+    except (ValueError, OverflowError, TypeError):
+        # Options that do not resolve: no pending thresholds, the rest of the state still answers.
         resolved = None
-    out = S.view(S.read(sid), os.path.exists(live_path(sid)), resolved)
+    st = S.read(sid)
+    # The session went on after its closing reply, as `reply_only` tells it at SessionEnd.
+    offset = st.get("reply_offset")
+    went_on = isinstance(offset, int) and turn_since(st.get("transcript") or "", offset, ("user",))
+    out = S.view(st, os.path.exists(live_path(sid)), resolved, went_on)
     print(json.dumps(out) if args.json else json.dumps(out, indent=1))
     return 0
 

@@ -300,7 +300,8 @@ def document(path):
     if not path or not isinstance(path, str):
         return None
     try:
-        with open(path, encoding="utf-8") as f:
+        # As `wc -l` and `head` count: only "\n" ends a line, and a byte that is not UTF-8 leaves the rest readable.
+        with open(path, encoding="utf-8", errors="replace", newline="") as f:
             text = f.read()
         modified = int(os.path.getmtime(path))
     except (OSError, ValueError):
@@ -338,10 +339,11 @@ def recorded_thresholds(st, resolved):
     return th, None, pending or None
 
 
-def view(st, on, resolved):
+def view(st, on, resolved, went_on=False):
     """The session's handover state for the session-mods pane: `on` (its hooks run in the session), the phase, the
     pid-checked writer, its error as the status line cuts it, the written and loaded handovers, the thresholds and
-    the resume message. `resolved` holds the thresholds the options give now, None when they do not resolve."""
+    the resume message. `resolved` holds the thresholds the options give now, None when they do not resolve;
+    `went_on`, whether anything came in after the closing reply: its resume message may then be stale."""
     error = st.get("error")
     message = error.get("message") if isinstance(error, dict) else None
     th, why, pending = recorded_thresholds(st, resolved)
@@ -356,5 +358,5 @@ def view(st, on, resolved):
         "thresholds": th,
         "thresholds_error": why,
         "pending": pending,
-        "resume": st.get("resume"),
+        "resume": None if went_on else st.get("resume"),
     }
