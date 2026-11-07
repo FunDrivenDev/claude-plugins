@@ -80,9 +80,6 @@ def fake(directory):
         config = json.load(f)
     prompt = Prompt(config.get("draft", ""), config.get("cursor", 0))
     tty.setraw(0, termios.TCSANOW)
-    with open(os.path.join(directory, "env.tmp"), "w", encoding="utf-8") as f:
-        json.dump(dict(os.environ), f)
-    os.rename(os.path.join(directory, "env.tmp"), os.path.join(directory, "env.json"))
     log = open(os.path.join(directory, "submitted"), "a", encoding="utf-8")  # noqa: SIM115
 
     def show():
@@ -90,7 +87,11 @@ def fake(directory):
             f.write(prompt.text)
         os.rename(os.path.join(directory, "buffer.tmp"), os.path.join(directory, "buffer"))
 
+    # env.json is the handshake, so it comes last: once it is there, the buffer can be read.
     show()
+    with open(os.path.join(directory, "env.tmp"), "w", encoding="utf-8") as f:
+        json.dump(dict(os.environ), f)
+    os.rename(os.path.join(directory, "env.tmp"), os.path.join(directory, "env.json"))
     stdin = open(0, encoding="utf-8", errors="replace", newline="\n", buffering=1)  # noqa: SIM115
     while ch := stdin.read(1):
         line = prompt.press(ch)
