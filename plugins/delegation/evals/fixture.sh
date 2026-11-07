@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Fixture of every delegation eval case (each case's fixture.sh is a copy; tests/delegation_evals.py keeps them
-# identical): "ledger", a small Python package in a git repo. One test fails (a rounding bug in rates.py), the
+# Fixture of every delegation eval case (each case's fixture.sh is a copy; EvalCases in tests/delegation.py keeps
+# them identical): "ledger", a small Python package in a git repo. One test fails (a rounding bug in rates.py), the
 # working tree holds an uncommitted change with an off-by-one bug (cache.py), and PLAN.md proposes a design.
 set -euo pipefail
 # shellcheck disable=SC2046
