@@ -190,9 +190,31 @@ class Guard(Hook):
         self.run_hook("general-purpose", CLAUDE_PLUGIN_OPTION_GUARD_MODE="log")
         self.assertEqual([e["skill"] for e in self.events()], ["sweep"])
 
-    def test_a_broken_input_or_transcript_never_blocks_a_call_by_mistake(self):
-        self.transcript.write_text("not json\n")
-        self.assertIsNone(self.run_hook("Explore", CLAUDE_PLUGIN_OPTION_GUARD_MODE="block"))
+    def test_a_broken_transcript_changes_no_decision_and_leaves_the_skill_unknown(self):
+        # Only a catch-all call reads the transcript (for the event's skill), after the decision. A truncated line, a
+        # missing file or an empty one: the hook still exits 0, log lets the call through, block refuses it as it
+        # would with a sound transcript, and the event is logged with the skill the readable lines give, else None.
+        sweep = json.dumps(
+            {"type": "user", "message": {"role": "user", "content": "<command-name>/sweep</command-name>"}}
+        )
+        cases = (
+            ("truncated", lambda: self.transcript.write_text(sweep + '\n{"type": "user", "message": {"con'), "sweep"),
+            ("missing", lambda: self.transcript.unlink(missing_ok=True), None),
+            ("empty", lambda: self.transcript.write_text(""), None),
+        )
+        expected = []
+        for mode, decision in (("log", "would-block"), ("block", "block")):
+            for name, breaks, skill in cases:
+                for t in (None, "general-purpose"):
+                    with self.subTest(mode=mode, transcript=name, agent_type=t):
+                        breaks()
+                        out = self.run_hook(t, CLAUDE_PLUGIN_OPTION_GUARD_MODE=mode)
+                        self.assertEqual(self.denied(out), mode == "block")
+                        self.assertEqual(self.stderr, "")
+                        expected.append((decision, t or "", skill))
+        self.assertEqual([(e["decision"], e["agent_type"], e["skill"]) for e in self.events()], expected)
+
+    def test_a_broken_input_never_blocks_a_call_by_mistake(self):
         r = subprocess.run(
             [HOOK_PYTHON, "-B", str(HOOK)],
             input="{",
