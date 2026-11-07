@@ -15,19 +15,14 @@ lint:
     mise exec -- ruff format --check --quiet
     mise exec -- ruff check --quiet
 
-# Run the plugins' smoke tests.
+# Run the plugins' smoke tests: every tests/*.sh, then every tests/*.py, in name order, stopping at the first failure; a name starting with _ is a helper, not a test.
 test:
-    mise exec -- tests/run.sh
-    mise exec -- tests/versions.sh
-    mise exec -- tests/handover.sh
-    mise exec -- python3 tests/notify.py
-    mise exec -- python3 tests/guard.py
-    mise exec -- python3 tests/afk.py
-    mise exec -- python3 tests/refresh.py
-    mise exec -- python3 tests/conflict.py
-    mise exec -- python3 tests/thresholds.py
-    mise exec -- python3 tests/terminal_contract.py
-    mise exec -- python3 tests/notices.py
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shopt -s nullglob
+    export LC_ALL=C
+    for t in tests/[!_]*.sh; do echo "== $t"; mise exec -- "$t"; done
+    for t in tests/[!_]*.py; do echo "== $t"; mise exec -- python3 "$t"; done
 
 # Fail when a plugin changed since origin/main without a version bump (needs origin/main, so not in ci.yml).
 versions:
