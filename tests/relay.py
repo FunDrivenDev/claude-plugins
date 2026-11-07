@@ -2,6 +2,7 @@
 in a throwaway data folder with a fake clock: no session, no terminal, no wait."""
 
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -14,6 +15,10 @@ import relay as R
 from store import read_json, write_json
 
 NOW = 1_000_000.0
+
+
+def tearDownModule():
+    shutil.rmtree(DATA, ignore_errors=True)
 
 
 class Clock:
@@ -66,12 +71,16 @@ class Handshake(unittest.TestCase):
 
     def test_a_stale_offer_is_not_taken(self):
         R.offer("proj", "old", "rex", now=NOW)
-        self.assertIsNone(R.claim("proj", "new", now=NOW + R.OFFER_SECONDS + 1))
         self.assertEqual(R.claim("proj", "new", now=NOW + R.OFFER_SECONDS)["session"], "old")
+        R.offer("proj", "old", "rex", now=NOW)
+        self.assertIsNone(R.claim("proj", "new", now=NOW + R.OFFER_SECONDS + 1))
+        # Nobody may take it any more: it is dropped.
+        self.assertEqual(leftovers(), [])
 
     def test_a_session_does_not_take_its_own_offer(self):
         R.offer("proj", "old", "rex", now=NOW)
         self.assertIsNone(R.claim("proj", "old", now=NOW))
+        self.assertEqual(leftovers(), ["proj.json"])
         self.assertEqual(R.claim("proj", "new", now=NOW)["session"], "old")
 
     def test_an_offer_of_another_project_is_not_taken(self):
@@ -89,24 +98,51 @@ class Handshake(unittest.TestCase):
         self.assertEqual(R.claim("proj", "new", now=NOW)["session"], "old")
         self.assertIsNone(R.claim("proj", "other", now=NOW))
 
-    def test_of_two_claims_read_together_one_wins(self):
-        # Session a reads the offer; before it takes it, session b reads and takes it: a's rename finds nothing.
+    def test_of_two_claims_made_together_one_wins(self):
+        # Session a starts its claim; before it takes the offer, session b takes it: a's rename finds nothing.
         R.offer("proj", "old", "rex", now=NOW)
-        real, won = R.read_json, {}
+        real, won = R.sweep, {}
 
-        def racing(path, default=None):
-            got = real(path, default)
-            R.read_json = real
+        def racing(key, now):
+            R.sweep = real
             won["b"] = R.claim("proj", "b", now=NOW)
-            return got
+            return real(key, now)
 
-        R.read_json = racing
+        R.sweep = racing
         try:
             a = R.claim("proj", "a", now=NOW)
         finally:
-            R.read_json = real
+            R.sweep = real
         self.assertIsNone(a)
         self.assertEqual(won["b"]["session"], "old")
+        self.assertEqual(leftovers(), [])
+
+    def test_a_claim_judges_the_offer_it_took_not_one_read_before(self):
+        # Session a lists the folder; meanwhile b takes X's offer and Y offers: a takes Y's, which is valid.
+        R.offer("proj", "X", "rex", now=NOW)
+        real = R.sweep
+
+        def racing(key, now):
+            R.sweep = real
+            self.assertEqual(R.claim("proj", "b", now=NOW)["session"], "X")
+            R.offer("proj", "Y", "rex", now=NOW + 1)
+            return real(key, now)
+
+        R.sweep = racing
+        try:
+            self.assertEqual(R.claim("proj", "a", now=NOW + 1)["session"], "Y")
+        finally:
+            R.sweep = real
+        self.assertEqual(leftovers(), [])
+
+    def test_a_crashed_claim_s_leftover_is_swept(self):
+        R.offer("proj", "old", "rex", now=NOW)
+        left = R.offer_path("proj") + ".a.123.claimed"
+        os.rename(R.offer_path("proj"), left)
+        R.offer("proj", "old2", "rex", now=NOW)
+        R.claim("proj", "new", now=os.path.getmtime(left) + R.OFFER_SECONDS - 1)
+        self.assertEqual(leftovers(), [os.path.basename(left)])
+        R.claim("proj", "new", now=os.path.getmtime(left) + R.OFFER_SECONDS + 1)
         self.assertEqual(leftovers(), [])
 
     def test_the_claim_answers_that_the_handover_did_not_load(self):

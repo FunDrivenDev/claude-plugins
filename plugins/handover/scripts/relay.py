@@ -40,21 +40,39 @@ def claim(key, sid, now=None):
     """The offer of project `key`, taken by the starting session `sid`: {session, at, mode}, or None when there is
     none, it is stale, or `sid` made it. Taken once: of two sessions claiming together, one gets it."""
     path = offer_path(key)
-    pending = read_json(path)
-    if not isinstance(pending, dict) or not isinstance(pending.get("session"), str):
-        return None
-    at = pending.get("at")
     now = time.time() if now is None else now
-    if pending["session"] == sid or not isinstance(at, (int, float)) or now - at > OFFER_SECONDS:
-        return None
+    sweep(key, now)
     taken = f"{path}.{sid}.{os.getpid()}.claimed"
     try:
-        # A rename moves the file once: the session whose rename fails lost the race.
+        # A rename moves the file once: the session whose rename fails lost the race. What it judges is the file it
+        # moved, never one read before: another offer may have replaced it in between.
         os.rename(path, taken)
     except FileNotFoundError:
         return None
-    os.remove(taken)
+    pending = read_json(taken)
+    valid = isinstance(pending, dict) and isinstance(pending.get("session"), str)
+    at = pending.get("at") if valid else None
+    if valid and pending["session"] == sid:
+        # Its own offer waits for the next session: put back, unless a newer one is there.
+        with contextlib.suppress(OSError):
+            os.link(taken, path)
+    with contextlib.suppress(OSError):
+        os.remove(taken)
+    if not valid or pending["session"] == sid or not isinstance(at, (int, float)) or now - at > OFFER_SECONDS:
+        return None
     return pending
+
+
+def sweep(key, now):
+    """Removes what a claim that crashed between its rename and its remove left behind."""
+    prefix = os.path.basename(offer_path(key)) + "."
+    folder = os.path.dirname(offer_path(key))
+    with contextlib.suppress(OSError):
+        for name in os.listdir(folder):
+            p = os.path.join(folder, name)
+            if name.startswith(prefix) and name.endswith(".claimed") and now - os.path.getmtime(p) > OFFER_SECONDS:
+                with contextlib.suppress(OSError):
+                    os.remove(p)
 
 
 def confirm(prev, ok):
