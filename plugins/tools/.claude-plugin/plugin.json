@@ -1,7 +1,7 @@
 {
   "name": "tools",
-  "description": "Workflow tooling: wrap-up report (artifact, Bear, Slack), mental-model pages, MCP server audit, Claude config audit, and local-LLM setup advice",
-  "version": "1.6.1",
+  "description": "Workflow tooling: wrap-up report (artifact, Bear, Slack), mental-model pages, MCP server audit, Claude config audit, local-LLM setup advice, and a hook keeping the prompt cache warm while a session waits",
+  "version": "1.7.0",
   "author": {
     "name": "FunDrivenDev",
     "url": "https://github.com/FunDrivenDev"
