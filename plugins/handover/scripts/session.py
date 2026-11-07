@@ -83,6 +83,9 @@ def tracked(sid):
 
 def legacy_phase(st):
     """The phase an older plugin version's flags meant."""
+    if st.get("wind_down") and not st.get("closing_reply"):
+        # A handover asked for again after the relay's end: its Stop writes it.
+        return WINDING_DOWN
     outcome = st.get("relay_outcome") or {}
     if outcome.get("at"):
         return RELAYING

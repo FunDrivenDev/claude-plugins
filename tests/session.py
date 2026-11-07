@@ -66,6 +66,10 @@ PHASES = [
 ]
 
 
+# An older version's halted session asked for a handover again: winding down.
+PHASES.append(
+    ("halted, asked again", {"wind_down": True, "relay_outcome": {"limit": True, "n": 5}}, S.WINDING_DOWN, False, None)
+)
 # An older version's halted session, after a compaction reset its flags: working again.
 PHASES.append(("halted, then compacted", {"relay_outcome": {"limit": True, "n": 5}}, S.WORKING, False, None))
 

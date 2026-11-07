@@ -1786,7 +1786,7 @@ def afk_on_activity(st, sid, inp, event):
             }
         return None
     # A wind-down under way, or one the relay could not make: the handover flow owns this stop.
-    if S.settled(st) in (S.WINDING_DOWN, S.RELAYING, S.HALTED):
+    if S.settled(st) == S.WINDING_DOWN or st.get("relay_outcome"):
         return None
     last = inp.get("last_assistant_message") or T.last_assistant_text(inp["transcript_path"]) or ""
     if blocked_by_refusal(st, last):

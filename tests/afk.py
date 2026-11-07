@@ -130,5 +130,26 @@ class Recovery(unittest.TestCase):
         self.assertIn("ended", state("r1")["afk"])
 
 
+class FailedRelay(unittest.TestCase):
+    def test_a_failed_relay_never_resumes_the_run(self):
+        # The relay outcome stays a fact past the phase: a session asked again, or compacted, is not kept going.
+        for after in ("request", "compaction"):
+            with self.subTest(after):
+                st = {"transcript": TRANSCRIPT}
+                session("f1")
+                st = state("f1")
+                S.wind_down(st, "trigger", 1)
+                S.reply_written(st)
+                S.halted(st, "failed", 1)
+                if after == "request":
+                    S.requested(st)
+                    S.reply_written(st)
+                else:
+                    S.compaction_starts(st)
+                    S.compacted(st)
+                inp = {"last_assistant_message": "done", "transcript_path": TRANSCRIPT}
+                self.assertIsNone(H.afk_on_activity(st, "f1", inp, "Stop"))
+
+
 if __name__ == "__main__":
     unittest.main()
