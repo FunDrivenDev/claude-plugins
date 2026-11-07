@@ -3,6 +3,8 @@ import type { EngineInterface, Hook, On, PluginOptions } from 'claude-code'
 
 import type { Info, Picker, Quota, Ttl } from '../types'
 
+import { currentScheme, duration, prettyModel, recolor } from './appearance'
+
 const info = atom({ plugin: 'session-mods', key: 'info' } as const, {
   model: null,
   effort: null,
@@ -41,80 +43,11 @@ export const effortColor = (level: string | null): string => EFFORTS.find(e => e
 
 const effortLabel = (level: string | null): string => level ?? 'default'
 
-export type Scheme = 'dark' | 'light'
-
-/**
- * Each colour the bar draws, as written for a dark background, with its twin
- * for a light one: Catppuccin Latte for Frappé; for the status line's bright
- * grading and `/effort`'s colours, the nearest tone that reads on white.
- */
-const LIGHT: Record<string, string> = {
-  '#a6d189': '#40a02b',
-  '#e5c890': '#9a6700',
-  '#e78284': '#d20f39',
-  '#ef9f76': '#fe640b',
-  '#8caaee': '#1e66f5',
-  '#ca9ee6': '#8839ef',
-  '#a5adce': '#6c6f85',
-  '#c6d0f5': '#4c4f69',
-  '#51576d': '#bcc0cc',
-  '#8a8a8a': '#7c7f93',
-  '#5fff00': '#40a02b',
-  '#ffff00': '#9a6700',
-  '#ffaf00': '#fe640b',
-  '#ff0000': '#d20f39',
-  '#ffc107': '#9a6700',
-  '#4eba65': '#40a02b',
-  '#b1b9f9': '#7287fd',
-  '#af87ff': '#8839ef',
-  '#eb5f57': '#d20f39',
-}
-
-const swap = (props: Record<string, unknown>): Record<string, unknown> =>
-  Object.fromEntries(Object.entries(props).map(([k, v]) => [k, typeof v === 'string' ? (LIGHT[v] ?? v) : v]))
-
-export const recolor = <T,>(node: T, scheme: Scheme): T => {
-  if (scheme === 'dark' || node === null || typeof node !== 'object') return node
-  if (Array.isArray(node)) return node.map(child => recolor(child, scheme)) as T
-  const el = node as { props?: Record<string, unknown>; hover?: Record<string, unknown>; children?: unknown[] }
-  return {
-    ...el,
-    ...(el.props && { props: swap(el.props) }),
-    ...(el.hover && { hover: swap(el.hover) }),
-    ...(el.children && { children: el.children.map(child => recolor(child, scheme)) }),
-  } as T
-}
-
-/** macOS's appearance: `AppleInterfaceStyle` is `Dark` in dark mode and unset in light mode; dark elsewhere. */
-async function readScheme($: EngineInterface): Promise<Scheme> {
-  const r = await $.process.run(['defaults', 'read', '-g', 'AppleInterfaceStyle'])
-  if (r.exitCode === 0) return 'dark'
-  return /does not exist/.test(r.stderr) ? 'light' : 'dark'
-}
-
 /** An alias `/model` takes (`opus`, `sonnet[1m]`) → the id the selector offers; an id as given. */
 export const modelId = (model: string): string => {
   if (model.includes('claude-')) return model
   const family = /^[a-z]+/.exec(model.toLowerCase())?.[0]
   return MODELS.find(m => family && m.id.startsWith(`claude-${family}-`))?.id ?? model
-}
-
-/** `claude-opus-5-5[1m]` → `Opus 5.5`; anything else as given. */
-export const prettyModel = (id: string): string => {
-  const m = /claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?/.exec(id)
-  if (!m) return id
-  const name = m[1]!.charAt(0).toUpperCase() + m[1]!.slice(1)
-  return m[3] ? `${name} ${m[2]}.${m[3]}` : `${name} ${m[2]}`
-}
-
-export const duration = (ms: number): string => {
-  const s = Math.max(0, Math.floor(ms / 1000))
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  const sec = s % 60
-  if (h > 0) return `${h}h${String(m).padStart(2, '0')}m`
-  if (m > 0) return `${m}m${String(sec).padStart(2, '0')}s`
-  return `${sec}s`
 }
 
 /** Prompt-cache time left, as the status line counts it: whole minutes, `<1m` in the last one. */
@@ -263,10 +196,9 @@ async function seedModel($: EngineInterface) {
 type StartArgs = Parameters<Hook<'session.start'>>
 type StepArgs = Parameters<Hook<'turn.step'>>
 
-/** The bar's tick, auto-compact trigger and colour scheme, shared by its session start and its drawing. */
+/** The bar's tick and auto-compact trigger, shared by its session start and its drawing. */
 let ticker: { cancel: () => void } | null = null
 let limit: Limit = { limit: WINDOW - RESERVE, window: WINDOW }
-let scheme: Scheme = 'dark'
 
 /** The bar's work at session start, before `register` lets the chain go on. */
 export async function startBar($: StartArgs[0], _e: StartArgs[1]): Promise<void> {
@@ -275,12 +207,10 @@ export async function startBar($: StartArgs[0], _e: StartArgs[1]): Promise<void>
   let ticks = 0
   ticker = $.clock.every(1000, () => {
     ticks++
-    if (ticks % 5 === 0) void readScheme($).then(s => (scheme = s))
     if (ticks % 30 === 0) void readLimit($).then(n => (limit = n))
     $.ui.invalidate('ui.render')
   })
   limit = await readLimit($)
-  scheme = await readScheme($)
   await seedModel($)
 }
 
@@ -431,6 +361,6 @@ export const registerBar = (on: On, options: PluginOptions) => {
         )}
       </Box>
     )
-    return recolor(bar, scheme)
+    return recolor(bar, currentScheme())
   })
 }

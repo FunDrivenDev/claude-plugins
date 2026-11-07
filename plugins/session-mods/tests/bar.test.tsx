@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { barRuns, cacheColor, contextOf, duration, effortColor, kfmt, minutesLeft, modelColor, modelId, prettyModel, quotaOf, recolor, span } from '../hooks/bar'
+import { barRuns, cacheColor, contextOf, effortColor, kfmt, minutesLeft, modelColor, modelId, quotaOf, span } from '../hooks/bar'
 
 const BAR = {
   plugin: 'session-mods',
@@ -20,10 +20,6 @@ const ok = (stdout: string, stderr = '', exitCode = 0) => ({ value: { exitCode, 
 
 describe('helpers', () => {
   test('names models and durations calmly', () => {
-    expect(prettyModel('claude-opus-5-5')).toBe('Opus 5.5')
-    expect(prettyModel('claude-haiku-4-5-20251001')).toBe('Haiku 4.5')
-    expect(duration(3_725_000)).toBe('1h02m')
-    expect(duration(65_000)).toBe('1m05s')
     expect(modelColor('claude-opus-5-5[1m]')).toBe('#ef9f76')
     expect(effortColor('high')).toBe('#b1b9f9')
     expect(modelId('opus[1m]')).toBe('claude-opus-5-5')
@@ -51,15 +47,6 @@ describe('helpers', () => {
     expect(contextOf(196_000, set).color).toBe('#ff0000')
   })
 
-  test('swap each colour for its light twin on a light appearance, and leave the dark one alone', () => {
-    const tree = { type: 'Box', props: { borderColor: '#a6d189' }, children: [{ type: 'Text', props: { color: '#ffff00', bold: true }, hover: { color: '#e78284' }, children: ['#ffff00'] }] }
-    expect(recolor(tree, 'dark')).toBe(tree)
-    expect(recolor(tree, 'light')).toEqual({
-      type: 'Box',
-      props: { borderColor: '#40a02b' },
-      children: [{ type: 'Text', props: { color: '#9a6700', bold: true }, hover: { color: '#d20f39' }, children: ['#ffff00'] }],
-    })
-  })
 })
 
 describe('quotas', () => {

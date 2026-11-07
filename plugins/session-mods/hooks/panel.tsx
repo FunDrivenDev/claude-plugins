@@ -3,6 +3,7 @@ import type { EngineInterface, Hook, On, RenderElement, ToolCallInput, ToolCallR
 
 import type { Agent, Config, Doc, Entry, FileChange, Handover, HandoverFile, HandoverThresholds, Prompt, Repo, RepoChanges, Step, Tab, TrackedIssue, TrackedPr } from '../types'
 
+import { currentScheme, duration, prettyModel, recolor } from './appearance'
 import { LOG_FORMAT, parseLog, parseNumstat, parseStatus, treeRows } from './files'
 import { ARTIFACTS, HANDOVER_DIR, PLANS_DIR, artifactOf, type DocContext, docGroups, docOf, docPaths, tilde } from './documents'
 import { PR_COLOR, RANK, findRefs, linearOfResult, prState, refKey, refsOfGh, repoOfRemote, titleOfSlug } from './tracker'
@@ -65,71 +66,6 @@ let hasLinearApp = false
 const home = atom({ plugin: 'session-mods', key: 'home' } as const, null as string | null)
 const LINEAR_ID = /\b[A-Z][A-Z0-9]{1,9}-\d+\b/g
 const ISSUE_ICON = { github: { glyph: '◉', color: '#3fb950' }, linear: { glyph: '◐', color: '#5e6ad2' } } as const
-
-export type Scheme = 'dark' | 'light'
-
-/**
- * Each colour the pane draws, as written for a dark background, with its twin
- * for a light one: Catppuccin Latte for Frappé; for GitHub's colours, the
- * nearest tone that reads on white.
- */
-const LIGHT: Record<string, string> = {
-  '#a6d189': '#40a02b',
-  '#e5c890': '#9a6700',
-  '#e78284': '#d20f39',
-  '#ef9f76': '#fe640b',
-  '#8caaee': '#1e66f5',
-  '#ca9ee6': '#8839ef',
-  '#babbf1': '#7287fd',
-  '#81c8be': '#179299',
-  '#a5adce': '#6c6f85',
-  '#c6d0f5': '#4c4f69',
-  '#51576d': '#bcc0cc',
-  '#3fb950': '#1a7f37',
-  '#f85149': '#cf222e',
-  '#a371f7': '#8250df',
-}
-
-const swap = (props: Record<string, unknown>): Record<string, unknown> =>
-  Object.fromEntries(Object.entries(props).map(([k, v]) => [k, typeof v === 'string' ? (LIGHT[v] ?? v) : v]))
-
-/** The pane's tree for the OS appearance: on a light one, every colour swapped for its twin (LIGHT). */
-export const recolor = <T,>(node: T, scheme: Scheme): T => {
-  if (scheme === 'dark' || node === null || typeof node !== 'object') return node
-  if (Array.isArray(node)) return node.map(child => recolor(child, scheme)) as T
-  const el = node as { props?: Record<string, unknown>; hover?: Record<string, unknown>; children?: unknown[] }
-  return {
-    ...el,
-    ...(el.props && { props: swap(el.props) }),
-    ...(el.hover && { hover: swap(el.hover) }),
-    ...(el.children && { children: el.children.map(child => recolor(child, scheme)) }),
-  } as T
-}
-
-/** macOS's appearance: `AppleInterfaceStyle` is `Dark` in dark mode and unset in light mode; dark elsewhere. */
-async function readScheme($: EngineInterface): Promise<Scheme> {
-  const r = await $.process.run(['defaults', 'read', '-g', 'AppleInterfaceStyle'])
-  if (r.exitCode === 0) return 'dark'
-  return /does not exist/.test(r.stderr) ? 'light' : 'dark'
-}
-
-/** `claude-opus-5-5[1m]` → `Opus 5.5`; anything else as given. */
-export const prettyModel = (id: string): string => {
-  const m = /claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?/.exec(id)
-  if (!m) return id
-  const name = m[1]!.charAt(0).toUpperCase() + m[1]!.slice(1)
-  return m[3] ? `${name} ${m[2]}.${m[3]}` : `${name} ${m[2]}`
-}
-
-export const duration = (ms: number): string => {
-  const s = Math.max(0, Math.floor(ms / 1000))
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  const sec = s % 60
-  if (h > 0) return `${h}h${String(m).padStart(2, '0')}m`
-  if (m > 0) return `${m}m${String(sec).padStart(2, '0')}s`
-  return `${sec}s`
-}
 
 /** The message the closing reply hands the next session: its code block after `/clear`, on one line, as the handover plugin reads it. */
 export const resumeMessage = (reply: string): string | null => {
@@ -775,9 +711,8 @@ async function finish($: EngineInterface, agentId: string, answer?: string) {
   )
 }
 
-/** The pane's tick and colour scheme, shared by its session start and its drawing. */
+/** The pane's tick, shared by its session start and its drawing. */
 let ticker: { cancel: () => void } | null = null
-let scheme: Scheme = 'dark'
 
 /** The pane's work at session start, before `register` lets the chain go on. */
 export async function startPanel($: StartArgs[0], e: StartArgs[1]): Promise<void> {
@@ -802,7 +737,6 @@ export async function startPanel($: StartArgs[0], e: StartArgs[1]): Promise<void
   ticker = $.clock.every(1000, () => {
     ticks++
     if (ticks % 5 === 0) void readHandover($).then(() => titleFromHandover($))
-    if (ticks % 5 === 0) void readScheme($).then(s => (scheme = s))
     if (ticks % 30 === 0) void readConfig($)
     if (ticks % 60 === 0) void refreshPr($)
     $.ui.invalidate('ui.render')
@@ -813,7 +747,6 @@ export async function startPanel($: StartArgs[0], e: StartArgs[1]): Promise<void
   await readHandover($)
   await titleFromHandover($)
   await readConfig($)
-  scheme = await readScheme($)
   await trackRepo($, e.cwd)
   await refreshFiles($)
 
@@ -1806,6 +1739,6 @@ export const registerPanel = (on: On) => {
         {shownTab === 'help' ? helpBody() : shownTab === 'config' ? configBody() : shownTab === 'misc' ? miscBody() : mainBody()}
       </Box>
     )
-    return recolor(pane, scheme)
+    return recolor(pane, currentScheme())
   })
 }
