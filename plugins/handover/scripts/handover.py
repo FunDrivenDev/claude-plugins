@@ -2610,38 +2610,44 @@ def alert(message, term=None, state="error"):
         term.report_status(state, message)
 
 
-def tab_names(chain, afk):
-    """The names this plugin gives a tab nobody labelled: the chain's name without the handover's folder and time,
-    the start of the AFK goal, and `relay`, the first one set in a session's title."""
-    base = re.sub(r"^\d+h\d+-", "", os.path.basename(chain.get("base") or "")).replace("-", " ").strip()
-    goal = " ".join((afk or {}).get("goal", "").split())[:40]
-    return [name for name in (base, goal, "relay") if name]
+TAB_DAYS = 30
 
 
 def tab_title(chain, afk, label=""):
     """The tab of a session: the label someone gave it, ranked from the chain's second session on; else the chain's
-    name, or on a chain's first session the AFK goal, `AFK` in front on a run, and its rank."""
+    name without the handover's folder and time, or on a chain's first session the AFK goal, `AFK` in front on a
+    run, and its rank."""
     n = (chain.get("n") or 0) + 1
     if label:
         return label if n == 1 else f"{label} #{n}"
-    return f"{'AFK ' if afk else ''}{tab_names(chain, afk)[0]} #{n}"
+    name = re.sub(r"^\d+h\d+-", "", os.path.basename(chain.get("base") or "")).replace("-", " ").strip()
+    name = name or " ".join((afk or {}).get("goal", "").split())[:40] or "relay"
+    return f"{'AFK ' if afk else ''}{name} #{n}"
 
 
-def tab_label(title, chain, afk):
-    """The label someone gave the tab, read back from its title: the title less the rank this plugin adds, none
-    when what is left is a name the plugin gave it (tab_names) or the title is an AFK run's."""
-    title = " ".join((title or "").split())
-    m = re.fullmatch(r"(.+) #\d+", title)
-    if not m:
-        return title
-    if title.startswith("AFK ") or m.group(1) in tab_names(chain, afk):
-        return ""
-    return m.group(1)
+def tab_path(term):
+    """What the plugin last named a tab, and from which label: one file per pane, kept TAB_DAYS."""
+    key = hashlib.sha1(f"{term.name} {term.address}".encode()).hexdigest()[:16]
+    return os.path.join(data_dir(), "tabs", f"{key}.json")
 
 
 def retitle(term, chain, afk):
-    """Names the session's tab (tab_title), keeping the label a dispatcher or the user gave it."""
-    return term.set_title(tab_title(chain, afk, tab_label(term.label(), chain, afk)))
+    """Names the session's tab (tab_title), keeping the label a dispatcher or the user gave it. The tab's name now
+    is that label unless it is the title the plugin itself set there last: then the label is the one it was made
+    from, none for a tab nobody labelled."""
+    path = tab_path(term)
+    last = read_json(path, {})
+    now = term.label()
+    label = last.get("label", "") if now and now == last.get("title") else now
+    title = tab_title(chain, afk, label)
+    if not term.set_title(title):
+        return False
+    write_json(path, {"title": title, "label": label})
+    with contextlib.suppress(OSError):
+        for entry in os.scandir(os.path.dirname(path)):
+            if time.time() - entry.stat().st_mtime > TAB_DAYS * 86400:
+                os.remove(entry.path)
+    return True
 
 
 def cmd_relay_drive(args):

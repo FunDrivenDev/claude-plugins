@@ -528,6 +528,7 @@ class Recovery(unittest.TestCase):
     """An AFK session the host ended: on a throwaway Rex server, resumed after a crash, lost after a closed tab."""
 
     label = None
+    chain = None
     title = "AFK ship it's goal #1"
 
     def setUp(self):
@@ -553,6 +554,8 @@ class Recovery(unittest.TestCase):
         self.env = {**self.host.env, "REX_SESSION": self.pane[0], "REX_BLOCK": self.pane[1]}
         goal = "ship it's goal"
         state = {"afk": {"goal": goal, "until": None, "run": "r1", "since": time.time(), "yolo": True}}
+        if self.chain:
+            state["chain"] = dict(self.chain)
         state["afk"]["instance"] = json.loads(self.host.rex("whoami", "--json"))["instance_id"]
         with open(os.path.join(self.data, "sessions", "s1.json"), "w", encoding="utf-8") as f:
             json.dump(state, f)
@@ -623,7 +626,8 @@ class LabelledRecovery(Recovery):
     """The restart again, in a tab a dispatcher labelled: the resumed run keeps the label."""
 
     label = "toolbox-watch"
-    title = "toolbox-watch"
+    chain = (("base", CHAIN), ("n", 2))
+    title = "toolbox-watch #3"
     test_a_closed_tab_ends_the_run_and_says_how_to_resume = None
     test_an_ordinary_exit_is_no_recovery = None
 
@@ -678,8 +682,12 @@ class Signals(unittest.TestCase):
             return True
 
     def setUp(self):
-        os.environ["CLAUDE_PLUGIN_OPTION_NOTIFIER"] = "bell"
-        self.addCleanup(os.environ.pop, "CLAUDE_PLUGIN_OPTION_NOTIFIER")
+        data = tempfile.mkdtemp(prefix="hc")
+        self.addCleanup(shutil.rmtree, data, True)
+        for key, value in (("CLAUDE_PLUGIN_OPTION_NOTIFIER", "bell"), ("CLAUDE_PLUGIN_DATA", data)):
+            previous = os.environ.get(key)
+            os.environ[key] = value
+            self.addCleanup(lambda k=key, v=previous: os.environ.pop(k) if v is None else os.environ.update({k: v}))
         self.term = self.Recorder()
 
     def test_an_alert_rings_and_leaves_a_status(self):
@@ -706,29 +714,11 @@ class Signals(unittest.TestCase):
         self.assertEqual(H.tab_title({"base": CHAIN, "n": 2}, afk, "toolbox-watch"), "toolbox-watch #3")
         self.assertEqual(H.tab_title({"base": CHAIN, "n": 2}, None, "toolbox-watch"), "toolbox-watch #3")
 
-    def test_the_label_is_the_title_less_what_the_plugin_made(self):
-        chain, afk = {"base": CHAIN, "n": 2}, {"goal": "ship it"}
-        cases = {
-            "toolbox-watch": "toolbox-watch",
-            "toolbox-watch #2": "toolbox-watch",
-            "  fix-49  W3 ": "fix-49 W3",
-            "renamed by hand #7": "renamed by hand",
-            "AFK ship it #1": "",
-            "AFK port the relay #2": "",
-            "port the relay #2": "",
-            "ship it #1": "",
-            "relay #1": "",
-            "": "",
-        }
-        for title, label in cases.items():
-            with self.subTest(title):
-                self.assertEqual(H.tab_label(title, chain, afk), label)
-
     class Tab(T.Terminal):
-        """A tab that reads back the title it was given, first named `label`."""
+        """A pane of its own, whose tab reads back the title it was given, first named `label`."""
 
         def __init__(self, label=""):
-            super().__init__()
+            super().__init__(tempfile.mktemp())
             self.title = label
 
         def label(self):
@@ -738,24 +728,48 @@ class Signals(unittest.TestCase):
             self.title = title
             return True
 
-    def test_a_label_survives_a_chain_and_a_rename_by_hand(self):
-        tab, afk = self.Tab("toolbox-watch"), {"goal": "ship it"}
+    def chain(self, tab, sessions=3, first=0, afk=None):
+        """The tab's titles over a chain's sessions, from rank `first` + 1."""
         titles = []
-        for n in range(3):
-            H.retitle(tab, {"base": CHAIN, "n": n} if n else {}, afk)
+        for n in range(first, first + sessions):
+            H.retitle(tab, {"base": CHAIN, "n": n} if n else {}, afk or {"goal": "ship it"})
             titles.append(tab.title)
+        return titles
+
+    def test_a_label_survives_a_chain_and_a_rename_by_hand(self):
+        tab = self.Tab("toolbox-watch")
+        titles = self.chain(tab)
         tab.title = "renamed"
-        H.retitle(tab, {"base": CHAIN, "n": 3}, afk)
-        titles.append(tab.title)
+        titles += self.chain(tab, 1, 3)
         self.assertEqual(titles, ["toolbox-watch", "toolbox-watch #2", "toolbox-watch #3", "renamed #4"])
 
     def test_a_tab_nobody_labelled_keeps_the_plugin_titles(self):
-        tab, afk = self.Tab(), {"goal": "ship it"}
-        titles = []
-        for n in range(3):
-            H.retitle(tab, {"base": CHAIN, "n": n} if n else {}, afk)
-            titles.append(tab.title)
-        self.assertEqual(titles, UNLABELLED)
+        self.assertEqual(self.chain(self.Tab()), UNLABELLED)
+
+    def test_a_label_is_kept_as_given_whatever_it_looks_like(self):
+        cases = {
+            "PR #123": ["PR #123", "PR #123 #2", "PR #123 #3"],
+            "fix #2": ["fix #2", "fix #2 #2", "fix #2 #3"],
+            "AFK watcher": ["AFK watcher", "AFK watcher #2", "AFK watcher #3"],
+            "relay": ["relay", "relay #2", "relay #3"],
+            "ship it": ["ship it", "ship it #2", "ship it #3"],
+        }
+        for label, titles in cases.items():
+            with self.subTest(label):
+                self.assertEqual(self.chain(self.Tab(label)), titles)
+
+    def test_a_new_chain_in_the_same_tab_starts_from_its_label(self):
+        labelled, unlabelled = self.Tab("toolbox-watch"), self.Tab()
+        self.chain(labelled), self.chain(unlabelled)
+        afk = {"goal": "next run"}
+        self.assertEqual(self.chain(labelled, 2, afk=afk), ["toolbox-watch", "toolbox-watch #2"])
+        self.assertEqual(self.chain(unlabelled, 2, afk=afk), ["AFK next run #1", "AFK port the relay #2"])
+
+    def test_a_title_set_again_is_read_as_the_plugin_s(self):
+        """A recovery names the tab as it already is."""
+        tab = self.Tab("toolbox-watch")
+        self.chain(tab, 2)
+        self.assertEqual(self.chain(tab, 1, 1), ["toolbox-watch #2"])
 
 
 class Prompts(unittest.TestCase):
