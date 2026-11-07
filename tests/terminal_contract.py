@@ -28,6 +28,9 @@ import terminal as T
 ALL_VERBS = ("type_text", "press_enter", "clear_input", "set_title", "ring", "report_status")
 # Left by the host, or by the session running these tests: a case must see only what its pane sets.
 LEAKS = ("TMUX", "REX_", "HANDOVER_", "CLAUDE_", "GIT_")
+# A chain's base, and the titles an AFK chain gives a tab nobody labelled: its goal, then the chain's name.
+CHAIN = "2026/11/07/10h00-port-the-relay"
+UNLABELLED = ["AFK ship it #1", "AFK port the relay #2", "AFK port the relay #3"]
 TRICKY = (
     "plain words",
     "/clear",
@@ -129,8 +132,9 @@ class TmuxHost:
     def stop(self):
         self.tmux("kill-server")
 
-    def spawn(self, command):
-        return self.tmux("new-window", "-d", "-t", "host", "-P", "-F", "#{pane_id}", command)
+    def spawn(self, command, label=None):
+        named = ["-n", label] if label else []
+        return self.tmux("new-window", "-d", "-t", "host", *named, "-P", "-F", "#{pane_id}", command)
 
     def close(self, pane):
         self.tmux("kill-pane", "-t", pane)
@@ -197,8 +201,9 @@ class RexHost:
         self.crash()
         shutil.rmtree(self.lab, True)
 
-    def spawn(self, command):
-        session = json.loads(self.rex("new", f"s{len(self.watchers)}", "--json", "--", "sh", "-c", command))
+    def spawn(self, command, label=None):
+        named = ["--window", label] if label else []
+        session = json.loads(self.rex("new", f"s{len(self.watchers)}", *named, "--json", "--", "sh", "-c", command))
         session, block = session["session_id"], session["initial_windows"][0]["block_ids"][0]
         log = os.path.join(self.lab, f"events{len(self.watchers)}")
         with open(log, "w") as f:
@@ -272,6 +277,8 @@ class Contract:
 
     Host = None
     adapter = None
+    # Whether a label given to the tab survives the chain's titles: Rex only, tmux keeps its names to the session.
+    keeps_label = False
 
     @classmethod
     def setUpClass(cls):
@@ -285,13 +292,14 @@ class Contract:
         self.data = os.path.join(self.root, "data")
         os.makedirs(os.path.join(self.data, "relay"))
 
-    def subject(self, **config):
-        """Starts the fake claude in a new pane; the pane, and the environment a hook would have in it."""
+    def subject(self, label=None, **config):
+        """Starts the fake claude in a new pane, its tab named `label`; the pane, and the environment a hook would
+        have in it."""
         self.dir = tempfile.mkdtemp(dir=self.root)
         with open(os.path.join(self.dir, "config.json"), "w", encoding="utf-8") as f:
             json.dump(config, f)
         python = shutil.which("python3") or sys.executable
-        self.pane = self.host.spawn(f"'{python}' '{os.path.abspath(__file__)}' --fake '{self.dir}'")
+        self.pane = self.host.spawn(f"'{python}' '{os.path.abspath(__file__)}' --fake '{self.dir}'", label)
         path = os.path.join(self.dir, "env.json")
         self.assertTrue(wait_until(lambda: os.path.exists(path)), "the fake claude did not start")
         with open(path, encoding="utf-8") as f:
@@ -400,6 +408,37 @@ class Contract:
         self.assertTrue(self.verb("set_title", "--text=port the relay #3")["done"])
         self.assertTrue(wait_until(lambda: self.host.title(self.pane) == "port the relay #3"))
 
+    def chain_titles(self):
+        """The tab's title after each title change of an AFK chain: its start, then two relays, each in a process
+        of its own as a hook would run it."""
+        code = "import json, sys, handover as H; H.retitle(H.terminal(), json.loads(sys.argv[1]), {'goal': 'ship it'})"
+        titles = []
+        for chain in ({}, {"base": CHAIN, "n": 1}, {"base": CHAIN, "n": 2}):
+            p = subprocess.run(
+                [sys.executable, "-c", code, json.dumps(chain)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env={**self.env, "PYTHONPATH": SCRIPTS},
+                check=False,
+            )
+            self.assertEqual(p.returncode, 0, p.stderr)
+            titles.append(self.host.title(self.pane))
+        return titles
+
+    def test_an_unlabelled_tab_takes_the_goal_then_the_chain(self):
+        self.subject()
+        if "set_title" not in self.verb("describe")["verbs"]:
+            self.skipTest("no title on this adapter")
+        self.assertEqual(self.chain_titles(), UNLABELLED)
+
+    def test_a_label_given_to_the_tab_stays_across_relays(self):
+        self.subject(label="toolbox-watch")
+        if "set_title" not in self.verb("describe")["verbs"]:
+            self.skipTest("no title on this adapter")
+        labelled = ["toolbox-watch", "toolbox-watch #2", "toolbox-watch #3"]
+        self.assertEqual(self.chain_titles(), labelled if self.keeps_label else UNLABELLED)
+
     def test_report_status_reaches_the_tab(self):
         self.subject()
         if "report_status" not in self.verb("describe")["verbs"] or not hasattr(self.host, "status"):
@@ -462,6 +501,7 @@ class Tmux(Contract, unittest.TestCase):
 class Rex(Contract, unittest.TestCase):
     Host = RexHost
     adapter = "rex"
+    keeps_label = True
 
 
 @unittest.skipUnless(shutil.which("tmux"), "tmux is not installed")
@@ -487,6 +527,10 @@ printf '{{"hook_event_name":"SessionStart","session_id":"s1","source":"resume"}}
 class Recovery(unittest.TestCase):
     """An AFK session the host ended: on a throwaway Rex server, resumed after a crash, lost after a closed tab."""
 
+    label = None
+    chain = None
+    title = "AFK ship it's goal #1"
+
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="hc")
         self.addCleanup(shutil.rmtree, self.root, True)
@@ -506,10 +550,12 @@ class Recovery(unittest.TestCase):
         )
         self.host.start()
         self.addCleanup(self.host.stop)
-        self.pane = self.host.spawn("sleep 600")
+        self.pane = self.host.spawn("sleep 600", self.label)
         self.env = {**self.host.env, "REX_SESSION": self.pane[0], "REX_BLOCK": self.pane[1]}
         goal = "ship it's goal"
         state = {"afk": {"goal": goal, "until": None, "run": "r1", "since": time.time(), "yolo": True}}
+        if self.chain:
+            state["chain"] = dict(self.chain)
         state["afk"]["instance"] = json.loads(self.host.rex("whoami", "--json"))["instance_id"]
         with open(os.path.join(self.data, "sessions", "s1.json"), "w", encoding="utf-8") as f:
             json.dump(state, f)
@@ -555,7 +601,7 @@ class Recovery(unittest.TestCase):
             args = f.read().splitlines()
         self.assertEqual(args, ["rex-session", "run", "--afk", "ship it's goal", "--yolo", "--resume", "s1"])
         self.assertNotIn("ended", self.state()["afk"])
-        self.assertTrue(wait_until(lambda: self.host.title(self.pane) == "AFK ship it's goal #1"))
+        self.assertTrue(wait_until(lambda: self.host.title(self.pane) == self.title), self.host.title(self.pane))
 
     def test_a_closed_tab_ends_the_run_and_says_how_to_resume(self):
         self.host.close(self.pane)
@@ -574,6 +620,16 @@ class Recovery(unittest.TestCase):
         )
         self.assertEqual(self.state()["afk"]["ended"], "exit")
         self.assertNotIn("recovering", self.state())
+
+
+class LabelledRecovery(Recovery):
+    """The restart again, in a tab a dispatcher labelled: the resumed run keeps the label."""
+
+    label = "toolbox-watch"
+    chain = (("base", CHAIN), ("n", 2))
+    title = "toolbox-watch #3"
+    test_a_closed_tab_ends_the_run_and_says_how_to_resume = None
+    test_an_ordinary_exit_is_no_recovery = None
 
 
 class Selection(unittest.TestCase):
@@ -626,8 +682,12 @@ class Signals(unittest.TestCase):
             return True
 
     def setUp(self):
-        os.environ["CLAUDE_PLUGIN_OPTION_NOTIFIER"] = "bell"
-        self.addCleanup(os.environ.pop, "CLAUDE_PLUGIN_OPTION_NOTIFIER")
+        data = tempfile.mkdtemp(prefix="hc")
+        self.addCleanup(shutil.rmtree, data, True)
+        for key, value in (("CLAUDE_PLUGIN_OPTION_NOTIFIER", "bell"), ("CLAUDE_PLUGIN_DATA", data)):
+            previous = os.environ.get(key)
+            os.environ[key] = value
+            self.addCleanup(lambda k=key, v=previous: os.environ.pop(k) if v is None else os.environ.update({k: v}))
         self.term = self.Recorder()
 
     def test_an_alert_rings_and_leaves_a_status(self):
@@ -647,6 +707,91 @@ class Signals(unittest.TestCase):
     def test_a_first_afk_session_is_named_after_its_goal(self):
         self.assertEqual(H.tab_title({}, {"goal": "ship the\nport"}), "AFK ship the port #1")
         self.assertEqual(len(H.tab_title({}, {"goal": "x" * 200})), len("AFK  #1") + 40)
+
+    def test_a_label_stays_as_given_then_takes_the_rank(self):
+        afk = {"goal": "x"}
+        self.assertEqual(H.tab_title({}, afk, "toolbox-watch"), "toolbox-watch")
+        self.assertEqual(H.tab_title({"base": CHAIN, "n": 2}, afk, "toolbox-watch"), "toolbox-watch #3")
+        self.assertEqual(H.tab_title({"base": CHAIN, "n": 2}, None, "toolbox-watch"), "toolbox-watch #3")
+
+    class Tab(T.Terminal):
+        """A pane of its own, whose tab reads back the title it was given, first named `label`."""
+
+        def __init__(self, label=""):
+            super().__init__(tempfile.mktemp())
+            self.title = label
+
+        def label(self):
+            return self.title
+
+        def set_title(self, title):
+            self.title = title
+            return True
+
+    def chain(self, tab, sessions=3, first=0, afk=None):
+        """The tab's titles over a chain's sessions, from rank `first` + 1: an AFK run's unless `afk` is {}."""
+        afk = {"goal": "ship it"} if afk is None else afk or None
+        titles = []
+        for n in range(first, first + sessions):
+            H.retitle(tab, {"base": CHAIN, "n": n} if n else {}, afk)
+            titles.append(tab.title)
+        return titles
+
+    def test_a_label_survives_a_chain_and_a_rename_by_hand(self):
+        tab = self.Tab("toolbox-watch")
+        titles = self.chain(tab)
+        tab.title = "renamed"
+        titles += self.chain(tab, 1, 3)
+        self.assertEqual(titles, ["toolbox-watch", "toolbox-watch #2", "toolbox-watch #3", "renamed #4"])
+
+    def test_a_tab_nobody_labelled_keeps_the_plugin_titles(self):
+        self.assertEqual(self.chain(self.Tab()), UNLABELLED)
+
+    def test_a_label_is_kept_as_given_whatever_it_looks_like(self):
+        cases = {
+            "PR #123": ["PR #123", "PR #123 #2", "PR #123 #3"],
+            "fix #2": ["fix #2", "fix #2 #2", "fix #2 #3"],
+            "AFK watcher": ["AFK watcher", "AFK watcher #2", "AFK watcher #3"],
+            "relay": ["relay", "relay #2", "relay #3"],
+            "ship it": ["ship it", "ship it #2", "ship it #3"],
+        }
+        for label, titles in cases.items():
+            with self.subTest(label):
+                self.assertEqual(self.chain(self.Tab(label)), titles)
+
+    def test_a_new_chain_in_the_same_tab_starts_from_its_label(self):
+        labelled, unlabelled = self.Tab("toolbox-watch"), self.Tab()
+        self.chain(labelled), self.chain(unlabelled)
+        afk = {"goal": "next run"}
+        self.assertEqual(self.chain(labelled, 2, afk=afk), ["toolbox-watch", "toolbox-watch #2"])
+        self.assertEqual(self.chain(unlabelled, 2, afk=afk), ["AFK next run #1", "AFK port the relay #2"])
+
+    def test_a_tab_the_plugin_titled_without_a_record_counts_as_unlabelled(self):
+        """Titled before 0.25.0, or idle past TAB_DAYS: the shape of an unlabelled title tells."""
+        cases = {
+            "AFK ship it #1": ["AFK port the relay #2", "AFK port the relay #3"],
+            "AFK an older chain #4": ["AFK port the relay #2", "AFK port the relay #3"],
+            "toolbox-watch": ["toolbox-watch #2", "toolbox-watch #3"],
+        }
+        for title, titles in cases.items():
+            with self.subTest(title):
+                self.assertEqual(self.chain(self.Tab(title), 2, 1), titles)
+        self.assertEqual(self.chain(self.Tab("port the relay #2"), 1, 2, afk={}), ["port the relay #3"])
+
+    def test_an_unreadable_record_counts_as_none(self):
+        for record in ("null", "[1]", "{not json"):
+            with self.subTest(record):
+                tab = self.Tab("toolbox-watch")
+                os.makedirs(os.path.dirname(H.tab_path(tab)), exist_ok=True)
+                with open(H.tab_path(tab), "w", encoding="utf-8") as f:
+                    f.write(record)
+                self.assertEqual(self.chain(tab, 1, 1), ["toolbox-watch #2"])
+
+    def test_a_title_set_again_is_read_as_the_plugin_s(self):
+        """A recovery names the tab as it already is."""
+        tab = self.Tab("toolbox-watch")
+        self.chain(tab, 2)
+        self.assertEqual(self.chain(tab, 1, 1), ["toolbox-watch #2"])
 
 
 class Prompts(unittest.TestCase):

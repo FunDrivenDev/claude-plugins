@@ -9,6 +9,9 @@ The plugin depends on the port alone: `Terminal`, whose verbs are
     ring()               ring the terminal's bell
     report_status(state, message)  show a status on the session's tab: a state of STATES, and one line
 
+One query besides: `label()`, the name a dispatcher or the user gave the session's tab, empty when the host
+named it itself or the adapter cannot tell. The plugin keeps that label in the titles it sets.
+
 An adapter whose host can end a session and restore its pane sets `recovers`, and answers `instance()`, what
 identifies its server now, and `survey(instance)`: "gone", the server does not answer; "restarted", another
 server than `instance` holds the pane; "ended", anything else.
@@ -89,6 +92,9 @@ class Terminal:
 
     def report_status(self, state, message=""):
         return False
+
+    def label(self):
+        return ""
 
     def instance(self):
         return ""
@@ -208,10 +214,21 @@ class Rex(Terminal):
     def clear_input(self):
         return self._keys(*["ctrl+k"] * CLEAR_LINES, *["ctrl+u"] * CLEAR_LINES)
 
-    def set_title(self, title):
+    def _window(self):
         block = self._json("block", "inspect", "-s", self.session, self.block, "--json").get("block") or {}
-        window = block.get("window_id")
+        return block.get("window_id")
+
+    def set_title(self, title):
+        window = self._window()
         return bool(window) and self._rex("window", "rename", "-s", self.session, window, title) is not None
+
+    def label(self):
+        # A window nobody named shows `Window <the last 8 characters of its id>`.
+        window = self._window()
+        if not window:
+            return ""
+        label = (self._json("window", "inspect", "-s", self.session, window, "--json").get("label") or "").strip()
+        return "" if label == f"Window {window[-8:]}" else label
 
     def ring(self):
         tty = self._tty()

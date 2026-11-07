@@ -1772,7 +1772,7 @@ def afk_start(st, sid, goal, until, how, yolo=False):
         st["afk"]["baseline"] = extra["baseline"] = baseline_mode(st.get("project"))
         extra.update(plugin_root=plugin_root(), plugin_sha=plugin_sha())
     record("afk_started", sid, run=st["afk"]["run"], how=how, until=until, goal=goal[:200], yolo=yolo, **extra)
-    terminal().set_title(tab_title(st.get("chain") or {}, st["afk"]))
+    retitle(terminal(), st.get("chain") or {}, st["afk"])
     return st["afk"]
 
 
@@ -2610,12 +2610,60 @@ def alert(message, term=None, state="error"):
         term.report_status(state, message)
 
 
-def tab_title(chain, afk):
-    """The tab of a session: the chain's name without the handover's folder and time, or on a chain's first
-    session the AFK goal, and its rank."""
-    name = re.sub(r"^\d+h\d+-", "", os.path.basename(chain.get("base") or "")).replace("-", " ").strip()
-    name = name or " ".join((afk or {}).get("goal", "").split())[:40] or "relay"
-    return f"{'AFK ' if afk else ''}{name} #{(chain.get('n') or 0) + 1}"
+TAB_DAYS = 90
+
+
+def tab_names(chain, afk):
+    """The names a tab nobody labelled takes, the first one in its title: the chain's name without the handover's
+    folder and time, the start of the AFK goal, `relay`."""
+    base = re.sub(r"^\d+h\d+-", "", os.path.basename(chain.get("base") or "")).replace("-", " ").strip()
+    goal = " ".join((afk or {}).get("goal", "").split())[:40]
+    return [name for name in (base, goal, "relay") if name]
+
+
+def tab_title(chain, afk, label=""):
+    """The tab of a session: the label someone gave it, ranked from the chain's second session on; else its name
+    (tab_names), `AFK` in front on a run, and its rank."""
+    n = (chain.get("n") or 0) + 1
+    if label:
+        return label if n == 1 else f"{label} #{n}"
+    return f"{'AFK ' if afk else ''}{tab_names(chain, afk)[0]} #{n}"
+
+
+def unlabelled_title(title, chain, afk):
+    """Whether `title` has the shape of one the plugin gives a tab nobody labelled: for a tab without a record,
+    titled before 0.25.0 or idle past TAB_DAYS."""
+    m = re.fullmatch(r"(AFK )?(.+) #\d+", title)
+    return bool(m) and (bool(m.group(1)) or m.group(2) in tab_names(chain, afk))
+
+
+def tab_path(term):
+    """What the plugin last named a tab, and from which label: one file per pane, kept TAB_DAYS."""
+    key = hashlib.sha1(f"{term.name} {term.address}".encode()).hexdigest()[:16]
+    return os.path.join(data_dir(), "tabs", f"{key}.json")
+
+
+def retitle(term, chain, afk):
+    """Names the session's tab (tab_title), keeping the label a dispatcher or the user gave it. The tab's name now
+    is that label unless it is the title the plugin itself set there last: then the label is the one it was made
+    from, none for a tab nobody labelled."""
+    path = tab_path(term)
+    last = read_json(path, {})
+    last = last if isinstance(last, dict) else {}
+    now = term.label()
+    if "title" in last:
+        label = last.get("label") or "" if now == last["title"] else now
+    else:
+        label = "" if unlabelled_title(now, chain, afk) else now
+    title = tab_title(chain, afk, label)
+    if not term.set_title(title):
+        return False
+    write_json(path, {"title": title, "label": label})
+    with contextlib.suppress(OSError):
+        for entry in os.scandir(os.path.dirname(path)):
+            if time.time() - entry.stat().st_mtime > TAB_DAYS * 86400:
+                os.remove(entry.path)
+    return True
 
 
 def cmd_relay_drive(args):
@@ -2858,7 +2906,7 @@ def after_recovery(inp):
         afk["instance"] = terminal().instance()
         record("afk_recovered", sid, run=afk["run"])
         chain = st.get("chain") or {}
-    terminal().set_title(tab_title(chain, afk))
+    retitle(terminal(), chain, afk)
     return {
         "systemMessage": f"handover: AFK run resumed after a restart of the terminal{afk_texts(afk)['until']}",
         "hookSpecificOutput": {
@@ -2992,7 +3040,7 @@ def take_relay(inp):
     afk = afk_active(st)
     term = terminal()
     term.report_status("clear")
-    term.set_title(tab_title(chain, afk))
+    retitle(term, chain, afk)
     with locked_state(inp["session_id"]) as new:
         new.update(
             transcript=inp.get("transcript_path"), project=project_of(inp), loaded_from=st["path"], relayed_from=chain
