@@ -1,12 +1,14 @@
 import type { Register } from 'claude-code'
 
+import { startScheme } from './appearance'
 import { afterStepBar, beforeStepBar, registerBar, startBar } from './bar'
 import { registerPanel, startPanel, stepPanel } from './panel'
 
 /**
  * The plugin's one hooks module: the side pane (`panel.tsx`) and the bar beneath
  * the prompt (`bar.tsx`). Each hooks its own events; the two both need,
- * `session.start` and `turn.step`, are hooked once here and run both mods' work.
+ * `session.start` and `turn.step`, are hooked once here and run both mods' work;
+ * `session.start` also starts reading the OS appearance both draw with (`appearance.ts`).
  */
 export const register: Register = (on, options) => {
   registerPanel(on)
@@ -15,6 +17,7 @@ export const register: Register = (on, options) => {
   /** Each mod starts even when the other fails; the first failure is then rethrown, so the engine reports the hook as skipped. */
   on('session.start', async ($, e, next) => {
     const failures: unknown[] = []
+    await startScheme($).catch((error: unknown) => failures.push(error))
     await startPanel($, e).catch((error: unknown) => failures.push(error))
     await startBar($, e).catch((error: unknown) => failures.push(error))
     if (failures.length) throw failures[0]

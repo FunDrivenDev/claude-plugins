@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { ago, cleanTitle, clockTime, handoverPhase, phaseLine, describeCall, duration, fileMeta, handoverStatus, handoverTitle, headline, lastSentence, prettyModel, previousPrompts, promptText, readThresholds, recolor, resumeMessage, writerError } from '../hooks/panel'
+import { ago, cleanTitle, clockTime, handoverPhase, phaseLine, describeCall, fileMeta, handoverStatus, handoverTitle, headline, lastSentence, previousPrompts, promptText, readThresholds, resumeMessage, writerError } from '../hooks/panel'
 
 const PANE = {
   component: 'Pane',
@@ -19,10 +19,6 @@ const typed = (text: string) => ({ text, wait: false, origin: { kind: 'composer'
 
 describe('helpers', () => {
   test('names models and durations calmly', async () => {
-    expect(prettyModel('claude-opus-5-5')).toBe('Opus 5.5')
-    expect(prettyModel('claude-haiku-4-5-20251001')).toBe('Haiku 4.5')
-    expect(duration(3_725_000)).toBe('1h02m')
-    expect(duration(65_000)).toBe('1m05s')
     expect(ago(125_000)).toBe('2 min ago')
     expect(ago(2 * 3_600_000 + 600_000)).toBe('2 hours ago')
     expect(headline('Read the pane example first. Then write it.')).toBe('Read the pane example first.')
@@ -279,16 +275,6 @@ test('a new session lists only the commits made since it began, in its linked wo
 })
 
 describe('colours and replies', () => {
-  test('swap each colour for its light twin on a light appearance, and leave the dark one alone', () => {
-    const tree = { type: 'Box', props: { borderColor: '#a6d189' }, children: [{ type: 'Text', props: { color: '#e5c890', bold: true }, hover: { color: '#e78284' }, children: ['#e5c890'] }] }
-    expect(recolor(tree, 'dark')).toBe(tree)
-    expect(recolor(tree, 'light')).toEqual({
-      type: 'Box',
-      props: { borderColor: '#40a02b' },
-      children: [{ type: 'Text', props: { color: '#9a6700', bold: true }, hover: { color: '#d20f39' }, children: ['#e5c890'] }],
-    })
-  })
-
   test('read the resume message the closing reply ends on', () => {
     const reply = 'Done.\n\nRun `/clear`, then send:\n\n```\nResume the session-panel work:\n  open the PR.\n```\n'
     expect(resumeMessage(reply)).toBe('Resume the session-panel work: open the PR.')
