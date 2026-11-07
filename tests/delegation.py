@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from typing import ClassVar
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "plugins" / "delegation" / "scripts" / "measure.py"
@@ -372,6 +373,73 @@ class EvalCases(unittest.TestCase):
         kinds = [d.name.split("-")[0] for d in self.cases()]
         self.assertEqual(kinds.count("read"), kinds.count("write"))
         self.assertGreaterEqual(len(kinds), 6)
+
+
+class Agents(unittest.TestCase):
+    """The plugin's agents are read-only roles with an exact, pinned allow-list, a set model and effort, no CLAUDE.md, and a report
+    that opens on Status and closes on Unverified then Verify."""
+
+    AGENTS = SCRIPT.parent.parent / "agents"
+    ROLES = (("investigator", "opus"), ("researcher", "sonnet"), ("reviewer", "opus"), ("skeptic", "fable"))
+    WRITE_TOOLS = frozenset({"Edit", "Write", "NotebookEdit", "Agent", "Task", "Workflow"})
+    # Each role's exact allow-list: a tool added, removed or renamed in an agent file needs this table changed on purpose.
+    TOOLS: ClassVar[dict[str, set[str]]] = {
+        "investigator": {"Read", "Grep", "Glob", "Bash"},
+        "researcher": {"Read", "Grep", "Glob", "Bash", "WebSearch", "WebFetch"},
+        "reviewer": {"Read", "Grep", "Glob", "Bash"},
+        "skeptic": {"Read", "Grep", "Glob", "Bash", "WebSearch", "WebFetch"},
+    }
+
+    def parse(self, name):
+        text = (self.AGENTS / f"{name}.md").read_text()
+        head, body = text.split("\n---\n", 1)
+        meta = dict(line.split(": ", 1) for line in head.removeprefix("---\n").splitlines())
+        return meta, body
+
+    def test_the_four_roles_and_no_other(self):
+        self.assertEqual(sorted(p.stem for p in self.AGENTS.glob("*.md")), [n for n, _ in self.ROLES])
+        self.assertEqual(sorted(self.TOOLS), [n for n, _ in self.ROLES], "TOOLS must pin every role and no other")
+
+    def test_each_role_is_read_only_with_its_model_effort_and_no_claude_md(self):
+        for name, model in self.ROLES:
+            meta, _ = self.parse(name)
+            self.assertEqual(meta["name"], name)
+            tools = {t.strip() for t in meta["tools"].split(",")}
+            self.assertFalse(tools & self.WRITE_TOOLS, f"{name} can write or delegate: {tools & self.WRITE_TOOLS}")
+            self.assertEqual(
+                tools, self.TOOLS[name], f"{name}'s tools changed: change Agents.TOOLS on purpose if this is meant"
+            )
+            self.assertEqual(meta["model"], model, name)
+            self.assertEqual(meta["effort"], "high", name)
+            self.assertEqual(meta["omitClaudeMd"], "true", name)
+
+    def test_the_investigator_reruns_only_a_failing_command_without_side_effects(self):
+        # A failed deploy, migration or POST is itself a write: it is reported as the repro, never rerun.
+        _, body = self.parse("investigator")
+        rules = " ".join(body.split("Stop when", 1)[0].split())
+        self.assertNotIn("the failing command itself:", rules)
+        self.assertIn("no side effect", rules)
+        self.assertIn("goes under `Repro`", rules)
+
+    def test_the_readme_does_not_send_bash_rules_to_the_session_wide_deny_list(self):
+        # permissions.deny binds the main session too, which is the one meant to commit and push.
+        readme = " ".join((SCRIPT.parent.parent / "README.md").read_text().split())
+        self.assertNotIn("deny the write commands in your `permissions.deny`", readme)
+        self.assertIn("would bind the main session too", readme)
+
+    def test_the_reviewer_reports_a_review_without_agents_md(self):
+        # AGENTS.md alone holds the standards: a repo without one is reviewed anyway, and the report names the gap.
+        _, body = self.parse("reviewer")
+        report = body.split("Report in this format", 1)[1]
+        self.assertIn("- **Standards**: each `AGENTS.md` read, or `none: the repo has no AGENTS.md`.", report)
+        self.assertNotIn("CLAUDE.md", body)
+
+    def test_each_report_opens_on_status_and_closes_on_unverified_then_verify(self):
+        for name, _ in self.ROLES:
+            _, body = self.parse(name)
+            fields = re.findall(r"^- \*\*(\w+)\*\*", body.split("Report in this format", 1)[1], re.MULTILINE)
+            self.assertEqual(fields[0], "Status", name)
+            self.assertEqual(fields[-2:], ["Unverified", "Verify"], name)
 
 
 class Cli(unittest.TestCase):

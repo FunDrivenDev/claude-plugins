@@ -32,7 +32,7 @@
     },
     {
       "name": "delegation",
-      "description": "Measure how sessions delegate to subagents and where the main session's context goes: snapshots of a date window and a before/after compare",
+      "description": "Typed read-only subagents (investigator, researcher, reviewer, skeptic) and a measure of how sessions delegate to them: snapshots of a date window and a before/after compare",
       "source": "./plugins/delegation",
       "category": "productivity"
     }
