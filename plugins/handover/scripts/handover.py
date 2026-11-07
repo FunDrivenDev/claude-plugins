@@ -814,6 +814,27 @@ def turn_since(transcript, offset, types=("user", "assistant")):
     return False
 
 
+def answered_since(transcript, offset):
+    """Whether the session answered something that came in past `offset`: a user entry, then an assistant one. A
+    local command (`/usage`, `/rename`) writes user entries that no turn answers, and the closing reply itself may
+    reach the transcript after the offset."""
+    asked = False
+    with contextlib.suppress(OSError), open(transcript, "rb") as f:
+        f.seek(offset)
+        for line in f.read().decode("utf-8", "replace").splitlines():
+            with contextlib.suppress(ValueError):
+                e = json.loads(line)
+                if not isinstance(e, dict) or e.get("isSidechain"):
+                    continue
+                content = (e.get("message") or {}).get("content") if isinstance(e.get("message"), dict) else None
+                local = isinstance(content, str) and content.lstrip().startswith(("<command-name>", "<local-command-"))
+                if e.get("type") == "user" and not e.get("isMeta") and not local:
+                    asked = True
+                elif e.get("type") == "assistant" and asked:
+                    return True
+    return False
+
+
 def cmd_wake_timeout(args):
     """With no turn woken by the kill or the notice within the wait, write the handover here and hand over without a
     closing reply: the relay resumes with a generic message, the user reads the status line."""
@@ -3224,9 +3245,9 @@ def cmd_state(args):
         # Options that do not resolve: no pending thresholds, the rest of the state still answers.
         resolved = None
     st = S.read(sid)
-    # The session went on after its closing reply, as `reply_only` tells it at SessionEnd.
+    # The session went on after its closing reply: its resume message may name a step since done.
     offset = st.get("reply_offset")
-    went_on = isinstance(offset, int) and turn_since(st.get("transcript") or "", offset, ("user",))
+    went_on = isinstance(offset, int) and answered_since(st.get("transcript") or "", offset)
     out = S.view(st, os.path.exists(live_path(sid)), resolved, went_on)
     print(json.dumps(out) if args.json else json.dumps(out, indent=1))
     return 0

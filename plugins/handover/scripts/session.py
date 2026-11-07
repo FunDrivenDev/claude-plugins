@@ -306,7 +306,7 @@ def document(path):
         modified = int(os.path.getmtime(path))
     except (OSError, ValueError):
         return {"path": path, "title": None, "lines": None, "modified_at": None}
-    head = "\n".join(text.split("\n")[:40])
+    head = "\n".join(text.split("\n")[:40]).replace("\r\n", "\n")
     return {"path": path, "title": title(head), "lines": text.count("\n"), "modified_at": modified}
 
 

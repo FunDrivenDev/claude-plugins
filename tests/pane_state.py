@@ -110,6 +110,8 @@ class View(unittest.TestCase):
         self.assertIsNone(self.view({"written": {"ok": False}, "path": written})["written"])
         # As `wc -l` and `head` read it: a lone "\r" ends no line, a byte that is not UTF-8 hides nothing else.
         crlf = handover_doc("# Handover: hello world\r\nline2\rline3\n")
+        front = handover_doc('---\r\nsummary: "Ship it"\r\n---\r\n# Handover: heading\r\n')
+        self.assertEqual(self.view({"loaded_from": front})["loaded"]["title"], "Ship it")
         v = self.view({"loaded_from": crlf})["loaded"]
         self.assertEqual((v["title"], v["lines"]), ("hello world", 2))
         latin = handover_doc("")
@@ -229,8 +231,19 @@ class Command(unittest.TestCase):
         with open(transcript, "a") as f:
             f.write('{"type": "assistant"}\n{"type": "user", "isSidechain": true}\n')
         self.assertEqual(json.loads(self.run_state(sid).stdout)["resume"], "Resume the pane.")
+        # A local command before /clear writes user entries that no turn answers.
         with open(transcript, "a") as f:
-            f.write('{"type": "user"}\n')
+            f.write('{"type": "user", "isMeta": true, "message": {"content": "<local-command-caveat>x"}}\n')
+            f.write('{"type": "user", "message": {"content": "<command-name>/usage</command-name>"}}\n')
+            f.write('{"type": "user", "isMeta": true, "message": {"content": "The user named this session"}}\n')
+            f.write('{"type": "system", "subtype": "local_command"}\n')
+        self.assertEqual(json.loads(self.run_state(sid).stdout)["resume"], "Resume the pane.")
+        # A prompt alone is not answered yet; its answer is.
+        with open(transcript, "a") as f:
+            f.write('{"type": "user", "message": {"content": "one more thing"}}\n')
+        self.assertEqual(json.loads(self.run_state(sid).stdout)["resume"], "Resume the pane.")
+        with open(transcript, "a") as f:
+            f.write('{"type": "assistant"}\n')
         self.assertIsNone(json.loads(self.run_state(sid).stdout)["resume"])
 
     def test_options_that_do_not_resolve_leave_the_rest_of_the_state(self):
