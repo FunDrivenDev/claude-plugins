@@ -1,7 +1,7 @@
 """Tests of the tools plugin's cache-keepalive hook (plugins/tools/scripts/cache_keepalive.py), run as Claude Code
 runs it: the hook input on stdin, the options in the environment, a temp data folder, the delay cut to a fraction of
-a second. Arming only while waiting, the wake (exit 2 and its message), a prompt or the session's end cancelling a
-pending timer, and the cap on keep-alives in a row."""
+a second. Arming only while waiting, the wake (exit 2 and its message), a prompt, a newer turn, a busy transcript or
+the session's end cancelling a pending timer, the cap on keep-alives in a row, and bad options."""
 
 import json
 import os
@@ -29,6 +29,15 @@ class Hook(unittest.TestCase):
         self.data = pathlib.Path(tempfile.mkdtemp())
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("CLAUDE_", "CACHE_KEEPALIVE"))}
         self.env.update(CLAUDE_PLUGIN_DATA=str(self.data), CACHE_KEEPALIVE_AFTER="0.3", CACHE_KEEPALIVE_POLL="0.05")
+        self.procs = []
+
+    def tearDown(self):
+        for p in self.procs:
+            if p.poll() is None:
+                p.kill()
+            p.wait()
+            p.stdout.close()
+            p.stderr.close()
 
     def payload(self, event, **extra):
         return json.dumps({"hook_event_name": event, "session_id": "s-1", **extra})
@@ -42,9 +51,23 @@ class Hook(unittest.TestCase):
             text=True,
             env={**self.env, **(env or {})},
         )
+        self.procs.append(p)
         p.stdin.write(self.payload(event, **extra))
         p.stdin.close()
         return p
+
+    def armed(self, token=None):
+        """Waits until a Stop has saved its token (a different one than `token`), so the next event comes after it."""
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                current = self.state().get("token")
+            except (OSError, ValueError):
+                current = None
+            if current and current != token:
+                return current
+            time.sleep(0.01)
+        self.fail("the Stop hook never saved its token")
 
     def run_hook(self, event, env=None, **extra):
         p = self.start(event, env, **extra)
@@ -71,10 +94,8 @@ class Hook(unittest.TestCase):
         self.assertEqual(code, 2)
 
     def test_idle_with_nothing_pending_stays_cold(self):
-        started = time.monotonic()
-        code, err = self.stop(background_tasks=[], session_crons=[])
+        code, err = self.stop({"CACHE_KEEPALIVE_AFTER": "5"}, background_tasks=[], session_crons=[])
         self.assertEqual((code, err), (0, ""))
-        self.assertLess(time.monotonic() - started, 0.3)
 
     def test_always_arms_without_waiting(self):
         code, _ = self.stop({"CACHE_KEEPALIVE": "always"}, background_tasks=[])
@@ -85,21 +106,21 @@ class Hook(unittest.TestCase):
 
     def test_a_prompt_cancels_the_pending_timer(self):
         p = self.start("Stop", {"CACHE_KEEPALIVE_AFTER": "5"}, background_tasks=TASK)
-        time.sleep(0.3)
+        self.armed()
         self.assertEqual(self.run_hook("UserPromptSubmit", prompt="back"), (0, ""))
         p.wait(timeout=2)
         self.assertEqual(p.returncode, 0)
 
     def test_a_newer_turn_supersedes_the_older_timer(self):
         old = self.start("Stop", {"CACHE_KEEPALIVE_AFTER": "5"}, background_tasks=TASK)
-        time.sleep(0.3)
+        self.armed()
         code, _ = self.stop()
         old.wait(timeout=2)
         self.assertEqual((old.returncode, code), (0, 2))
 
     def test_session_end_cancels_and_cleans_up(self):
         p = self.start("Stop", {"CACHE_KEEPALIVE_AFTER": "5"}, background_tasks=TASK)
-        time.sleep(0.3)
+        self.armed()
         self.assertEqual(self.run_hook("SessionEnd", reason="exit"), (0, ""))
         p.wait(timeout=2)
         self.assertEqual(p.returncode, 0)
@@ -121,6 +142,42 @@ class Hook(unittest.TestCase):
         wake = "<task-notification>\n<summary>Stop hook feedback</summary>\n</task-notification>\n" + message
         self.assertEqual(self.run_hook("UserPromptSubmit", prompt=wake), (0, ""))
         self.assertEqual(self.stop(cap)[0], 0)
+
+    def test_a_prompt_quoting_the_marker_still_cancels(self):
+        p = self.start("Stop", {"CACHE_KEEPALIVE_AFTER": "5"}, background_tasks=TASK)
+        self.armed()
+        quoted = "What does 'Cache keep-alive (tools plugin, cache-keepalive hook)' mean?"
+        self.assertEqual(self.run_hook("UserPromptSubmit", prompt=quoted), (0, ""))
+        p.wait(timeout=2)
+        self.assertEqual(p.returncode, 0)
+
+    def test_a_busy_transcript_cancels_the_timer(self):
+        # A turn a Stop hook continues, or one a task notification starts, writes to the transcript with no new Stop
+        transcript = self.data / "t.jsonl"
+        transcript.write_text("{}\n")
+        p = self.start("Stop", {"CACHE_KEEPALIVE_AFTER": "4"}, background_tasks=TASK, transcript_path=str(transcript))
+        time.sleep(1.5)  # past the grace (AFTER / 4)
+        with transcript.open("a") as f:
+            f.write('{"type": "assistant"}\n')
+        p.wait(timeout=2)
+        self.assertEqual((p.returncode, p.stderr.read()), (0, ""))
+
+    def test_a_quiet_transcript_still_wakes(self):
+        transcript = self.data / "t.jsonl"
+        transcript.write_text("{}\n")
+        code, _ = self.stop(transcript_path=str(transcript))
+        self.assertEqual(code, 2)
+
+    def test_non_finite_options_fall_back_to_the_defaults(self):
+        bad = {"CACHE_KEEPALIVE_MAX": "nan", "CACHE_KEEPALIVE_AFTER": "inf"}
+        p = self.start("Stop", bad, background_tasks=TASK)
+        self.armed()
+        self.run_hook("UserPromptSubmit", prompt="back")
+        p.wait(timeout=2)
+        nan_max = {"CACHE_KEEPALIVE_MAX": "nan"}
+        for _ in range(12):
+            self.assertEqual(self.stop(nan_max)[0], 2)
+        self.assertEqual(self.stop(nan_max)[0], 0)  # the default cap of 12, not none
 
     def test_another_turn_between_keepalives_restarts_the_count(self):
         cap = {"CACHE_KEEPALIVE_MAX": "1"}

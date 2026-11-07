@@ -26,7 +26,7 @@
     },
     {
       "name": "tools",
-      "description": "Workflow tooling: wrap-up report (artifact, Bear, Slack), mental-model pages, MCP server audit, Claude config audit, and local-LLM setup advice",
+      "description": "Workflow tooling: wrap-up report (artifact, Bear, Slack), mental-model pages, MCP server audit, Claude config audit, local-LLM setup advice, and a hook that wakes a session waiting on a background task about once an hour for a one-line reply keeping the prompt cache warm (on by default, CACHE_KEEPALIVE=off to disable)",
       "source": "./plugins/tools",
       "category": "productivity"
     },
