@@ -545,10 +545,10 @@ def markdown(s):
     ]
     if s.get("guard") is not None:
         g = s["guard"]
-        out.append(f"| M9 | Hook events: would-block {g['would_block']}, blocked {g.get('blocked', 0)} |")
+        out.append(f"| M9 | Hook events (would-block, blocked) | {g['would_block']}, {g.get('blocked', 0)} |")
         if g.get("bash") is not None:
             b = g["bash"]
-            out.append(f"| M9b | Agents' Bash writes: would-block {b['would_block']}, blocked {b['blocked']} |")
+            out.append(f"| M9b | Agents' Bash writes (would-block, blocked) | {b['would_block']}, {b['blocked']} |")
     out += [
         "",
         "## Agent calls by type",

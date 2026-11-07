@@ -176,8 +176,18 @@ class Snapshot(unittest.TestCase):
         log = self.tmp / "guard.jsonl"
         write(log, [{"ts": "2026-10-03T09:00:00Z", "decision": "block", "agent_type": "claude"}])
         s = M.snapshot(self.projects, M.to_date("2026-09-01"), M.to_date("2026-10-31"), str(log))
-        self.assertIn("| M9 | Hook events: would-block 0, blocked 1 |", M.markdown(s))
+        md = M.markdown(s)
+        self.assertIn("| M9 | Hook events (would-block, blocked) | 0, 1 |", md)
+        self.assertIn("| M9b | Agents' Bash writes (would-block, blocked) | 0, 0 |", md)
         self.assertIn("M9 blocked", [name for name, _ in M.HEADLINES])
+
+    def test_every_headline_row_has_as_many_cells_as_its_header(self):
+        log = self.tmp / "guard.jsonl"
+        write(log, [{"ts": "2026-10-03T09:00:00Z", "decision": "block", "agent_type": "claude"}])
+        md = M.markdown(M.snapshot(self.projects, M.to_date("2026-09-01"), M.to_date("2026-10-31"), str(log)))
+        table = md.split("## Headline metrics\n\n", 1)[1].split("\n\n", 1)[0].splitlines()
+        cells = [len(row.strip("|").split("|")) for row in table]
+        self.assertEqual(cells, [cells[0]] * len(table), table)
 
 
 class RefusedAgentCalls(unittest.TestCase):
