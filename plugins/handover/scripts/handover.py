@@ -3345,9 +3345,10 @@ def status_line(st, prog, tokens, cfg):
         return "gray", "Compacting · handover " + ("written, loads after it" if written.get("ok") else "not written")
     if phase == S.RELAYING:
         return "green", "Handover ready · relaying"
-    if st.get("write_failed") and phase in (S.CLOSING, S.HANDED_OVER, S.HALTED):
+    owed = S.reply_owed(st)
+    if st.get("write_failed") and (owed or phase in (S.HANDED_OVER, S.HALTED)):
         # The last write failed: a handover on disk is an older one.
-        if phase == S.CLOSING:
+        if owed:
             return "red", "Handover failed · closing reply"
         return "red", f"Handover failed · {(error.get('message') or 'run /clear')[:60]}"
     reason, n = S.halt_reason(st), (st.get("relay_outcome") or {}).get("n", 0)
@@ -3369,7 +3370,7 @@ def status_line(st, prog, tokens, cfg):
             f" until {datetime.fromtimestamp(afk['until']).strftime('%H:%M')}" if afk.get("until") else ""
         )
     # Ready only once the closing reply is written: /clear before it would lose the resume message.
-    if phase == S.CLOSING:
+    if owed:
         return "orange", f"Handover written · closing reply{loaded}"
     if phase == S.WINDING_DOWN:
         return "orange", f"Winding down · finishing tasks{loaded}"

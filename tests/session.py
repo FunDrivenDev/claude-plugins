@@ -20,47 +20,56 @@ NOW = time.time()
 WRITTEN = {"ok": True, "at": NOW}
 ERROR = {"at": NOW, "message": "the writer timed out", "reported": True}
 
-# (name, state, phase, halt reason)
+# (name, state, phase, closing reply owed, halt reason)
 PHASES = [
-    ("fresh session", {}, S.WORKING, None),
-    ("suggested", {"suggested": True}, S.WORKING, None),
-    ("handover kept fresh", {"keep_fresh": True, "written": WRITTEN}, S.WORKING, None),
-    ("compaction", {"keep_fresh": True, "compacting": True}, S.COMPACTING, None),
-    ("compaction while winding down", {"wind_down": True, "compacting": True}, S.COMPACTING, None),
-    ("wind-down", {"wind_down": True}, S.WINDING_DOWN, None),
-    ("held, writing", {"wind_down": True, "held_since": NOW}, S.WINDING_DOWN, None),
+    ("fresh session", {}, S.WORKING, False, None),
+    ("suggested", {"suggested": True}, S.WORKING, False, None),
+    ("handover kept fresh", {"keep_fresh": True, "written": WRITTEN}, S.WORKING, False, None),
+    ("compaction", {"keep_fresh": True, "compacting": True}, S.COMPACTING, False, None),
+    ("compaction while winding down", {"wind_down": True, "compacting": True}, S.COMPACTING, False, None),
+    ("wind-down", {"wind_down": True}, S.WINDING_DOWN, False, None),
+    ("held, writing", {"wind_down": True, "held_since": NOW}, S.WINDING_DOWN, False, None),
     (
         "held, an older handover",
         {"wind_down": True, "held_since": NOW, "written": {"ok": True, "at": NOW - 60}},
         S.WINDING_DOWN,
+        False,
         None,
     ),
-    ("held, written", {"wind_down": True, "held_since": NOW, "written": WRITTEN}, S.CLOSING, None),
-    ("reply due", {"wind_down": True, "reply_due": True}, S.CLOSING, None),
-    ("reply due, write failed", {"wind_down": True, "reply_due": True, "write_failed": True}, S.CLOSING, None),
-    ("closing reply", {"wind_down": True, "reply_due": True, "closing_reply": True}, S.HANDED_OVER, None),
+    ("held, written", {"wind_down": True, "held_since": NOW, "written": WRITTEN}, S.WINDING_DOWN, True, None),
+    ("reply due", {"wind_down": True, "reply_due": True}, S.WINDING_DOWN, True, None),
+    (
+        "reply due, write failed",
+        {"wind_down": True, "reply_due": True, "write_failed": True},
+        S.WINDING_DOWN,
+        True,
+        None,
+    ),
+    ("closing reply", {"wind_down": True, "reply_due": True, "closing_reply": True}, S.HANDED_OVER, False, None),
     (
         "relay launched",
         {"wind_down": True, "closing_reply": True, "relay_outcome": {"at": NOW, "n": 1}},
         S.RELAYING,
+        False,
         None,
     ),
-    ("relay limit", {"closing_reply": True, "relay_outcome": {"limit": True, "n": 5}}, S.HALTED, "limit"),
-    ("AFK deadline", {"relay_outcome": {"limit": True, "n": 2, "deadline": True}}, S.HALTED, "deadline"),
-    ("relay failed", {"relay_outcome": {"failed": True, "n": 1}}, S.HALTED, "failed"),
-    ("AFK run ended", {"relay_outcome": {"afk": "done", "n": 3}}, S.HALTED, "afk"),
+    ("relay limit", {"closing_reply": True, "relay_outcome": {"limit": True, "n": 5}}, S.HALTED, False, "limit"),
+    ("AFK deadline", {"relay_outcome": {"limit": True, "n": 2, "deadline": True}}, S.HALTED, False, "deadline"),
+    ("relay failed", {"relay_outcome": {"failed": True, "n": 1}}, S.HALTED, False, "failed"),
+    ("AFK run ended", {"relay_outcome": {"afk": "done", "n": 3}}, S.HALTED, False, "afk"),
 ]
 
 
 class Phase(unittest.TestCase):
     def test_table(self):
-        for name, st, phase, reason in PHASES:
+        for name, st, phase, owed, reason in PHASES:
             with self.subTest(name):
                 self.assertEqual(S.phase(st), phase)
+                self.assertEqual(S.reply_owed(st), owed)
                 self.assertEqual(S.halt_reason(st), reason)
 
     def test_every_phase_is_reached(self):
-        self.assertEqual({p for _, _, p, _ in PHASES}, set(S.PHASES))
+        self.assertEqual({row[2] for row in PHASES}, set(S.PHASES))
 
 
 def line(st, tokens=0, prog=None):
