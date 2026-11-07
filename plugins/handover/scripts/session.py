@@ -128,8 +128,8 @@ def started(st, thresholds, version):
 
 def wind_down(st, cause, tokens):
     """The wind-down starts: the session starts no new task and finishes those in progress. False when it is
-    winding down already, or compacting, whose handover is loaded next to the summary instead."""
-    if handing_over(st):
+    winding down already. Asked for during a compaction, it outlives a cancelled one."""
+    if st.get("wind_down"):
         return False
     st.update(wind_down=True, wind_down_tokens=tokens, cause=cause)
     return True

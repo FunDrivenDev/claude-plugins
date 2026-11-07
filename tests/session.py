@@ -100,11 +100,18 @@ class Transitions(unittest.TestCase):
         st = {"keep_fresh": True}
         S.compaction_starts(st)
         self.assertEqual(S.phase(st), S.COMPACTING)
-        self.assertFalse(S.wind_down(st, "cli", 1))
         S.active(st)
         self.assertEqual(st, {})
         self.assertTrue(S.wind_down(st, "cli", 1))
         S.compaction_starts(st)
+        S.active(st)
+        self.assertEqual(S.phase(st), S.WINDING_DOWN)
+
+    def test_a_handover_asked_during_a_compaction_outlives_a_cancelled_one(self):
+        st = {}
+        S.compaction_starts(st)
+        self.assertTrue(S.wind_down(st, "request", 1))
+        S.requested(st)
         S.active(st)
         self.assertEqual(S.phase(st), S.WINDING_DOWN)
 
