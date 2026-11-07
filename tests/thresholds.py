@@ -15,7 +15,8 @@ SCRIPT = os.path.join(ROOT, "plugins", "handover", "scripts", "handover.py")
 HOME = tempfile.mkdtemp()
 DATA = os.path.join(HOME, "data")
 os.environ.update(HOME=HOME, CLAUDE_PLUGIN_DATA=DATA)
-for k in [k for k in os.environ if k.startswith("CLAUDE_PLUGIN_OPTION_") or k == "CLAUDE_CONFIG_DIR"]:
+# A session running the suite (an AFK run, a relay) exports HANDOVER_*: none may reach the code under test.
+for k in [k for k in os.environ if k.startswith(("CLAUDE_PLUGIN_OPTION_", "HANDOVER_")) or k == "CLAUDE_CONFIG_DIR"]:
     del os.environ[k]
 sys.path.insert(0, os.path.dirname(SCRIPT))
 

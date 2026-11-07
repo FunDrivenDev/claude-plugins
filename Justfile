@@ -27,6 +27,7 @@ test:
     mise exec -- python3 tests/conflict.py
     mise exec -- python3 tests/thresholds.py
     mise exec -- python3 tests/terminal_contract.py
+    mise exec -- python3 tests/notices.py
 
 # Fail when a plugin changed since origin/main without a version bump (needs origin/main, so not in ci.yml).
 versions:
