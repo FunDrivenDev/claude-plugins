@@ -2196,7 +2196,45 @@ def on_pre_tool_use(inp):
 
 
 def yolo_on(afk, inp):
-    return bool(afk.get("yolo")) or inp.get("permission_mode") == "bypassPermissions"
+    on = bool(afk.get("yolo")) or inp.get("permission_mode") == "bypassPermissions"
+    if on and not afk.get("yolo") and not afk.get("bypass_seen"):
+        bypass_seen(afk, inp)
+    return on
+
+
+def bypass_seen(afk, inp):
+    """A run started without --yolo but running under bypassPermissions is guarded and audited like a YOLO
+    run: record once what afk_start records for one (baseline, plugin hash), so stats and the audit check
+    count it as a YOLO run."""
+    sid = inp["session_id"]
+    with locked_state(sid) as st:
+        mine = st.get("afk") or {}
+        if mine.get("run") != afk.get("run") or mine.get("bypass_seen"):
+            return
+        mine["bypass_seen"] = True
+        mine.setdefault("baseline", baseline_mode(st.get("project")))
+        afk.update(bypass_seen=True, baseline=mine["baseline"])
+    record(
+        "afk_yolo",
+        sid,
+        run=afk["run"],
+        via="bypassPermissions",
+        baseline=afk["baseline"],
+        plugin_root=plugin_root(),
+        plugin_sha=plugin_sha(),
+    )
+
+
+def run_start(events):
+    """A run's afk_started event, with what its afk_yolo event adds when it turned YOLO through bypassPermissions."""
+    started = next((e for e in events if e["event"] == "afk_started"), None)
+    if started is None:
+        return None
+    later = next((e for e in events if e["event"] == "afk_yolo"), None)
+    if later and not started.get("yolo"):
+        keys = ("baseline", "plugin_root", "plugin_sha")
+        started = {**started, "yolo": True, **{k: later[k] for k in keys if k in later}}
+    return started
 
 
 def audit_path(run):
@@ -2459,15 +2497,69 @@ def bash_parts(command):
     return [p.strip() for p in re.split(r"&&|\|\||;|\||\n", command) if p.strip()]
 
 
+FIND_WRITES = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
+GIT_BRANCH_WRITES = {"-d", "-D", "-m", "-M", "-c", "-C", "-f", "-u", "-t", "--delete", "--move", "--copy", "--force"}
+GIT_BRANCH_WRITES_PREFIX = ("--set-upstream", "--unset-upstream", "--edit-description", "--track", "--no-track")
+
+
+def writes_a_file(part):
+    """A redirection that writes a file: `>`, `>>`, `2>`, `&>`, but not to /dev/null nor a duplicated fd (`2>&1`)."""
+    for m in re.finditer(r"(?:\d+|&)?>>?\|?\s*(\S*)", part):
+        target = m.group(1)
+        if target != "/dev/null" and not target.startswith("&"):
+            return True
+    return False
+
+
+def readonly_git(args):
+    """git subcommands that only read; branch, remote, worktree and reflog only in their listing forms."""
+    flags = [w for w in args if w.startswith("-")]
+    rest = [w for w in args if not w.startswith("-")]
+    if not rest or rest[0] not in READONLY_GIT:
+        return False
+    sub, more = rest[0], rest[1:]
+    if sub == "branch":
+        if any(f in GIT_BRANCH_WRITES or f.startswith(GIT_BRANCH_WRITES_PREFIX) for f in flags):
+            return False
+        return not more or any(f in ("-l", "--list") for f in flags)
+    if sub == "remote":
+        return not more or more[0] in ("show", "get-url")
+    if sub == "worktree":
+        return bool(more) and more[0] == "list"
+    if sub == "reflog":
+        return not more or more[0] not in ("expire", "delete", "drop")
+    return True
+
+
+def readonly_date(args):
+    """`date` prints the time unless it sets it: `-s`/`--set`, or (BSD) an operand that is not a +format, without -j."""
+    if any(a in ("-s", "--set") or a.startswith("--set=") for a in args):
+        return False
+    takes_value = {"-r", "-f", "-v", "-d", "--date", "-z"}
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in takes_value:
+            i += 2
+            continue
+        if not a.startswith(("-", "+")) and "-j" not in args:
+            return False
+        i += 1
+    return True
+
+
 def readonly_part(part):
-    if re.search(r"(^|[^0-9&])>(?!\s*/dev/null)", part):
+    if writes_a_file(part):
         return False
     words = part.split()
     if not words:
         return True
     if words[0] == "git":
-        rest = [w for w in words[1:] if not w.startswith("-")]
-        return bool(rest) and rest[0] in READONLY_GIT
+        return readonly_git(words[1:])
+    if words[0] == "find":
+        return not any(w in FIND_WRITES for w in words[1:])
+    if words[0] == "date":
+        return readonly_date(words[1:])
     return words[0] in READONLY_CMDS
 
 
@@ -3468,7 +3560,7 @@ def afk_runs(sessions):
     for run, r in runs.items():
         events = sorted(r["events"], key=lambda e: e["at"])
         mine = [e for sid in r["sessions"] for e in sessions[sid]]
-        started = next((e for e in events if e["event"] == "afk_started"), {})
+        started = run_start(events) or {}
         ended = next((e for e in events if e["event"] == "afk_ended"), {})
         last = max(e["at"] for e in mine)
         audit = audit_entries(run)[0] if started.get("yolo") else []
@@ -3517,7 +3609,7 @@ def audit_check(run, sessions):
     """`stats --audit <run>`: is the run's audit log whole, and is the plugin the run started with unchanged?
     Exit 0 when both hold, 1 otherwise. Evidence against tampering, not proof: see the README."""
     events = sorted((e for evs in sessions.values() for e in evs if e.get("run") == run), key=lambda e: e["at"])
-    started = next((e for e in events if e["event"] == "afk_started"), None)
+    started = run_start(events)
     if not started:
         print(f"handover: no AFK run {run} in {metrics_path()}", file=sys.stderr)
         return 1
