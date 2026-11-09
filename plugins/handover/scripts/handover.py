@@ -1260,14 +1260,25 @@ def handover_workdir(text):
     return path.rstrip("/") or "/"
 
 
-def workdir_notice(text, cwd):
-    """What a relayed session is told about the directory to work from: nothing when it already starts there."""
+def outside(path, start):
+    """Whether `path` lies outside `start`: Claude Code resets a `cd` there after the Bash call."""
+    if not start:
+        return True
+    p, s = os.path.realpath(path), os.path.realpath(start)
+    return p != s and not p.startswith(s.rstrip("/") + "/")
+
+
+def workdir_notice(text, cwd, added=False):
+    """What a relayed session is told about the directory to work from: nothing when it already starts there.
+
+    `added`: the relay types `/add-dir` for a directory outside the start one before the resume message, so that a
+    `cd` there holds."""
     path = handover_workdir(text)
     if not path:
         return ""
     here = os.path.realpath(cwd) if cwd else None
     if not os.path.isdir(path):
-        if here and os.path.realpath(path).startswith(here.rstrip("/") + "/"):
+        if here and not outside(path, here):
             # A Guest-Suite session starts from the guest-environment root, its app worktrees inside it.
             return (
                 f"The working directory the handover names, {path}, no longer exists. It sat inside {cwd}, where "
@@ -1279,9 +1290,18 @@ def workdir_notice(text, cwd):
         )
     if here and os.path.realpath(path) == here:
         return ""
+    cd = f"one plain `cd {path}`, a Bash call of its own"
+    if not outside(path, here):
+        return f"This session started in {cwd}, and the handover's work is in {path}: start with {cd}."
+    if added:
+        return (
+            f"This session started in {cwd}, and the handover's work is in {path}, outside it: the relay adds it to "
+            f"the session's directories (`/add-dir`) before its next message. Start with {cd}, then check with `pwd` "
+            "that it held."
+        )
     return (
-        f"This session started in {cwd or 'another directory'}, and the handover's work is in {path}: start with "
-        f"one plain `cd {path}`, a Bash call of its own, before anything else."
+        f"This session started in {cwd}, and the handover's work is in {path}, outside it: a `cd` there does not "
+        f"hold. Work there with absolute paths and `git -C {path}`, or ask the user to run `/add-dir {path}`."
     )
 
 
@@ -1600,10 +1620,15 @@ def relay(st, sid, tokens, cfg, message):
         return "handover: cannot relay here: no terminal to type into, no toolbox session run. Run /clear."
     from_reply = bool(message)
     message = message or "Continue the work from the handover loaded above."
-    R.offer(project_key(st.get("project") or os.getcwd()), sid, term.name)
+    project = st.get("project") or os.getcwd()
+    R.offer(project_key(project), sid, term.name)
     cmd = ["relay-drive", "--session", sid]
     if term.types:
         cmd += [f"--terminal={term.name}", f"--address={term.address}", f"--message={message}"]
+        # A `cd` outside the directory the new session starts in does not hold: the relay adds it first.
+        workdir = handover_workdir(read_handover(st))
+        if workdir and os.path.isdir(workdir) and outside(workdir, project):
+            cmd.append(f"--add-dir={workdir}")
     else:
         with open(term.address, "w", encoding="utf-8") as f:
             f.write(message)
@@ -2763,6 +2788,13 @@ def cmd_relay_drive(args):
     if not R.await_confirmation(args.session):
         return stalled(round(time.time() - t0))
     time.sleep(1)
+    if args.add_dir:
+        # Claude Code asks to confirm the directory; Enter keeps it for this session.
+        added = submit(f"/add-dir {args.add_dir}")
+        time.sleep(1.5)
+        added = added and term.press_enter()
+        record("relay_add_dir", args.session, ok=bool(added))
+        time.sleep(1)
     if not submit(args.message):
         return stalled(round(time.time() - t0))
     record("relay_resumed", args.session, mode=term.name, seconds=round(time.time() - t0))
@@ -3113,7 +3145,7 @@ def take_relay(inp):
             new["afk"] = dict(afk)
             record("afk_session_joined", inp["session_id"], run=afk["run"], prev=pending["session"])
     limit = config()["relay_limit"]
-    workdir = workdir_notice(text, inp.get("cwd"))
+    workdir = workdir_notice(text, inp.get("cwd"), added=pending.get("mode") != "loop")
     workdir = f" {workdir}" if workdir else ""
     if afk:
         return {
@@ -3962,6 +3994,7 @@ def main():
     r.add_argument("--address", help="where that adapter finds the session")
     r.add_argument("--message")
     r.add_argument("--kill", type=int, help="claude process to end, for the claude-relay loop to restart")
+    r.add_argument("--add-dir", help="directory to /add-dir before the message: outside the new session's start one")
     tm = sub.add_parser("terminal", help="run a verb of this session's terminal, the result as JSON")
     tm.add_argument("verb", choices=("describe", *TERM.VERBS))
     tm.add_argument("--text", help="what type_text types, or the set_title title: --text=<text>")

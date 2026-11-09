@@ -44,6 +44,27 @@ class Workdir(unittest.TestCase):
         self.assertIn(f"`cd {WORKTREE}`", notice)
         self.assertIn(HOME, notice)
 
+    def test_a_directory_outside_the_start_one_is_added_by_the_relay(self):
+        start = os.path.join(HOME, "repo")
+        os.makedirs(start, exist_ok=True)
+        notice = H.workdir_notice(handover(f"`{WORKTREE}`"), start, added=True)
+        self.assertIn("`/add-dir`", notice)
+        self.assertIn(f"`cd {WORKTREE}`", notice)
+
+    def test_a_directory_outside_the_start_one_without_the_relay_s_add_dir(self):
+        start = os.path.join(HOME, "repo")
+        os.makedirs(start, exist_ok=True)
+        notice = H.workdir_notice(handover(f"`{WORKTREE}`"), start)
+        self.assertIn("does not hold", notice)
+        self.assertIn(f"`git -C {WORKTREE}`", notice)
+        self.assertNotIn(f"`cd {WORKTREE}`", notice)
+
+    def test_outside(self):
+        self.assertFalse(H.outside(WORKTREE, HOME))
+        self.assertFalse(H.outside(HOME, HOME + "/"))
+        self.assertTrue(H.outside(WORKTREE, os.path.join(HOME, "repo")))
+        self.assertTrue(H.outside(HOME + "x", HOME))
+
     def test_a_session_already_there_is_told_nothing(self):
         self.assertEqual(H.workdir_notice(handover(f"`{WORKTREE}`"), WORKTREE + "/"), "")
 
