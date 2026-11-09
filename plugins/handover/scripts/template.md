@@ -4,7 +4,7 @@
 The user's objective and what "done" means. Quote the user's latest formulation verbatim; if the goal shifted during the session, say from what to what.
 
 ## Working directory
-The absolute path the next session works from, alone on one line in backticks: the worktree or checkout of the task in progress, usually the `cwd` of `<session>`. When the session removed that directory, the repo's main checkout instead, with a line saying so.
+The absolute path the next session works from, alone on one line in backticks: the worktree or checkout of the task in progress, usually the `cwd` of `<session>`. When the session removed that worktree, the directory the session was started from if the worktree sat inside it (the guest-environment root for an `apps/worktree-*`), else the repo's main checkout, with a line saying the worktree is gone.
 
 ## User instructions
 Every standing instruction, preference, prohibition and approval the user gave that still applies, quoted verbatim or near-verbatim, newest last. Drop ones the user later revoked, and say so if the revocation matters.

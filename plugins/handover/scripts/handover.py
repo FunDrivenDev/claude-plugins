@@ -1265,12 +1265,19 @@ def workdir_notice(text, cwd):
     path = handover_workdir(text)
     if not path:
         return ""
+    here = os.path.realpath(cwd) if cwd else None
     if not os.path.isdir(path):
+        if here and os.path.realpath(path).startswith(here.rstrip("/") + "/"):
+            # A Guest-Suite session starts from the guest-environment root, its app worktrees inside it.
+            return (
+                f"The working directory the handover names, {path}, no longer exists. It sat inside {cwd}, where "
+                "this session started: work from there."
+            )
         return (
             f"The working directory the handover names, {path}, no longer exists: start with one plain `cd` to the "
             "repo's main checkout, a Bash call of its own, before any git command."
         )
-    if cwd and os.path.realpath(path) == os.path.realpath(cwd):
+    if here and os.path.realpath(path) == here:
         return ""
     return (
         f"This session started in {cwd or 'another directory'}, and the handover's work is in {path}: start with "

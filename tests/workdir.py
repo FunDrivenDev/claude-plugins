@@ -47,11 +47,16 @@ class Workdir(unittest.TestCase):
     def test_a_session_already_there_is_told_nothing(self):
         self.assertEqual(H.workdir_notice(handover(f"`{WORKTREE}`"), WORKTREE + "/"), "")
 
-    def test_a_removed_directory_sends_to_the_main_checkout(self):
-        notice = H.workdir_notice(handover(f"`{GONE}`"), HOME)
+    def test_a_removed_directory_elsewhere_sends_to_the_main_checkout(self):
+        notice = H.workdir_notice(handover(f"`{GONE}`"), WORKTREE)
         self.assertIn("no longer exists", notice)
         self.assertIn("main checkout", notice)
         self.assertNotIn(f"`cd {GONE}`", notice)
+
+    def test_a_removed_worktree_inside_the_start_directory_keeps_the_session_there(self):
+        notice = H.workdir_notice(handover(f"`{GONE}`"), HOME)
+        self.assertIn(f"It sat inside {HOME}, where this session started: work from there.", notice)
+        self.assertNotIn("main checkout", notice)
 
     def test_an_old_handover_without_the_section_is_told_nothing(self):
         self.assertEqual(H.workdir_notice("# Handover: x\n", HOME), "")
