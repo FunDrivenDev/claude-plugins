@@ -6,7 +6,7 @@
 # toolbox's docs/handover-relay.md.
 #
 #   claude-relay [claude args]
-#   claude-relay --afk '<goal>' [--until <when>] [--yolo] [claude args]
+#   claude-relay --afk '<goal>' [--until <when>] [--bypass-permissions] [claude args]
 set -euo pipefail
 
 if ! command -v toolbox >/dev/null 2>&1; then
