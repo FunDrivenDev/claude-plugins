@@ -29,6 +29,6 @@ Tools are pinned in `mise.toml` and run through `just`:
 | `just check` | All of the above: `lint`, `test`, `versions`, `validate` |
 | `just ci-verdict <results>` | CI's verdict: green when each job result is `success` or `skipped` |
 
-The git hooks (`hk.pkl`) are the CI: the pre-commit hook runs `just lint`, the pre-push hook `just check`, and FunDrivenDev's organisation ruleset gates `main` on the `dod` status `toolbox dod check` posts from the laptop. GitHub Actions runs no check on a pull request or a push: `.github/workflows/ci.yml` stays for a manual run of `just lint` and `just test`, the tests on Linux and macOS, then a `ci-ok` job that passes only when every other job succeeded or was skipped. Renovate keeps the tools and the actions current.
+The git hooks (`hk.pkl`) are the CI: the pre-commit hook runs `just lint`, the pre-push hook `just check`, whose recorded pass `toolbox pr gate` reads before a PR is marked ready or merged. GitHub Actions runs no check on a pull request or a push: `.github/workflows/ci.yml` stays for a manual run of `just lint` and `just test`, the tests on Linux and macOS, then a `ci-ok` job that passes only when every other job succeeded or was skipped. Renovate keeps the tools and the actions current.
 
 Merging a PR is the release: the marketplace serves `main`, and Claude Code updates an installed plugin only when its version changes. So a PR that changes a plugin bumps it (`just bump`: patch for a fix, minor for a feature, major for a breaking change), and the pre-push `just versions` refuses one that doesn't.
