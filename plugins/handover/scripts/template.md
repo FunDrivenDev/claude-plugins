@@ -3,6 +3,9 @@
 ## Goal
 The user's objective and what "done" means. Quote the user's latest formulation verbatim; if the goal shifted during the session, say from what to what.
 
+## Working directory
+The absolute path the next session works from, alone on one line in backticks: the worktree or checkout the task's work is in, whether the session `cd`'d there or reached it with `git -C` and absolute paths; the `cwd` of `<session>` only when it is that directory. When the session removed that worktree, the directory the session was started from if the worktree sat inside it (the guest-environment root for an `apps/worktree-*`), else the repo's main checkout, with a line saying the worktree is gone.
+
 ## User instructions
 Every standing instruction, preference, prohibition and approval the user gave that still applies, quoted verbatim or near-verbatim, newest last. Drop ones the user later revoked, and say so if the revocation matters.
 
