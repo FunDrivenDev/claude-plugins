@@ -1,0 +1,61 @@
+"""Unit tests of the working directory a relayed session is told to work from (handover_workdir and
+workdir_notice in scripts/handover.py): the handover's Working directory section names it, the session is told
+to `cd` there when it starts elsewhere, and to go to the main checkout when the directory is gone."""
+
+import os
+import sys
+import tempfile
+import unittest
+
+HOME = tempfile.mkdtemp()
+os.environ.update(HOME=HOME, CLAUDE_PLUGIN_DATA=os.path.join(HOME, "data"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "plugins", "handover", "scripts"))
+
+import handover as H
+import writer_prompt as P
+
+WORKTREE = os.path.join(HOME, "repo.worktrees", "task")
+os.makedirs(WORKTREE)
+GONE = os.path.join(HOME, "repo.worktrees", "removed")
+
+
+def handover(section):
+    return (
+        f"# Handover: x\n\n## Goal\nShip `/not/this`.\n\n## Working directory\n{section}\n\n## State\n- `/nor/this`\n"
+    )
+
+
+class Workdir(unittest.TestCase):
+    def test_the_template_asks_for_the_section(self):
+        self.assertIn("## Working directory", P.template())
+
+    def test_the_section_s_backticked_path(self):
+        self.assertEqual(H.handover_workdir(handover(f"`{WORKTREE}/`")), WORKTREE)
+
+    def test_a_bare_path_in_a_sentence(self):
+        self.assertEqual(H.handover_workdir(handover(f"The main checkout, {WORKTREE}.")), WORKTREE)
+
+    def test_no_section_no_path(self):
+        self.assertIsNone(H.handover_workdir("# Handover: x\n\n## Goal\nShip `/not/this`.\n"))
+        self.assertIsNone(H.handover_workdir(handover("Unknown.")))
+
+    def test_a_session_elsewhere_is_told_to_cd(self):
+        notice = H.workdir_notice(handover(f"`{WORKTREE}`"), HOME)
+        self.assertIn(f"`cd {WORKTREE}`", notice)
+        self.assertIn(HOME, notice)
+
+    def test_a_session_already_there_is_told_nothing(self):
+        self.assertEqual(H.workdir_notice(handover(f"`{WORKTREE}`"), WORKTREE + "/"), "")
+
+    def test_a_removed_directory_sends_to_the_main_checkout(self):
+        notice = H.workdir_notice(handover(f"`{GONE}`"), HOME)
+        self.assertIn("no longer exists", notice)
+        self.assertIn("main checkout", notice)
+        self.assertNotIn(f"`cd {GONE}`", notice)
+
+    def test_an_old_handover_without_the_section_is_told_nothing(self):
+        self.assertEqual(H.workdir_notice("# Handover: x\n", HOME), "")
+
+
+if __name__ == "__main__":
+    unittest.main()

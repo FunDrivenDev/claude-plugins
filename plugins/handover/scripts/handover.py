@@ -1250,6 +1250,34 @@ def read_handover(st):
     return text
 
 
+def handover_workdir(text):
+    """The first absolute path of the handover's Working directory section, or None."""
+    m = re.search(r"^## Working directory[ \t]*$(.*?)(?=^## |\Z)", text or "", re.MULTILINE | re.DOTALL)
+    p = m and re.search(r"`(/[^`\n]+)`|(?<!\S)(/\S+)", m.group(1))
+    if not p:
+        return None
+    path = p.group(1) or p.group(2).rstrip(".,;:")
+    return path.rstrip("/") or "/"
+
+
+def workdir_notice(text, cwd):
+    """What a relayed session is told about the directory to work from: nothing when it already starts there."""
+    path = handover_workdir(text)
+    if not path:
+        return ""
+    if not os.path.isdir(path):
+        return (
+            f"The working directory the handover names, {path}, no longer exists: start with one plain `cd` to the "
+            "repo's main checkout, a Bash call of its own, before any git command."
+        )
+    if cwd and os.path.realpath(path) == os.path.realpath(cwd):
+        return ""
+    return (
+        f"This session started in {cwd or 'another directory'}, and the handover's work is in {path}: start with "
+        f"one plain `cd {path}`, a Bash call of its own, before anything else."
+    )
+
+
 def suggesting(cfg, tokens):
     """Past `suggest_tokens` and still short of the trigger: the session may hand over by itself."""
     s, t = cfg["suggest"], cfg["trigger"]
@@ -3078,6 +3106,8 @@ def take_relay(inp):
             new["afk"] = dict(afk)
             record("afk_session_joined", inp["session_id"], run=afk["run"], prev=pending["session"])
     limit = config()["relay_limit"]
+    workdir = workdir_notice(text, inp.get("cwd"))
+    workdir = f" {workdir}" if workdir else ""
     if afk:
         return {
             "systemMessage": f"handover: AFK relay, loaded {st['path']}",
@@ -3087,7 +3117,7 @@ def take_relay(inp):
                     "The handover relay started this session, without the user, from the handover of the previous "
                     f"session (handover {chain.get('n')} of an AFK run, file: {st['path']}), written by a separate "
                     "model from its transcript. The next message is the step it named: carry on from it right away."
-                    f"\n\n{AFK_RULES.format(**afk_texts(afk))}\n\n{text}"
+                    f"{workdir}\n\n{AFK_RULES.format(**afk_texts(afk))}\n\n{text}"
                 ),
             },
         }
@@ -3099,7 +3129,7 @@ def take_relay(inp):
                 "The handover relay started this session, without the user, from the handover of the previous "
                 f"session (handover {chain.get('n')} of at most {limit}, file: {st['path']}), written by a separate "
                 "model from its transcript. The next message is the step it named: carry on from it right away. "
-                f"When this context fills up, the relay hands over again.\n\n{text}"
+                f"When this context fills up, the relay hands over again.{workdir}\n\n{text}"
             ),
         },
     }
