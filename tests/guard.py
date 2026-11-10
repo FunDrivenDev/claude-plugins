@@ -299,6 +299,14 @@ class ReadOnlyBash(unittest.TestCase):
             f"rg x {KNOWLEDGE} '<' --pre=/bin/sh",
             f"sort {INDEX} '<' -o/tmp/out",
             f"sort {INDEX} \\< -o/tmp/out",
+            # The eleventh review: an assignment that may not run leaves `$X` empty, shifting the words after it;
+            # `>&٣` is a file, not a descriptor; a keyword is no command before a lone redirection.
+            f"[ a = b ] && X=p; sed -n -e $X 's/.*/x/w {INDEX}' {INDEX}",
+            f"X=p | true; sed -n -e $X 's/.*/x/w {INDEX}' {INDEX}",
+            f"for i in; do X=p; done; sed -n -e $X 's/.*/x/w {INDEX}' {INDEX}",
+            f'cd {KNOWLEDGE}; [ a = b ] && X=/tmp; git -C "$X" ls-files',
+            f"cd {KNOWLEDGE}; echo x >&\u0663",
+            f"cat {INDEX}; if true; then < {INDEX}; fi",
             # The eighth review: git runs what a repository's own config names (gpg.program for a plain `log` with
             # log.showSignature, core.fsmonitor for ls-files or a `:path`): no git on a repository among the plugins.
             f"git -C {KNOWLEDGE} log -3 --oneline",

@@ -2436,18 +2436,30 @@ def read_only_command(command):
     except ValueError:
         return False
     words, i, env, trusted = [], 0, {"HOME": os.path.expanduser("~")}, trusted_names(command)
-    redirected = False
+    redirected, sep, depth = False, ";", 0
     while i <= len(tokens):
         t = tokens[i] if i < len(tokens) else ";"
         i += 1
         if t in (";", "&&", "||", "|"):
             # A redirection without a command (`< file`) runs zsh's READNULLCMD (`more`, then `less` and LESSOPEN).
-            if (redirected and not words) or not read_only_simple(words, env, trusted):
+            # An assignment behind `&&`/`||`, in a pipeline (a subshell) or in a block's body may never run: the
+            # variable is then empty, and an unquoted empty `$X` vanishes and shifts the words after it.
+            first = words[0] if words else ""
+            depth += first in ("if", "for", "while", "until", "case", "{")
+            maybe = sep != ";" or t != ";" or depth > 0 or first in SHELL_KEYWORDS
+            depth -= first in ("fi", "done", "esac", "}")
+            if (redirected and not [w for w in words if w not in SHELL_KEYWORDS]) or not read_only_simple(
+                words, env, set() if maybe else trusted
+            ):
                 return False
-            words, redirected = [], False
+            words, redirected, sep = [], False, t
         elif t and set(t) <= set("();<>|&"):
             nxt = tokens[i] if i < len(tokens) else ""
-            if t == "<" or (t in (">", ">>", "&>", "&>>") and nxt == "/dev/null") or (t == ">&" and nxt.isdigit()):
+            if (
+                t == "<"
+                or (t in (">", ">>", "&>", "&>>") and nxt == "/dev/null")
+                or (t == ">&" and re.fullmatch(r"[0-9]+", nxt))
+            ):
                 i += 1
                 redirected = True
             else:
