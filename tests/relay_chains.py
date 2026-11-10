@@ -3,14 +3,17 @@ its own chain, never the other's.
 
 A Guest-Suite session starts from the guest-environment root whatever repo it changes, so two AFK chains there
 share their project. Both hand over within the same minute, each in its own pane; the relay of each must start its
-new session from its own handover. The relay is driven through its hooks' functions, its terminal faked per pane:
-no session, no terminal, no wait."""
+new session from its own handover. A session whose /clear did not end it (Claude Code ran another command) and
+that hands over again is relayed again, its first driver silent. The relay is driven through its hooks' functions,
+its terminal faked per pane: no session, no terminal, no wait."""
 
 import os
 import sys
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
 HOME = tempfile.mkdtemp()
 DATA = os.path.join(HOME, ".claude", "plugins", "data", "handover-fundrivendev")
@@ -112,6 +115,96 @@ class TwoChainsInOneProject(unittest.TestCase):
         H.write_json(latest, {"session": "other", "at": time.time(), "reason": "clear"})
         start("d2", A)
         self.assertEqual(H.read_json(latest)["session"], "other")
+
+
+class Typed(Pane):
+    """A pane that records what the driver types, and runs `on_enter` at each Enter."""
+
+    def __init__(self, address, on_enter=lambda: None):
+        super().__init__(address)
+        self.typed, self.on_enter = [], on_enter
+
+    def clear_input(self):
+        return True
+
+    def type_text(self, text):
+        self.typed.append(text)
+        return True
+
+    def press_enter(self):
+        self.on_enter()
+        return True
+
+
+def again(sid):
+    """The session `sid`, still there after its relay's /clear, wrote its handover again: its Stop relays."""
+    with S.locked(sid) as st:
+        return H.relay(st, sid, 0, H.config(), "Carry on.")
+
+
+def drive(sid, attempt, pane):
+    """The relay's driver of `attempt`, typing into `pane`: what it returns, and the events it records."""
+    events = []
+    args = SimpleNamespace(
+        session=sid, attempt=attempt, kill=None, terminal="rex", address=pane.address, message="Carry on.", add_dir=None
+    )
+    with (
+        mock.patch.object(H.time, "sleep"),
+        mock.patch.object(TERM, "adapter", lambda *a: pane),
+        mock.patch.object(H, "record", lambda event, *a, **k: events.append(event)),
+    ):
+        return H.cmd_relay_drive(args), events
+
+
+class AClearThatDidNotEndTheSession(unittest.TestCase):
+    def test_a_second_handover_relays_again(self):
+        chain("e1", A, "bim-4440", "ship BIM-4440")
+        self.assertEqual(S.read("e1")["relay_outcome"]["attempt"], 1)
+        DRIVEN.clear()
+        self.assertIn("relaying", again("e1"))
+        self.assertIn("--attempt=2", DRIVEN[-1])
+        self.assertEqual(S.read("e1")["relay_outcome"]["attempt"], 2)
+        self.assertIn("bim-4440.md", start("e2", A)["systemMessage"])
+
+    def test_the_relay_stops_after_its_last_attempt(self):
+        chain("f1", A, "stuck", "goal")
+        for _ in range(H.RELAY_ATTEMPTS - 1):
+            self.assertIn("relaying", again("f1"))
+        DRIVEN.clear()
+        self.assertIn("halted", again("f1"))
+        self.assertEqual(DRIVEN, [])
+        self.assertEqual(S.halt_reason(S.read("f1")), "failed")
+        # Halted, it never relays again.
+        self.assertIsNone(again("f1"))
+
+    def test_a_halted_relay_does_not_relay_again(self):
+        chain("g1", A, "limit", "goal")
+        with S.locked("g1") as st:
+            S.halted(st, "limit", 2)
+        DRIVEN.clear()
+        self.assertIsNone(again("g1"))
+        self.assertEqual(DRIVEN, [])
+
+    def test_a_superseded_driver_exits_without_a_word(self):
+        chain("h1", A, "drivers", "goal")
+        # Its /clear runs another command, whose handover the relay launches again while this driver waits.
+        pane = Typed(A.address, on_enter=lambda: again("h1"))
+        code, events = drive("h1", 1, pane)
+        # Only the relay launched again records: this driver records no stall and no resume.
+        self.assertEqual((code, events), (0, ["relay_retried"]))
+        self.assertEqual(pane.typed, ["/clear"])
+        # Superseded before it starts, it types nothing.
+        late = Typed(A.address)
+        self.assertEqual(drive("h1", 1, late), (0, []))
+        self.assertEqual(late.typed, [])
+
+    def test_the_current_driver_resumes(self):
+        chain("i1", A, "current", "goal")
+        again("i1")
+        pane = Typed(A.address, on_enter=lambda: H.R.confirm("i1", True))
+        code, events = drive("i1", 2, pane)
+        self.assertEqual((code, events), (0, ["relay_resumed"]))
+        self.assertEqual(pane.typed, ["/clear", "Carry on."])
 
 
 if __name__ == "__main__":

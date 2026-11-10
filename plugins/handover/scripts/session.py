@@ -265,8 +265,9 @@ def reply_written(st, resume=None):
     enter(st, HANDED_OVER)
 
 
-def relayed(st, n, mode):
-    st["relay_outcome"] = {"at": time.time(), "n": n, "mode": mode}
+def relayed(st, n, mode, attempt=1):
+    """The relay is launched for handover `n`, by `mode`; `attempt` counts the relays of that one handover."""
+    st["relay_outcome"] = {"at": time.time(), "n": n, "mode": mode, "attempt": attempt}
     enter(st, RELAYING)
 
 

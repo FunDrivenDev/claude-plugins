@@ -3,7 +3,8 @@
     offer(key, sid, mode)        the session handing over offers its handover to the next session at `key`
     claim(key, sid)              the next session takes the offer: once, unless stale or its own
     confirm(prev, ok)            it says whether the handover of `prev` loaded
-    await_confirmation(prev)     the relay's driver waits for that answer before it types the resume message
+    await_confirmation(prev)     the relay's driver waits for that answer before it types the resume message, unless
+                                 a later relay of `prev` supersedes it
 
 `key` names the project and the pane (handover.py relay_key): the session the relay starts in a pane claims only the
 offer made in that pane, so two chains of one project that hand over together never take each other's.
@@ -87,13 +88,18 @@ def confirm(prev, ok):
     write_json(confirmation_path(prev), {"ok": bool(ok)})
 
 
-def await_confirmation(prev, seconds=CONFIRM_SECONDS, clock=time.time, sleep=time.sleep):
+def await_confirmation(prev, seconds=CONFIRM_SECONDS, clock=time.time, sleep=time.sleep, superseded=lambda: False):
     """Whether the session that claimed `prev`'s offer loaded its handover, waited for up to `seconds`: False when
-    it says it did not, or no answer came in time. The answer is consumed."""
+    it says it did not, or no answer came in time; None once `superseded()`, the answer left to the newer driver.
+    The answer is consumed."""
     path = confirmation_path(prev)
     deadline = clock() + seconds
     while not os.path.exists(path) and clock() < deadline:
+        if superseded():
+            return None
         sleep(1)
+    if superseded():
+        return None
     answer = read_json(path, {})
     with contextlib.suppress(FileNotFoundError):
         os.remove(path)
