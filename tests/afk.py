@@ -1,6 +1,7 @@
 """Unit tests of the handover plugin's subagent refusal (scripts/handover.py, D51): past the suggestion alone a
 subagent still starts; once the session winds down it is refused, and in an AFK run the refused call becomes
-the next session's focus; an `AFK blocked:` that only the refusal caused does not end the run."""
+the next session's focus; an `AFK blocked:` after a refusal during the wind-down, before the handover is written,
+does not end the run."""
 
 import json
 import os
@@ -150,7 +151,7 @@ class RefusedSubagent(unittest.TestCase):
 
 
 class BlockedByRefusal(unittest.TestCase):
-    def test_a_closing_reply_blocked_by_the_refusal_still_relays(self):
+    def test_a_closing_reply_blocked_by_the_refusal_does_not_end_the_run(self):
         session("b2")
         wind_down("b2")
         self.assertEqual(refuse("b2"), H.AFK_AGENT_HANDOVER)
@@ -204,9 +205,22 @@ class BlockedByRefusal(unittest.TestCase):
         self.assertEqual(state("b5")["afk"]["ended"], "blocked")
 
     def test_done_ends_the_run_even_after_a_refusal(self):
-        session("b4", agents_refused=1)
-        stop("b4", "AFK done: every issue shipped")
+        session("b4")
+        wind_down("b4")
+        refuse("b4")
+        with S.locked("b4") as st:
+            self.assertIsNotNone(H.afk_declared_end(st, "b4", "AFK done: every issue shipped"))
         self.assertEqual(state("b4")["afk"]["ended"], "done")
+
+    def test_a_refusal_in_a_compaction_of_the_wind_down_still_overrules_a_block(self):
+        session("b8")
+        wind_down("b8")
+        with S.locked("b8") as st:
+            S.compaction_starts(st)
+        self.assertEqual(refuse("b8"), H.AFK_AGENT_HANDOVER)
+        with S.locked("b8") as st:
+            self.assertIsNone(H.afk_declared_end(st, "b8", "AFK blocked: subagents refused"))
+        self.assertFalse(state("b8")["afk"].get("ended"))
 
 
 class Recovery(unittest.TestCase):
