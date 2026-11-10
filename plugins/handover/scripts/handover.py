@@ -326,7 +326,8 @@ def relay_key(project, term):
     """The key of a relay's offer: the project and the pane the session runs in, the terminal's address. The session
     the relay starts claims only the offer made in its own pane: two chains of one project (a Guest-Suite session
     starts from the guest-environment root, whatever it changes) that hand over together each resume their own
-    handover and AFK goal. A terminal without a pane of its own (`command`) keys by the project and its command."""
+    handover and AFK goal. The `command` adapter's address is its command, the same in every pane: two of its panes
+    in one project still share an offer."""
     where = f"{os.path.realpath(project)}\n{term.name}\n{term.address}"
     return hashlib.sha1(where.encode()).hexdigest()[:16]
 

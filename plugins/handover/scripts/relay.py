@@ -2,11 +2,11 @@
 
     offer(key, sid, mode)        the session handing over offers its handover to the next session at `key`
     claim(key, sid)              the next session takes the offer: once, unless stale or its own
+    confirm(prev, ok)            it says whether the handover of `prev` loaded
+    await_confirmation(prev)     the relay's driver waits for that answer before it types the resume message
 
 `key` names the project and the pane (handover.py relay_key): the session the relay starts in a pane claims only the
 offer made in that pane, so two chains of one project that hand over together never take each other's.
-    confirm(prev, ok)            it says whether the handover of `prev` loaded
-    await_confirmation(prev)     the relay's driver waits for that answer before it types the resume message
 
 This module owns the file names, the staleness and the timeouts of the handshake, and writes each file atomically.
 What the sessions do around it (loading the handover, typing into the terminal, the records) stays in handover.py.
