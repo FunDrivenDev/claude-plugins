@@ -351,6 +351,10 @@ class ReadOnlyBash(unittest.TestCase):
             f"cat {INDEX}; printf 2&>/dev/null -v PATH %s /tmp/evil/bin:/usr/bin:/bin; cat {INDEX}",
             f"cat {INDEX}; printf 2&>>/dev/null -v IFS %s x; cat {INDEX}",
             f"cat {INDEX}; printf 12>/dev/null -v PATH %s /tmp/evil/bin; cat {INDEX}",
+            # The eighteenth review: bash reads `>&-''` as `>&-` and an empty argument (`config k.x ''` sets k.x).
+            f"cat {INDEX}; git -C /tmp config --global k.x >&-''",
+            f'cat {INDEX}; git -C /tmp config --local user.name 2>&-""',
+            f"find {KNOWLEDGE} -delete\0x",
             # The eighth review: git runs what a repository's own config names (gpg.program for a plain `log` with
             # log.showSignature, core.fsmonitor for ls-files or a `:path`): no git on a repository among the plugins.
             f"git -C {KNOWLEDGE} log -3 --oneline",

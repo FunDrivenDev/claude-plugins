@@ -2448,7 +2448,13 @@ def read_only_command(command):
     READ_ONLY_TOOLS without its writing options."""
     # ANSI-C and locale quoting (`$'…'`, `$"…"`), a line continuation and a carriage return (a blank to shlex, a
     # word's character to the shell) are read otherwise by shlex than by bash.
-    if any(s in command for s in ("`", "$(", "<(", ">(", "<<", "$'", '$"', "\\\n", "\r")) or unsafe_expansions(command):
+    # bash lexes `>&-` as one token, so a quote glued to it (`>&-''`) is an empty argument more; zsh reads `-''` as
+    # `-`. A NUL byte ends zsh's word where Python's goes on.
+    if (
+        any(s in command for s in ("`", "$(", "<(", ">(", "<<", "$'", '$"', "\\\n", "\r", "\0"))
+        or re.search(r">&-(?![\s;&|()<>]|$)", command)
+        or unsafe_expansions(command)
+    ):
         return False
     try:
         lex = shlex.shlex(unquoted_newlines_to_semicolons(command), posix=True, punctuation_chars="();<>|&")
