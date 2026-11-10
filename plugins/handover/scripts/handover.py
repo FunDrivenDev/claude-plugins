@@ -60,8 +60,9 @@ permission prompts: every tool call goes to an audit log, tagged by whether it w
 run without YOLO, and the plugin, its data and the settings files are off limits to it.
 
 Subagents: every session is told to implement by itself and give typed subagents the tasks
-whose result alone matters, so its own context fills more slowly. From the suggestion point no new subagent starts, and while one
-runs the handover is neither written nor relayed: its result belongs in the handover.
+whose result alone matters, so its own context fills more slowly. Past the suggestion point a
+subagent the task in progress needs (its review before a push) still starts; once the session winds
+down, or past an AFK deadline, no new one does. While one runs the handover is neither written nor relayed: its result belongs in the handover.
 
 Every step is also appended to metrics.jsonl in the data directory: token
 counts, durations and costs, and the one-line reason a session gives when it
@@ -377,7 +378,12 @@ def compaction_conflict(cfg, cwd):
 
 def needs_refresh(st, tokens):
     written = st.get("written") or {}
-    return not written.get("ok") or abs(tokens - written.get("tokens", 0)) > config()["refresh"]
+    # A focus set after the handover was written (a refused subagent's) is not in it.
+    return (
+        not written.get("ok")
+        or st.get("focus_at", 0) > written.get("at", 0)
+        or abs(tokens - written.get("tokens", 0)) > config()["refresh"]
+    )
 
 
 # Starts the command in a session of its own, prints its pid and exits: the command is no longer the hook's child.
@@ -531,29 +537,39 @@ def agents_busy(sid, inp=None):
 
 
 def refuses_agents(st):
-    """Past the suggestion, winding down, or past an AFK deadline: no new work, so no new subagent."""
-    afk = st.get("afk") or {}
-    return bool(st.get("suggested") or S.wound_down(st) or afk.get("deadline_told"))
+    """Winding down, or past an AFK deadline: no new work, so no new subagent. Past the suggestion alone, a
+    subagent still starts: the step of the task in progress it carries (the review before a push) would
+    otherwise leave committed work unpushed."""
+    afk = afk_active(st)
+    return bool(S.wound_down(st) or afk and (afk.get("deadline_told") or afk_overdue(afk)))
+
+
+def focus_open(st):
+    """Whether the handover is still to write, so a focus set now reaches the next session: winding down, not
+    held by the Stop hook for the writer, no writer running, no closing reply owed."""
+    return (
+        S.settled(st) == S.WINDING_DOWN and not st.get("held_since") and not st.get("reply_due") and not S.writing(st)
+    )
 
 
 NO_NEW_AGENT = (
-    "Not started: this session will hand over soon (its context is past the point where a fresh session "
-    "does better), so it starts no new subagent. Finish the tasks in progress with the subagents "
+    "Not started: this session is handing over (or its AFK run is past its deadline), so it starts no new "
+    "subagent. Finish the tasks in progress with the subagents "
     "already running, and wait for their results: they belong in the handover. Leave new tasks to the next "
     "session, and name them in your closing reply."
 )
 
-# In an AFK run, a refused subagent hands the session over: a fresh session can start it, and no one is there to.
+# In an AFK run, the call refused during the wind-down becomes the next session's focus: no one is there to start it.
 AFK_AGENT_HANDOVER = (
-    "Not started here: this session's context is past the point where a fresh session does better, so the "
-    "handover is requested now, and the next session of this AFK run starts with this call. Do not retry it "
+    "Not started here: this session is handing over, and the next session of this AFK run starts with this "
+    "call. Do not retry it "
     "and start no new task. Wait for the subagents still running, if any, then end your turn on one short line "
     "saying where the work stands. The hook tells you once the handover is written; then write your closing "
     "reply, without `AFK done` nor `AFK blocked`: the run goes on in the next session."
 )
 
 REFUSED_FOCUS = (
-    "Start with the {call} the previous session was refused because its context was full, then go on with the "
+    "Start with the {call} the previous session was refused because it was handing over, then go on with the "
     "goal. Its input: {input}"
 )
 
@@ -1799,24 +1815,17 @@ def afk_end(st, sid, kind, reason):
     alert(f"AFK run {kind}: {reason}"[:200], state="done" if kind in ("done", "off") else "error")
 
 
-AFK_NOT_BLOCKED = (
-    "Not blocked: this session was refused {call} because its context is full, and a fresh session can start "
-    "it. The handover is requested, and the run goes on in the next session. End your turn now on one short "
-    "line saying where the work stands; the hook tells you once the handover is written, then write your "
-    "closing reply, without `AFK done` nor `AFK blocked`."
-)
-
-
 def blocked_by_refusal(st, last):
-    """An `AFK blocked:` line from a session refused a subagent: a fresh session can start it, so the run does
-    not wait for the user."""
+    """An `AFK blocked:` line from a session refused a subagent during its wind-down, before its handover was
+    written: a fresh session can start it, so the run does not wait for the user. A refusal once the handover is
+    written overrules nothing."""
     ends = AFK_END_RE.findall(last or "")
-    return bool(ends) and ends[-1][0].lower() == "blocked" and bool(st.get("agents_refused")) and afk_goes_on(st)
+    return bool(ends) and ends[-1][0].lower() == "blocked" and bool(st.get("refused_open")) and afk_goes_on(st)
 
 
 def afk_declared_end(st, sid, last):
     """End the run on the `AFK done:` or `AFK blocked:` line the session's reply ends it with; returns a note.
-    A block that only a full context caused does not end it: the handover relays to a fresh session."""
+    A block that only a refused subagent caused does not end it: the handover relays to a fresh session."""
     ends = AFK_END_RE.findall(last or "")
     if not ends:
         return None
@@ -1848,11 +1857,6 @@ def afk_on_activity(st, sid, inp, event):
     if S.settled(st) == S.WINDING_DOWN or st.get("relay_outcome"):
         return None
     last = inp.get("last_assistant_message") or T.last_assistant_text(inp["transcript_path"]) or ""
-    if blocked_by_refusal(st, last):
-        why = AFK_END_RE.findall(last)[-1][1].strip()
-        record("afk_block_overruled", sid, run=afk["run"], reason=why[:300])
-        request_handover(st, sid, "afk_blocked", session_config(sid, st), reason=why, focus=refused_focus(st))
-        return {"decision": "block", "reason": AFK_NOT_BLOCKED.format(call=st["refused_call"]["call"])}
     note = afk_declared_end(st, sid, last)
     if note:
         return {"systemMessage": note}
@@ -2585,18 +2589,12 @@ def on_pre_tool_use(inp):
         with S.locked(sid) as st:
             st["agents_refused"] = st.get("agents_refused", 0) + 1
             st["refused_call"] = refused_call(tool, ti)
-            if afk_goes_on(st) and not S.wound_down(st):
+            if afk_goes_on(st) and focus_open(st):
                 # Refused here, the work would wait for the user: the next session starts with it instead.
-                request_handover(
-                    st,
-                    sid,
-                    "agent_refused",
-                    session_config(sid, st),
-                    reason=f"{st['refused_call']['call']} refused past the suggestion",
-                    focus=refused_focus(st),
-                    transcript=inp.get("transcript_path"),
-                )
-                reason = AFK_AGENT_HANDOVER
+                st["refused_open"] = True
+                if not st.get("focus"):
+                    st["focus"], st["focus_at"] = refused_focus(st), time.time()
+                    reason = AFK_AGENT_HANDOVER
     afk = afk_active(st)
     if not reason and afk and yolo_on(afk, inp):
         hit = guard_hit(inp)
@@ -3448,8 +3446,9 @@ SUGGEST = (
     "This session's context is at {tokens}K tokens, past the {suggest}K point from which a fresh session "
     "reasons better. Finish what is in progress; at the next boundary between scopes (a task done, a PR "
     "pushed, before an unrelated task or a long new investigation), hand over with the handover skill "
-    "rather than waiting for {later}. Start no new subagent from now on: let the running ones finish, "
-    "since their results belong in the handover."
+    "rather than waiting for {later}. Start no new task; a subagent the task in progress needs (its review "
+    "before a push) still runs, and the running ones finish before the handover, since their results "
+    "belong in it."
 )
 
 WIND_DOWN = (
