@@ -109,7 +109,7 @@
     "stay_roots": {
       "type": "string",
       "title": "Stay roots",
-      "description": "Start directories a session never leaves, separated by spaces or commas (~ allowed): a relayed session started at one reaches the handover's working directory by absolute path instead of a cd; a lone space or comma for none",
+      "description": "Start directories a session never leaves, separated by spaces or commas (~ allowed): a relayed session started at one reaches the handover's working directory by absolute path instead of a cd; a lone comma for none",
       "default": "~/Code/Guest-Suite/guest-environment"
     }
   }

@@ -37,7 +37,7 @@ The rules that tie them:
 | `trigger_tokens` | 250000 | Context size at which the wind-down starts: no new task, those in progress finished, then the handover | No trigger: handovers only when the session asks, and before compaction |
 | `await_minutes` | 10 | During the wind-down, how long each `[await]` background command is waited for before the plugin stops it | — |
 | `yolo_guard_paths` | (none) | Extra files or folders a YOLO run must not write (spaces or commas between them, `~` allowed) | — |
-| `stay_roots` | `~/Code/Guest-Suite/guest-environment` | Start directories a session never leaves (spaces or commas between them, `~` allowed): a relayed session started at one is told to reach the handover's working directory by absolute path (`git -C`), never to `cd` there ([Relay](relay.md)) | A lone space or comma: no stay root |
+| `stay_roots` | `~/Code/Guest-Suite/guest-environment` | Start directories a session never leaves (spaces or commas between them, `~` allowed): a relayed session started at one is told to reach the handover's working directory by absolute path (`git -C`), never to `cd` there ([Relay](relay.md)) | A lone comma: no stay root |
 | `delegate` | true | Tell each session to implement by itself and give typed subagents the tasks whose result alone matters, so its context fills more slowly | — |
 | `writer_model` | `sonnet` | Model that writes the handover (`claude --model` value). `claude -p` runs its default model on a name it does not know: the plugin tells you once, and `metrics.jsonl` records the model used | — |
 | `handover_dir` | `~/Notes/claude/agent-handovers` | Base folder of the handovers, written as `YYYY/MM/DD/HHhMM-<topic>.md` | — |

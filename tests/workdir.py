@@ -122,7 +122,7 @@ class Workdir(unittest.TestCase):
             [os.path.realpath(os.path.join(HOME, "Code/Guest-Suite/guest-environment")), "/x"],
         )
         self.assertEqual(H.stay_roots(), [os.path.realpath(os.path.join(HOME, "Code/Guest-Suite/guest-environment"))])
-        self.assertEqual(H.stay_roots(lambda key: " "), [])
+        self.assertEqual(H.stay_roots(lambda key: ","), [])
 
     def test_the_ge_hint_only_for_an_app_under_the_root_s_apps(self):
         pkg = os.path.join(HOME, "pkg")

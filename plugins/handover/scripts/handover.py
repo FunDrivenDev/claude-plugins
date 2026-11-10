@@ -1280,7 +1280,7 @@ def outside(path, start):
 
 def stay_roots(option=option):
     """The start directories a session never leaves (`stay_roots`): it reaches its work from there by absolute path.
-    A lone space or comma turns them off (an empty value falls back to the default)."""
+    A lone comma turns them off (an empty value falls back to the default)."""
     return [os.path.realpath(os.path.expanduser(p)) for p in re.split(r"[\s,]+", option("stay_roots")) if p]
 
 
