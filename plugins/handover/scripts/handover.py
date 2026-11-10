@@ -322,6 +322,16 @@ def project_key(project):
     return hashlib.sha1(os.path.realpath(project).encode()).hexdigest()[:16]
 
 
+def relay_key(project, term):
+    """The key of a relay's offer: the project and the pane the session runs in, the terminal's address. The session
+    the relay starts claims only the offer made in its own pane: two chains of one project (a Guest-Suite session
+    starts from the guest-environment root, whatever it changes) that hand over together each resume their own
+    handover and AFK goal. The `command` adapter's address is its command, the same in every pane: two of its panes
+    in one project still share an offer."""
+    where = f"{os.path.realpath(project)}\n{term.name}\n{term.address}"
+    return hashlib.sha1(where.encode()).hexdigest()[:16]
+
+
 def metrics_path():
     return os.path.join(data_dir(), "metrics.jsonl")
 
@@ -1539,8 +1549,12 @@ def close(sid, cfg, last):
 def hand_over(st, sid, tokens, cfg, message, outcome):
     """The closing reply is written, after the handover: relay when the relay is on. Returns a note."""
     if outcome == "failed":
-        if relay_on(st) and not st.get("relay_outcome"):
-            # The new session would start without the handover: the user takes over.
+        launched = st.get("relay_outcome") or {}
+        if relay_on(st) and (not launched or launched.get("mode")):
+            # The new session would start without the handover: the user takes over. A relay already launched for
+            # this session's earlier handover withdraws its offer, so that the user's /clear starts a chain anew.
+            if launched:
+                R.withdraw(relay_key(st.get("project") or os.getcwd(), terminal()), sid)
             S.halted(st, "failed", chain_n(st))
             record(
                 "relay_failed",
@@ -1588,16 +1602,34 @@ def chain_n(st):
     return (st.get("chain") or {}).get("n") or (st.get("relayed_from") or {}).get("n", 0) + 1
 
 
+# How many times the relay types /clear for one handover. A session that hands over again after its relay was
+# launched is still there: its /clear did not end it (Claude Code ran another command), so the relay tries again.
+RELAY_ATTEMPTS = 3
+
+
 def relay(st, sid, tokens, cfg, message):
     """Hand the session over without the user, once its closing reply is written; returns a note for the user.
 
     On a terminal it can type into (terminal.py), a detached `relay-drive` types /clear into the session's prompt;
     the new session waits for the writer and loads the handover, then the resume message is typed. Under the
     claude-relay loop, it leaves the message for the loop and ends claude, which the loop restarts. A chain stops at
-    `relay_limit`.
+    `relay_limit`. A session already relayed that hands over again relays again, up to `RELAY_ATTEMPTS` times: the
+    earlier driver, superseded, gives up without a word.
     """
-    if not relay_on(st) or st.get("relay_outcome"):
+    outcome = st.get("relay_outcome") or {}
+    if not relay_on(st) or outcome and not outcome.get("mode"):
         return None
+    attempt = outcome.get("attempt", 1) + 1 if outcome else 1
+    project = st.get("project") or os.getcwd()
+    if outcome:
+        # The earlier attempt's offer goes: this one makes its own, and a halt leaves none for a /clear of the user's.
+        R.withdraw(relay_key(project, terminal()), sid)
+    if attempt > RELAY_ATTEMPTS:
+        n = outcome.get("n") or chain_n(st)
+        S.halted(st, "failed", n)
+        record("relay_failed", sid, chain=(st.get("chain") or {}).get("base"), n=n, tokens=tokens, why="attempts")
+        alert(f"Relay halted: /clear did not end the session after {RELAY_ATTEMPTS} attempts. Run /clear.")
+        return f"handover: relay halted after {RELAY_ATTEMPTS} attempts at /clear. Run /clear."
     # The chain's name comes from the handover's title: unknown until its first handover is written.
     chain = st.get("chain") or {}
     n, limit = chain_n(st), cfg["relay_limit"]
@@ -1620,9 +1652,8 @@ def relay(st, sid, tokens, cfg, message):
         return "handover: cannot relay here: no terminal to type into, no toolbox session run. Run /clear."
     from_reply = bool(message)
     message = message or "Continue the work from the handover loaded above."
-    project = st.get("project") or os.getcwd()
-    R.offer(project_key(project), sid, term.name)
-    cmd = ["relay-drive", "--session", sid]
+    R.offer(relay_key(project, term), sid, term.name)
+    cmd = ["relay-drive", "--session", sid, f"--attempt={attempt}"]
     if term.types:
         cmd += [f"--terminal={term.name}", f"--address={term.address}", f"--message={message}"]
         # A `cd` outside the directory the new session starts in does not hold: the relay adds it first.
@@ -1634,15 +1665,16 @@ def relay(st, sid, tokens, cfg, message):
             f.write(message)
         cmd += ["--kill", str(pid)]
     detach(cmd)
-    S.relayed(st, n, term.name)
+    S.relayed(st, n, term.name, attempt)
     record(
-        "relay_launched",
+        "relay_launched" if attempt == 1 else "relay_retried",
         sid,
         chain=chain.get("base"),
         n=n,
         mode=st["relay_outcome"]["mode"],
         tokens=tokens,
         message_from_reply=from_reply,
+        **({"attempt": attempt} if attempt > 1 else {}),
     )
     return f"handover: relaying to a fresh session, handover {n}" + ("." if afk else f" of at most {limit}.")
 
@@ -2762,9 +2794,27 @@ def retitle(term, chain, afk):
     return True
 
 
+def superseded(sid, attempt):
+    """Whether the relay of `sid` was launched again after its attempt `attempt`, or halted: that driver's work is
+    over."""
+    # The outcome, not the phase: a compaction hides the phase, and keeps the outcome. A halt's has no mode; no
+    # outcome at all is a driver started without the hooks, which nothing supersedes.
+    outcome = S.read(sid).get("relay_outcome")
+    return bool(outcome) and (not outcome.get("mode") or outcome.get("attempt", 1) > attempt)
+
+
+def handing_over_again(sid):
+    """Whether session `sid`, relayed, asked for a handover again: its /clear left it there, and the relay of that
+    handover comes once it is written."""
+    return S.settled(S.read(sid)) in (S.WINDING_DOWN, S.HANDED_OVER)
+
+
 def cmd_relay_drive(args):
-    """The relay's second half, detached from the hook so the turn can end first."""
+    """The relay's second half, detached from the hook so the turn can end first. A driver whose relay was launched
+    again, its /clear having left the session there, exits without a word: the newer driver carries on."""
     time.sleep(2)
+    if superseded(args.session, args.attempt):
+        return 0
     if args.kill:
         with contextlib.suppress(OSError):
             os.kill(args.kill, signal.SIGTERM)
@@ -2785,7 +2835,17 @@ def cmd_relay_drive(args):
     t0 = time.time()
     if not submit("/clear"):
         return stalled(0)
-    if not R.await_confirmation(args.session):
+
+    def gone():
+        return superseded(args.session, args.attempt)
+
+    loaded = R.await_confirmation(args.session, superseded=gone)
+    if loaded is False and handing_over_again(args.session):
+        # Its writer may outlast the wait: the next attempt supersedes this driver once that handover is written.
+        loaded = R.await_confirmation(args.session, seconds=STOP_WRITE_SECONDS + R.CONFIRM_SECONDS, superseded=gone)
+    if loaded is None:
+        return 0
+    if not loaded:
         return stalled(round(time.time() - t0))
     time.sleep(1)
     if args.add_dir:
@@ -3109,13 +3169,16 @@ def on_session_start(inp):
 
 def take_relay(inp):
     """A session the relay started: load the handover of the session it replaces, and carry the chain on."""
-    key = project_key(project_of(inp))
-    pending = R.claim(key, inp["session_id"])
+    project, term = project_of(inp), terminal()
+    pending = R.claim(relay_key(project, term), inp["session_id"])
     if not pending:
         return None
-    # Relayed, the session ending leaves no /clear pointer for a later session to load.
-    with contextlib.suppress(FileNotFoundError):
-        os.remove(os.path.join(data_dir(), "latest", f"{key}.json"))
+    # Relayed, the session ending leaves no /clear pointer for a later session to load; another session's stays.
+    latest = os.path.join(data_dir(), "latest", f"{project_key(project)}.json")
+    pointer = read_json(latest)
+    if isinstance(pointer, dict) and pointer.get("session") == pending["session"]:
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(latest)
     t0 = time.time()
     st = wait_for(pending["session"], R.LOAD_SECONDS)
     text = read_handover(st) if (st.get("written") or {}).get("ok") else None
@@ -3143,7 +3206,6 @@ def take_relay(inp):
         # The loop starts claude with the message: it is resumed as soon as it loads.
         record("relay_resumed", pending["session"], mode="loop", seconds=round(time.time() - pending["at"]))
     afk = afk_active(st)
-    term = terminal()
     term.report_status("clear")
     retitle(term, chain, afk)
     with S.locked(inp["session_id"]) as new:
@@ -3999,6 +4061,7 @@ def main():
     rr.add_argument("--instance", default="", help="the terminal's server when the run last checked")
     r = sub.add_parser("relay-drive")
     r.add_argument("--session", required=True)
+    r.add_argument("--attempt", type=int, default=1, help="which relay of this handover: a later one supersedes it")
     r.add_argument("--terminal", help="adapter of the terminal to type /clear and the message into (terminal.py)")
     r.add_argument("--address", help="where that adapter finds the session")
     r.add_argument("--message")

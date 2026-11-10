@@ -1,9 +1,14 @@
 """The relay handshake (D19): how a session handing over and the session the relay starts meet in the data folder.
 
-    offer(key, sid, mode)        the session handing over offers its handover to the next session in project `key`
+    offer(key, sid, mode)        the session handing over offers its handover to the next session at `key`
     claim(key, sid)              the next session takes the offer: once, unless stale or its own
+    withdraw(key, sid)           the session that made the offer takes it back: its relay is tried again, or halted
     confirm(prev, ok)            it says whether the handover of `prev` loaded
-    await_confirmation(prev)     the relay's driver waits for that answer before it types the resume message
+    await_confirmation(prev)     the relay's driver waits for that answer before it types the resume message, unless
+                                 a later relay of `prev` supersedes it
+
+`key` names the project and the pane (handover.py relay_key): the session the relay starts in a pane claims only the
+offer made in that pane, so two chains of one project that hand over together never take each other's.
 
 This module owns the file names, the staleness and the timeouts of the handshake, and writes each file atomically.
 What the sessions do around it (loading the handover, typing into the terminal, the records) stays in handover.py.
@@ -32,12 +37,12 @@ def confirmation_path(sid):
 
 
 def offer(key, sid, mode, now=None):
-    """Session `sid` hands over in project `key`, relayed by `mode` (the terminal's name, or `loop`)."""
+    """Session `sid` hands over at `key`, relayed by `mode` (the terminal's name, or `loop`)."""
     write_json(offer_path(key), {"session": sid, "at": time.time() if now is None else now, "mode": mode})
 
 
 def claim(key, sid, now=None):
-    """The offer of project `key`, taken by the starting session `sid`: {session, at, mode}, or None when there is
+    """The offer at `key`, taken by the starting session `sid`: {session, at, mode}, or None when there is
     none, it is stale, or `sid` made it. Taken once: of two sessions claiming together, one gets it."""
     path = offer_path(key)
     now = time.time() if now is None else now
@@ -67,6 +72,14 @@ def claim(key, sid, now=None):
     return pending
 
 
+def withdraw(key, sid):
+    """Removes the offer at `key` when `sid` made it: no session takes it any more."""
+    seen = read_json(offer_path(key))
+    if isinstance(seen, dict) and seen.get("session") == sid:
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(offer_path(key))
+
+
 def sweep(key, now):
     """Removes what a claim that crashed between its rename and its remove left behind."""
     prefix = os.path.basename(offer_path(key)) + "."
@@ -84,13 +97,18 @@ def confirm(prev, ok):
     write_json(confirmation_path(prev), {"ok": bool(ok)})
 
 
-def await_confirmation(prev, seconds=CONFIRM_SECONDS, clock=time.time, sleep=time.sleep):
+def await_confirmation(prev, seconds=CONFIRM_SECONDS, clock=time.time, sleep=time.sleep, superseded=lambda: False):
     """Whether the session that claimed `prev`'s offer loaded its handover, waited for up to `seconds`: False when
-    it says it did not, or no answer came in time. The answer is consumed."""
+    it says it did not, or no answer came in time; None once `superseded()`, the answer left to the newer driver.
+    The answer is consumed."""
     path = confirmation_path(prev)
     deadline = clock() + seconds
     while not os.path.exists(path) and clock() < deadline:
+        if superseded():
+            return None
         sleep(1)
+    if superseded():
+        return None
     answer = read_json(path, {})
     with contextlib.suppress(FileNotFoundError):
         os.remove(path)

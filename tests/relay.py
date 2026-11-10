@@ -201,6 +201,27 @@ class Handshake(unittest.TestCase):
         # The driver waits longer than the claiming session waits for the writer.
         self.assertGreater(R.CONFIRM_SECONDS, R.LOAD_SECONDS)
 
+    def test_a_superseded_wait_leaves_the_answer_to_the_newer_driver(self):
+        flag = {"on": False}
+        clock = Clock({20: lambda: flag.update(on=True)})
+        self.assertIsNone(R.await_confirmation("old", clock=clock, sleep=clock.sleep, superseded=lambda: flag["on"]))
+        self.assertEqual(clock.slept, 20)
+        R.confirm("old", True)
+        self.assertIsNone(R.await_confirmation("old", clock=clock, sleep=clock.sleep, superseded=lambda: True))
+        self.assertTrue(R.await_confirmation("old", clock=clock, sleep=clock.sleep))
+
+    def test_a_withdrawn_offer_is_not_taken(self):
+        R.offer("p", "old", "tmux", now=NOW)
+        R.withdraw("p", "other")
+        R.withdraw("p", "old")
+        self.assertIsNone(R.claim("p", "new", now=NOW + 1))
+        self.assertEqual(leftovers(), [])
+
+    def test_a_withdrawal_keeps_another_session_s_offer(self):
+        R.offer("p", "newer", "tmux", now=NOW)
+        R.withdraw("p", "old")
+        self.assertEqual(R.claim("p", "new", now=NOW + 1)["session"], "newer")
+
     def test_a_malformed_answer_is_no_load(self):
         for bad in ({}, {"ok": "yes"}, [True]):
             with self.subTest(bad):
