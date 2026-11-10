@@ -159,6 +159,10 @@ class ReadOnlyBash(unittest.TestCase):
             f"cat {KNOWLEDGE}/*.md",
             f"git -C {KNOWLEDGE} log -3 --oneline",
             "grep -rn 'qgate' $HOME/.claude/plugins/cache 2>&1 | head -5",
+            f"printf '%s\\n' {INDEX}; printf '%-20s|%b%%' a b",
+            f"git -C {KNOWLEDGE} branch -a --contains=HEAD",
+            f"git -C {KNOWLEDGE} branch --show-current",
+            f'K={KNOWLEDGE}; for f in php.md; do test -f "$K/$f" && head -5 "$K/$f"; done',
         ):
             self.assertIsNone(hit(command), command)
 
@@ -242,6 +246,21 @@ class ReadOnlyBash(unittest.TestCase):
             f"printf *; cat {INDEX}",
             f"test *; cat {INDEX}",
             f"[ * ]; cat {INDEX}",
+            # The fifth review's bypasses: zsh printf arithmetic, bash 5.3 `test -v`, git's attached and abbreviated
+            # options.
+            f"printf %d 'HOME=[##36]-12'; file $HOME -m {INDEX}",
+            f"printf '%*s' 'HOME=5' x; cat {INDEX}",
+            f"printf '%1$s' x; cat {INDEX}",
+            f"Y=a\\[\\$\\(touch\\ pwned\\)\\]; for X in v; do [ -$X 'a[Y]' ]; done; ls {KNOWLEDGE}",
+            f"git -C {KNOWLEDGE} branch -uorigin/main",
+            f"git -C {KNOWLEDGE} branch --unset-up",
+            f"git -C {KNOWLEDGE} branch --edit",
+            f"git -C {KNOWLEDGE} branch --delete-merged=x",
+            f"R='-v a[Y]'; Y=a\\[\\$\\(touch\\ pwned\\)\\]; [ $R ]; ls {KNOWLEDGE}",
+            f'for f in v; do [ "-$f" "a[Y]" ]; done; ls {KNOWLEDGE}',
+            f'for f in -v; do [ "$f" "a[Y]" ]; done; ls {KNOWLEDGE}',
+            f"for f in a; do test -f {KNOWLEDGE}/$f; done",
+            f'for f in %d; do printf "$f" HOME=1; done; ls {KNOWLEDGE}',
         ):
             self.assertIsNotNone(hit(command), command)
 

@@ -2200,11 +2200,14 @@ def sed_read_only(args):
 # option (`-dele*` to `-delete`). Claude Code's zsh runs with `extendedglob`: `^`, `#` and a `~` inside a word
 # are glob operators too.
 GLOB_MARKS = {"*": "\ue001", "?": "\ue002", "[": "\ue003", "^": "\ue004", "#": "\ue005", "~": "\ue006"}
-UNMARK = str.maketrans({v: k for k, v in GLOB_MARKS.items()})
+# An unquoted `$`, marked too: bash splits what its variable holds into several words.
+DOLLAR_MARK = "\ue007"
+UNMARK = str.maketrans({**{v: k for k, v in GLOB_MARKS.items()}, DOLLAR_MARK: "$"})
 
 
 def unquoted_newlines_to_semicolons(command):
-    """The command with its unquoted newlines made `;` and its unquoted glob characters marked (GLOB_MARKS)."""
+    """The command with its unquoted newlines made `;` and its unquoted glob characters and `$` marked (GLOB_MARKS,
+    DOLLAR_MARK)."""
     out, quote, escaped = [], None, False
     for i, c in enumerate(command):
         if escaped:
@@ -2220,15 +2223,19 @@ def unquoted_newlines_to_semicolons(command):
         elif c in GLOB_MARKS and not (c == "~" and (i == 0 or command[i - 1] in " \t\n;&|()<>=:")):
             # A `~` opening a word (or a value, `X=~/a`) is the home directory.
             c = GLOB_MARKS[c]
+        elif c == "$":
+            c = DOLLAR_MARK
         out.append(c)
     return "".join(out)
 
 
 # Commands whose options can write or run something: a variable among their words must be known.
 OPTION_WRITERS = {"find", "sed", "sort", "tail", "rg", "git", "file"}
-# `printf -v` and `test -v` assign or evaluate: a glob, or a word opening on an unknown variable, may become `-v`.
+# `printf -v` and `test -v` assign or evaluate: a glob, or an unknown variable that may open a word (`$X`, `-$X`) or
+# split into several, may become `-v`.
 ARG_EVALUATORS = {"printf", "test", "["}
-LEADING_VAR = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+# A printf conversion: its flags, width and precision, then its letter.
+PRINTF_SPEC = re.compile(r"%([^A-Za-z%]*)([A-Za-z%])")
 VAR_RE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 # A `$` that VAR_RE leaves: a special parameter (`$_`, `$1`, `$@`…) or an expansion with an operator (`${X:=…}`).
 LEFT_EXPANSION = re.compile(r"\$[\w{@*#?$!-]")
@@ -2318,6 +2325,22 @@ def expand_vars(word, env):
     return None if unknown else out
 
 
+def unknown_may_lead(marked, env):
+    """True when a variable may open the word as an operator or split it into several: an unknown one unquoted
+    (DOLLAR_MARK) or after nothing but a `-` (`"$f"`, `-"$f"`, but not `"$R/$f"`), a known one unquoted whose value
+    holds a blank or a glob. `marked` is the word before UNMARK."""
+    word = marked.translate(UNMARK)
+    for m in VAR_RE.finditer(word):
+        name, unquoted = m.group(1) or m.group(2), marked[m.start()] == DOLLAR_MARK
+        if name in env:
+            if unquoted and re.search(r"[\s*?\[]", env[name]):
+                return True
+            continue
+        before = expand_vars(word[: m.start()], env)
+        return unquoted or not before or before.startswith("-")
+    return False
+
+
 def read_only_simple(words, env, trusted=frozenset({"HOME"})):
     """True when one simple command, its leading keywords and assignments removed, only reads. `env` holds the
     command's own assignments so far, so that `X=-delete; find . $X` is judged on what it runs."""
@@ -2337,7 +2360,7 @@ def read_only_simple(words, env, trusted=frozenset({"HOME"})):
         )
     # A lone `[` is the test command, no glob.
     globbed = any(set(w) & set(GLOB_MARKS.values()) for w in words if w != GLOB_MARKS["["])
-    words = [w.translate(UNMARK) for w in words]
+    marked, words = words, [w.translate(UNMARK) for w in words]
     assigned = []
     while words and re.match(r"[A-Za-z_][A-Za-z0-9_]*=", words[0]):
         assigned.append(words[0].split("=", 1))
@@ -2372,7 +2395,9 @@ def read_only_simple(words, env, trusted=frozenset({"HOME"})):
     ):
         return False
     if expanded[0] in ARG_EVALUATORS and (
-        globbed or any((m := LEADING_VAR.match(w)) and (m.group(1) or m.group(2)) not in env for w in words[1:])
+        globbed
+        or any(unknown_may_lead(w, env) for w in marked[len(marked) - len(words) + 1 :])
+        or (expanded[0] == "printf" and None in expanded)
     ):
         return False
     cmd, args = expanded[0], [w if w is not None else "" for w in expanded[1:]]
@@ -2406,7 +2431,7 @@ def read_only_simple(words, env, trusted=frozenset({"HOME"})):
             for a in args
         )
     if cmd == "printf":
-        return not (args[:1] and args[0].startswith("-"))  # `printf -v X` assigns.
+        return printf_read_only(args)
     if cmd in ("test", "["):
         return not any(a in ("-v", "-R") for a in args)  # `test -v 'a[$X]'` evaluates a subscript.
     if cmd == "file":
@@ -2871,8 +2896,6 @@ def bash_parts(command):
 
 
 FIND_WRITES = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
-GIT_BRANCH_WRITES = {"-d", "-D", "-m", "-M", "-c", "-C", "-f", "-u", "-t", "--delete", "--move", "--copy", "--force"}
-GIT_BRANCH_WRITES_PREFIX = ("--set-upstream", "--unset-upstream", "--edit-description", "--track", "--no-track")
 
 
 def writes_a_file(part):
@@ -2884,6 +2907,50 @@ def writes_a_file(part):
     return False
 
 
+def printf_read_only(args):
+    """`printf` with a format that only copies its arguments: `%s`, `%b`, `%%`. `-v X` assigns; zsh evaluates the
+    argument of a numeric conversion, and a `*` width, as arithmetic, which can assign (`%d 'HOME=1'`)."""
+    if not args or args[0].startswith("-"):
+        return False
+    return all(
+        conv in "sb%" and re.fullmatch(r"[-+ #0]*\d*(?:\.\d*)?", spec) for spec, conv in PRINTF_SPEC.findall(args[0])
+    )
+
+
+# `git branch` options that only list; any other may write (`-uX`, the abbreviations `--unset-up`, `--edit`).
+GIT_BRANCH_LIST = {
+    "-a",
+    "-r",
+    "-v",
+    "-vv",
+    "-l",
+    "-i",
+    "--all",
+    "--remotes",
+    "--verbose",
+    "--list",
+    "--ignore-case",
+    "--show-current",
+    "--color",
+    "--no-color",
+    "--column",
+    "--no-column",
+    "--no-abbrev",
+}
+GIT_BRANCH_LIST_VALUED = (
+    "--contains=",
+    "--no-contains=",
+    "--merged=",
+    "--no-merged=",
+    "--points-at=",
+    "--format=",
+    "--sort=",
+    "--abbrev=",
+    "--color=",
+    "--column=",
+)
+
+
 def readonly_git(args):
     """git subcommands that only read; branch, remote, worktree and reflog only in their listing forms."""
     flags = [w for w in args if w.startswith("-")]
@@ -2892,7 +2959,7 @@ def readonly_git(args):
         return False
     sub, more = rest[0], rest[1:]
     if sub == "branch":
-        if any(f in GIT_BRANCH_WRITES or f.startswith(GIT_BRANCH_WRITES_PREFIX) for f in flags):
+        if not all(f in GIT_BRANCH_LIST or f.startswith(GIT_BRANCH_LIST_VALUED) for f in flags):
             return False
         return not more or any(f in ("-l", "--list") for f in flags)
     if sub == "remote":
