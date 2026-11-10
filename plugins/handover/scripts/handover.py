@@ -1278,15 +1278,48 @@ def outside(path, start):
     return p != s and not p.startswith(s.rstrip("/") + "/")
 
 
-def workdir_notice(text, cwd, added=False):
+def stay_roots(option=option):
+    """The start directories a session never leaves (`stay_roots`): it reaches its work from there by absolute path.
+    A lone comma turns them off (an empty value falls back to the default)."""
+    return [os.path.realpath(os.path.expanduser(p)) for p in re.split(r"[\s,]+", option("stay_roots")) if p]
+
+
+def stay_notice(path, cwd, added, gone):
+    """What a session started at a stay root is told: stay there, reach `path` by absolute path, never `cd`."""
+    if gone:
+        return (
+            f"The working directory the handover names, {path}, no longer exists. This session started in {cwd}, "
+            "where it stays: work from there, and reach the repo's main checkout by absolute path."
+        )
+    reach = f"`git -C {path}` and absolute paths"
+    if not outside(path, os.path.join(cwd, "apps")):
+        reach += ", `ge -s <service> -w <branch>` for an app's worktree"
+    notice = (
+        f"This session started in {cwd}, where it stays, and the handover's work is in {path}: never `cd` there, "
+        f"reach it with {reach}."
+    )
+    if outside(path, cwd):
+        notice += (
+            " The relay adds it to the session's directories (`/add-dir`) before its next message, for the file tools."
+            if added
+            else f" For the file tools, ask the user to run `/add-dir {path}`."
+        )
+    return notice
+
+
+def workdir_notice(text, cwd, added=False, roots=None):
     """What a relayed session is told about the directory to work from: nothing when it already starts there.
 
     `added`: the relay types `/add-dir` for a directory outside the start one before the resume message, so that a
-    `cd` there holds."""
+    `cd` there holds. `roots`: the stay roots (`stay_roots()` when None): a session started at one stays there."""
     path = handover_workdir(text)
     if not path:
         return ""
     here = os.path.realpath(cwd) if cwd else None
+    if here and here == os.path.realpath(path):
+        return ""
+    if here and here in (stay_roots() if roots is None else [os.path.realpath(r) for r in roots]):
+        return stay_notice(path, cwd, added, not os.path.isdir(path))
     if not os.path.isdir(path):
         if here and not outside(path, here):
             # A Guest-Suite session starts from the guest-environment root, its app worktrees inside it.
@@ -1298,8 +1331,6 @@ def workdir_notice(text, cwd, added=False):
             f"The working directory the handover names, {path}, no longer exists: start with one plain `cd` to the "
             "repo's main checkout, a Bash call of its own, before any git command."
         )
-    if here and os.path.realpath(path) == here:
-        return ""
     cd = f"one plain `cd {path}`, a Bash call of its own"
     if not outside(path, here):
         return f"This session started in {cwd}, and the handover's work is in {path}: start with {cd}."
