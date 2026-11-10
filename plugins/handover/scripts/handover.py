@@ -1549,8 +1549,12 @@ def close(sid, cfg, last):
 def hand_over(st, sid, tokens, cfg, message, outcome):
     """The closing reply is written, after the handover: relay when the relay is on. Returns a note."""
     if outcome == "failed":
-        if relay_on(st) and not st.get("relay_outcome"):
-            # The new session would start without the handover: the user takes over.
+        launched = st.get("relay_outcome") or {}
+        if relay_on(st) and (not launched or launched.get("mode")):
+            # The new session would start without the handover: the user takes over. A relay already launched for
+            # this session's earlier handover withdraws its offer, so that the user's /clear starts a chain anew.
+            if launched:
+                R.withdraw(relay_key(st.get("project") or os.getcwd(), terminal()), sid)
             S.halted(st, "failed", chain_n(st))
             record(
                 "relay_failed",
@@ -2793,8 +2797,10 @@ def retitle(term, chain, afk):
 def superseded(sid, attempt):
     """Whether the relay of `sid` was launched again after its attempt `attempt`, or halted: that driver's work is
     over."""
-    st = S.read(sid)
-    return S.phase(st) == S.HALTED or (st.get("relay_outcome") or {}).get("attempt", 1) > attempt
+    # The outcome, not the phase: a compaction hides the phase, and keeps the outcome. A halt's has no mode; no
+    # outcome at all is a driver started without the hooks, which nothing supersedes.
+    outcome = S.read(sid).get("relay_outcome")
+    return bool(outcome) and (not outcome.get("mode") or outcome.get("attempt", 1) > attempt)
 
 
 def handing_over_again(sid):

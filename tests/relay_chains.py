@@ -227,6 +227,26 @@ class AClearThatDidNotEndTheSession(unittest.TestCase):
         # The /clear the halt asks the user for starts a chain of its own.
         self.assertIsNone(start("j2", A))
 
+    def test_a_halt_ends_the_driver_even_through_a_compaction(self):
+        chain("m1", A, "compacted", "goal")
+
+        def halted_then_compacted():
+            with S.locked("m1") as st:
+                S.halted(st, "limit", 2)
+                S.compaction_starts(st)
+
+        pane = Typed(A.address, on_enter=halted_then_compacted)
+        self.assertEqual(drive("m1", 1, pane), (0, []))
+
+    def test_a_retry_whose_writer_fails_halts_and_withdraws_its_offer(self):
+        chain("n1", A, "unwritten", "goal")
+        with S.locked("n1") as st:
+            H.hand_over(st, "n1", 0, H.config(), None, "failed")
+        self.assertEqual(S.halt_reason(S.read("n1")), "failed")
+        self.assertEqual(drive("n1", 1, Typed(A.address)), (0, []))
+        # The /clear the note asks the user for starts a chain of its own.
+        self.assertIsNone(start("n2", A))
+
     def test_a_writer_slower_than_the_wait_raises_no_stall(self):
         chain("k1", A, "slow", "goal")
 
