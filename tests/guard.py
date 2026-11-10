@@ -300,6 +300,18 @@ class ReadOnlyBash(unittest.TestCase):
         ):
             self.assertIsNotNone(hit(command), command)
 
+    def test_git_on_another_spelling_of_the_plugins_directory_stays_denied(self):
+        # The ninth review: macOS reaches the plugins through the /System/Volumes/Data firmlink, which realpath keeps.
+        os.makedirs(KNOWLEDGE, exist_ok=True)
+        real = os.path.realpath(KNOWLEDGE)
+        self.assertTrue(H.inside_plugins(KNOWLEDGE))
+        self.assertFalse(H.inside_plugins(HOME))
+        firmlink = "/System/Volumes/Data" + real
+        if not os.path.isdir(firmlink):
+            self.skipTest("no /System/Volumes/Data firmlink on this system")
+        self.assertTrue(H.inside_plugins(firmlink))
+        self.assertIsNotNone(hit(f"git -C {firmlink} log --oneline -1"))
+
     def test_reading_this_plugin_its_data_or_the_settings_by_bash_stays_denied(self):
         for command in (
             f"cat {SCRIPT}",

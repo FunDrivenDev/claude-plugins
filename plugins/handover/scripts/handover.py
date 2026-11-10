@@ -2960,6 +2960,27 @@ GIT_LOG_VALUED = (
 GIT_CONFIG_RUNNERS = {"status", "diff", "show", "blame"}
 
 
+def inside_plugins(path):
+    """Whether `path` is the installed plugins directory or lies under it, judged by file identity: macOS reaches that
+    directory through the /System/Volumes/Data firmlink, which realpath keeps, and through any case of its letters."""
+    try:
+        mark = os.stat(os.path.join(os.path.expanduser("~"), ".claude", "plugins"))
+    except OSError:
+        return False
+    real = os.path.realpath(path)
+    while True:
+        try:
+            st = os.stat(real)
+            if (st.st_dev, st.st_ino) == (mark.st_dev, mark.st_ino):
+                return True
+        except OSError:
+            pass
+        parent = os.path.dirname(real)
+        if parent == real:
+            return False
+        real = parent
+
+
 def git_read_only(args):
     """git run on a repository outside the installed plugins, named by one absolute `-C`. git runs what the
     repository's config names (gpg.program for a plain `log` with log.showSignature, core.fsmonitor for ls-files),
@@ -2968,9 +2989,7 @@ def git_read_only(args):
     if args[:1] != ["-C"] or len(args) < 3:
         return False
     target, args = args[1], args[2:]
-    plugins = os.path.realpath(os.path.join(os.path.expanduser("~"), ".claude", "plugins"))
-    real = os.path.realpath(target)
-    if not os.path.isabs(target) or ".." in target.split("/") or real == plugins or real.startswith(plugins + "/"):
+    if not os.path.isabs(target) or ".." in target.split("/") or inside_plugins(target):
         return False
     if args[:1] == ["--no-pager"]:
         args = args[1:]
