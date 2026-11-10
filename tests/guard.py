@@ -108,6 +108,12 @@ class InstalledScripts(unittest.TestCase):
         self.assertIsNotNone(hit(f"cp x {QGATE}"))
         self.assertIsNotNone(hit(f"mv {QGATE} x"))
 
+    def test_a_plain_perl_call_of_an_installed_script_passes(self):
+        # As gs-dev-toolkit's review workflow sent it 278 times on 2026-11-09 and 10, refused for want of perl.
+        select = installed(TOOLKIT, "doc-select.pl")
+        self.assertIsNone(hit(f"perl '{select}' --stack php --diff-files 'src/a.php,src/b.php'"))
+        self.assertIsNotNone(hit(f"perl -e 'unlink q({select})'"))
+
     def test_this_plugins_own_scripts_and_scripts_outside_cache_and_marketplaces_stay_denied(self):
         for script in (OWN_INSTALLED, IN_DATA, os.path.join(H.plugin_root(), "scripts", "notify.py")):
             self.assertIsNotNone(hit(f"python3 {script} config --set x"), script)
@@ -125,6 +131,60 @@ class Guard(unittest.TestCase):
         for tool in ("Read", "Glob", "Grep"):
             self.assertIsNone(hit(INDEX, tool=tool), tool)
 
+    def test_a_structured_result_naming_a_plugin_script_passes(self):
+        # A workflow agent's result once quoted the qgate launch it ran, and was refused 57 times.
+        out = {"tool_name": "StructuredOutput", "tool_input": {"command": f"bash {QGATE} launch --slug s"}}
+        self.assertIsNone(H.guard_hit({**out, "cwd": HOME}))
+
+
+KNOWLEDGE = os.path.join(HOME, ".claude", "plugins", "cache", "guest-suite", "gs-dev-toolkit", "4.61.0", "knowledge")
+
+
+class ReadOnlyBash(unittest.TestCase):
+    def test_a_bash_command_that_only_reads_other_plugins_files_passes(self):
+        # The review workflow's knowledge listing, refused 502 times (agent-a711db52bd4bf16b6, 2026-11-09).
+        listing = (
+            f'W=/r/bim-4375; K={KNOWLEDGE}; echo "== knowledge"; '
+            f'find "$K" -name \'*.md\' 2>/dev/null | sed "s|^$K/||"; '
+            'echo "== composer"; jq -r \'(.require // {}) | keys[]\' "$W/composer.json" 2>/dev/null || echo ABSENT'
+        )
+        for command in (
+            listing,
+            f"ls -la {KNOWLEDGE} && head -40 {KNOWLEDGE}/php.md",
+            f'for f in {KNOWLEDGE}/*.md; do\n  wc -l "$f"\ndone',
+            f"sed -n '1,60p' {INDEX}",
+            "grep -rn 'qgate' $HOME/.claude/plugins/cache 2>&1 | head -5",
+        ):
+            self.assertIsNone(hit(command), command)
+
+    def test_a_command_that_writes_runs_or_hides_what_it_runs_stays_denied(self):
+        for command in (
+            f"find {KNOWLEDGE} -name '*.md' -delete",
+            f"X=-delete; find {KNOWLEDGE} $X",
+            f"find {KNOWLEDGE} $X",
+            f"sed -i '' 's/a/b/' {INDEX}",
+            f"sed -n 's/a/b/w {INDEX}' /tmp/x",
+            f"cat /tmp/x > {INDEX}",
+            f"cat {INDEX} | tee {INDEX}.bak",
+            f"ls {KNOWLEDGE}; rm -rf {KNOWLEDGE}",
+            f"cat $(ls {KNOWLEDGE})",
+            f"cat {INDEX} &",
+            f"tail -f {INDEX}",
+            f"sort -o {INDEX} {INDEX}",
+            f"$CMD {INDEX}",
+            f"cat <<EOF > {INDEX}\nx\nEOF",
+        ):
+            self.assertIsNotNone(hit(command), command)
+
+    def test_reading_this_plugin_its_data_or_the_settings_by_bash_stays_denied(self):
+        for command in (
+            f"cat {SCRIPT}",
+            f"ls {DATA}",
+            "cat ~/.claude/settings.json",
+            f"cat {INDEX} {DATA}/audit.jsonl",
+        ):
+            self.assertIsNotNone(hit(command), command)
+
 
 INDEX = os.path.join(HOME, ".claude", "plugins", "cache", "x", "y", "index.json")
 
@@ -139,7 +199,10 @@ def reason(command, tool="Bash"):
 class Refusal(unittest.TestCase):
     def test_a_bash_read_of_another_plugins_file_is_pointed_to_the_reading_tools(self):
         # As a gs-knowledge-loading run once sent it: refused with "do the work another way", the agent gave up.
-        for command in ("jq '.routes' ~/.claude/plugins/cache/x/y/index.json", f"ls {os.path.dirname(INDEX)}"):
+        for command in (
+            "jq '.routes' ~/.claude/plugins/cache/x/y/index.json | python3 -m json.tool",
+            f"ls {os.path.dirname(INDEX)} > /tmp/listing",
+        ):
             got = reason(command)
             self.assertIsNotNone(got, command)
             self.assertIn("use the Read, Glob or Grep tool", got, command)

@@ -2035,7 +2035,7 @@ def own_command(command):
 
 
 # Interpreters an installed plugin script may be run with; none of their own flags (`bash -c`) is let through.
-SCRIPT_RUNNERS = {"bash", "sh", "zsh", "python3", "python"}
+SCRIPT_RUNNERS = {"bash", "sh", "zsh", "python3", "python", "perl"}
 
 
 def plain_command(command):
@@ -2100,13 +2100,178 @@ def names_path(text, path):
     return any(f in text for f in forms)
 
 
+# Shell words that run nothing themselves: the next simple command follows them.
+SHELL_KEYWORDS = {"if", "then", "else", "elif", "fi", "do", "done", "while", "until", "!", "{", "}"}
+# Commands that only read their files and print; read_only_simple refuses their writing options.
+READ_ONLY_TOOLS = {
+    "echo",
+    "printf",
+    "ls",
+    "cat",
+    "head",
+    "tail",
+    "find",
+    "grep",
+    "rg",
+    "jq",
+    "sort",
+    "cut",
+    "wc",
+    "test",
+    "[",
+    "stat",
+    "file",
+    "diff",
+    "du",
+    "realpath",
+    "basename",
+    "dirname",
+    "cd",
+    "pwd",
+    "true",
+    "sed",
+    "git",
+}
+# A sed `w`/`W` (write a file) or `e` (run a command), alone or as an `s` flag.
+SED_WRITES = re.compile(r"(?:^|[;{}\n]|[/#|,][gpiImMe0-9]*)\s*[wWe](?:\s|$)")
+
+
+def unquoted_newlines_to_semicolons(command):
+    out, quote, escaped = [], None, False
+    for c in command:
+        if escaped:
+            escaped = False
+        elif c == "\\" and quote != "'":
+            escaped = True
+        elif quote:
+            quote = None if c == quote else quote
+        elif c in "'\"":
+            quote = c
+        elif c == "\n":
+            c = ";"
+        out.append(c)
+    return "".join(out)
+
+
+# Commands whose options can write or run something: a variable among their words must be known.
+OPTION_WRITERS = {"find", "sed", "sort", "tail", "rg", "git"}
+VAR_RE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+
+
+def expand_vars(word, env):
+    """The word with the variables the command assigned (and HOME) expanded; None when one is unknown."""
+    unknown = []
+
+    def value(m):
+        name = m.group(1) or m.group(2)
+        if name not in env:
+            unknown.append(name)
+        return env.get(name, "")
+
+    out = VAR_RE.sub(value, word)
+    return None if unknown else out
+
+
+def read_only_simple(words, env):
+    """True when one simple command, its leading keywords and assignments removed, only reads. `env` holds the
+    command's own assignments so far, so that `X=-delete; find . $X` is judged on what it runs."""
+    while words and words[0] in SHELL_KEYWORDS:
+        words = words[1:]
+    if words[:1] == ["for"]:
+        return True  # `for x in <words>`: its words only expand, substitutions being refused upstream.
+    while words and re.match(r"[A-Za-z_][A-Za-z0-9_]*=", words[0]):
+        name, val = words[0].split("=", 1)
+        val = expand_vars(val, env)
+        if val is None:
+            env.pop(name, None)
+        else:
+            env[name] = val
+        words = words[1:]
+    if not words:
+        return True
+    expanded = [expand_vars(w, env) for w in words]
+    if expanded[0] is None or (expanded[0] in OPTION_WRITERS and None in expanded):
+        return False
+    cmd, args = expanded[0], [w if w is not None else "" for w in expanded[1:]]
+    if cmd not in READ_ONLY_TOOLS:
+        return False
+    if cmd == "git":
+        while args[:1] in (["-C"], ["--no-pager"]):
+            args = args[2:] if args[0] == "-C" else args[1:]
+        flags = {a for a in args if a.startswith("-")}
+        if args[:1] == ["config"]:
+            return len(args) - len(flags) == 2 and flags <= {"--get", "--get-all", "--global", "--local"}
+        return readonly_git(args)
+    if cmd == "find":
+        return not any(a in FIND_WRITES for a in args)
+    if cmd == "tail":
+        return not any(a in ("-f", "-F") or a.startswith("--follow") for a in args)
+    if cmd == "sort":
+        return not any(a.startswith(("-o", "--output")) for a in args)
+    if cmd == "rg":
+        return not any(a.startswith(("--pre", "--search-zip", "-z")) for a in args)
+    if cmd == "sed":
+        opts = [a for a in args if a.startswith("-")]
+        if any(a.startswith(("--in-place", "-I")) or (not a.startswith("--") and "i" in a) for a in opts):
+            return False
+        return not any(SED_WRITES.search(a) for a in args if not a.startswith("-"))
+    return True
+
+
+def read_only_command(command):
+    """True when a Bash command only reads, by a strict parse: no substitution, heredoc, subshell or
+    background job, no redirection but to /dev/null or a file descriptor, and every simple command one of
+    READ_ONLY_TOOLS without its writing options."""
+    if any(s in command for s in ("`", "$(", "<(", ">(", "<<")):
+        return False
+    try:
+        lex = shlex.shlex(unquoted_newlines_to_semicolons(command), posix=True, punctuation_chars="();<>|&")
+        lex.whitespace_split = True
+        tokens = list(lex)
+    except ValueError:
+        return False
+    words, i, env = [], 0, {"HOME": os.path.expanduser("~")}
+    while i <= len(tokens):
+        t = tokens[i] if i < len(tokens) else ";"
+        i += 1
+        if t in (";", "&&", "||", "|"):
+            if not read_only_simple(words, env):
+                return False
+            words = []
+        elif t and set(t) <= set("();<>|&"):
+            nxt = tokens[i] if i < len(tokens) else ""
+            if t == "<" or (t in (">", ">>", "&>", "&>>") and nxt == "/dev/null") or (t == ">&" and nxt.isdigit()):
+                i += 1
+            else:
+                return False
+        else:
+            words.append(t)
+    return True
+
+
+def names_plugins_only(inp, hit):
+    """True when a Bash call's only guarded hit is ~/.claude/plugins: no guard word, and none of the other
+    guarded paths (this plugin, its data, the settings) named."""
+    tool, ti = inp.get("tool_name") or "", inp.get("tool_input") or {}
+    command = str(ti.get("command") or "")
+    plugins = os.path.join(os.path.expanduser("~"), ".claude", "plugins")
+    dirs = {os.path.abspath(plugins), os.path.realpath(plugins)}
+    return (
+        tool == "Bash"
+        and hit in dirs
+        and not GUARD_WORDS.search(command)
+        and not any(names_path(command, p) for p in guarded_paths(project_of(inp)) if p not in dirs)
+    )
+
+
 def guard_hit(inp):
     """The guarded path or word a tool call names, if any. Bash commands are matched as text, so a path
-    spelled `~/.claude/plugins` or `$HOME/.claude/plugins` counts too; reading tools and the plugin's own
-    commands (own_command) stay free, and a plain call of an installed plugin script (installed_script) is
+    spelled `~/.claude/plugins` or `$HOME/.claude/plugins` counts too; reading tools, a structured result
+    and the plugin's own commands (own_command) stay free, as does a Bash command that only reads other
+    plugins' files (read_only_command); a plain call of an installed plugin script (installed_script) is
     matched on its arguments alone."""
     tool, ti = inp.get("tool_name") or "", inp.get("tool_input") or {}
-    if tool in ("Read", "Glob", "Grep", "LS"):
+    if tool in ("Read", "Glob", "Grep", "LS", "StructuredOutput"):
         return None
     if tool == "Bash" and own_command(str(ti.get("command") or "")):
         return None
@@ -2118,6 +2283,8 @@ def guard_hit(inp):
         return None
     for p in guarded_paths(project_of(inp)):
         if names_path(text, p):
+            if args is None and names_plugins_only(inp, p) and read_only_command(str(ti.get("command") or "")):
+                return None
             return p
     m = GUARD_WORDS.search(text) if tool == "Bash" else None
     return m.group(0) if m else None
@@ -2143,14 +2310,7 @@ def guard_reason(inp, hit):
     own = own_call_attempt(command) if tool == "Bash" else None
     if own:
         return OWN_COMMAND_ALONE.format(own)
-    plugins = os.path.join(os.path.expanduser("~"), ".claude", "plugins")
-    dirs = {os.path.abspath(plugins), os.path.realpath(plugins)}
-    if (
-        tool == "Bash"
-        and hit in dirs
-        and not GUARD_WORDS.search(command)
-        and not any(names_path(command, p) for p in guarded_paths(project_of(inp)) if p not in dirs)
-    ):
+    if names_plugins_only(inp, hit):
         return PLUGINS_READ_HINT.format(hit)
     return GUARD_DENIED.format(hit)
 
