@@ -1279,7 +1279,8 @@ def outside(path, start):
 
 
 def stay_roots(option=option):
-    """The start directories a session never leaves (`stay_roots`): it reaches its work from there by absolute path."""
+    """The start directories a session never leaves (`stay_roots`): it reaches its work from there by absolute path.
+    A lone space or comma turns them off (an empty value falls back to the default)."""
     return [os.path.realpath(os.path.expanduser(p)) for p in re.split(r"[\s,]+", option("stay_roots")) if p]
 
 
@@ -1291,7 +1292,7 @@ def stay_notice(path, cwd, added, gone):
             "where it stays: work from there, and reach the repo's main checkout by absolute path."
         )
     reach = f"`git -C {path}` and absolute paths"
-    if not outside(path, cwd):
+    if not outside(path, os.path.join(cwd, "apps")):
         reach += ", `ge -s <service> -w <branch>` for an app's worktree"
     notice = (
         f"This session started in {cwd}, where it stays, and the handover's work is in {path}: never `cd` there, "
@@ -1330,8 +1331,6 @@ def workdir_notice(text, cwd, added=False, roots=None):
             f"The working directory the handover names, {path}, no longer exists: start with one plain `cd` to the "
             "repo's main checkout, a Bash call of its own, before any git command."
         )
-    if here and os.path.realpath(path) == here:
-        return ""
     cd = f"one plain `cd {path}`, a Bash call of its own"
     if not outside(path, here):
         return f"This session started in {cwd}, and the handover's work is in {path}: start with {cd}."

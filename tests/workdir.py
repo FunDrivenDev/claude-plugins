@@ -9,6 +9,8 @@ import tempfile
 import unittest
 
 HOME = tempfile.mkdtemp()
+for key in ("CLAUDE_CONFIG_DIR", "CLAUDE_PLUGIN_OPTION_STAY_ROOTS"):
+    os.environ.pop(key, None)
 os.environ.update(HOME=HOME, CLAUDE_PLUGIN_DATA=os.path.join(HOME, "data"))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "plugins", "handover", "scripts"))
 
@@ -120,6 +122,14 @@ class Workdir(unittest.TestCase):
             [os.path.realpath(os.path.join(HOME, "Code/Guest-Suite/guest-environment")), "/x"],
         )
         self.assertEqual(H.stay_roots(), [os.path.realpath(os.path.join(HOME, "Code/Guest-Suite/guest-environment"))])
+        self.assertEqual(H.stay_roots(lambda key: " "), [])
+
+    def test_the_ge_hint_only_for_an_app_under_the_root_s_apps(self):
+        pkg = os.path.join(HOME, "pkg")
+        os.makedirs(pkg, exist_ok=True)
+        notice = H.workdir_notice(handover(f"`{pkg}`"), HOME + "/", roots=[HOME])
+        self.assertIn(f"`git -C {pkg}`", notice)
+        self.assertNotIn("`ge -s", notice)
 
     def test_an_old_handover_without_the_section_is_told_nothing(self):
         self.assertEqual(H.workdir_notice("# Handover: x\n", HOME), "")
