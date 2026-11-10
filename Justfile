@@ -32,7 +32,7 @@ versions:
 bump plugin level:
     mise exec -- scripts/bump.sh {{plugin}} {{level}}
 
-# CI's verdict from the results of the jobs ci-ok needs: green when each one succeeded or was skipped.
+# CI's verdict from the results of the jobs required-checks needs: green when each one succeeded or was skipped.
 ci-verdict *results:
     scripts/ci-verdict.sh {{ results }}
 

@@ -1,11 +1,15 @@
-# Continuous integration, run by hand only: `just lint` and `just test`, with the
-# toolchain from mise.toml. The git hooks are the CI (hk.pkl: `just lint` before a
-# commit, `just check` before a push). The smoke tests also run on macOS, whose
-# /bin/bash 3.2 is what most colleagues' status lines run under.
+# Continuous integration, run by hand and on Renovate's pull requests, which no
+# laptop checks: `just lint` and `just test`, with the toolchain from mise.toml. The
+# git hooks are the CI (hk.pkl: `just lint` before a commit, `just check` before a
+# push). The smoke tests also run on macOS, whose /bin/bash 3.2 is what most
+# colleagues' status lines run under.
 name: CI
 
 on:
   workflow_dispatch:
+  # Renovate's pull requests, which no laptop checks: each job runs on them alone
+  # (`if:` below), a human pull request runs none.
+  pull_request:
 
 permissions:
   contents: read
@@ -21,6 +25,7 @@ env:
 jobs:
   lint:
     name: Lint (just lint)
+    if: github.event_name != 'pull_request' || github.event.pull_request.user.login == 'renovate[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -34,6 +39,7 @@ jobs:
 
   test:
     name: Smoke tests (just test, ${{ matrix.os }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.user.login == 'renovate[bot]'
     strategy:
       fail-fast: false
       matrix:
@@ -53,12 +59,12 @@ jobs:
           if [ "$RUNNER_OS" = Linux ]; then sudo apt-get install -y tmux; else brew install tmux; fi
       - run: just test
 
-  ci-ok:
-    name: ci-ok
+  required-checks:
+    name: required-checks
     needs: [lint, test]
-    # always(), not !cancelled(): a cancelled run must fail ci-ok, not skip it
+    # always(), not !cancelled(): a cancelled run must fail required-checks, not skip it
     # (GitHub counts a skipped required check as passing).
-    if: always()
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.user.login == 'renovate[bot]')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

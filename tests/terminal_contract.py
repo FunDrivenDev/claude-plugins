@@ -9,6 +9,7 @@ the real one (2026-11-05), which logs what it is sent. The cases go through `han
 
 import json
 import os
+import pathlib
 import shutil
 import subprocess
 import sys
@@ -113,7 +114,9 @@ class TmuxHost:
     """A private tmux server, on its own socket and without the user's config."""
 
     def __init__(self):
-        self.socket = f"handover-contract-{os.getpid()}"
+        # One server per test class: a new-session on a name whose server another class just killed can reach it
+        # while it shuts down ("server exited unexpectedly").
+        self.socket = f"handover-contract-{os.getpid()}-{type(self).__name__}"
         self.options = {}
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(LEAKS)}
 
@@ -132,7 +135,10 @@ class TmuxHost:
         self.tmux("new-session", "-d", "-s", "host", "-x", "100", "-y", "30", "sleep 600")
 
     def stop(self):
+        path = self.tmux("display-message", "-p", "#{socket_path}")
         self.tmux("kill-server")
+        # kill-server leaves the socket file behind in tmux's directory.
+        pathlib.Path(path).unlink(missing_ok=True)
 
     def spawn(self, command, label=None):
         named = ["-n", label] if label else []
