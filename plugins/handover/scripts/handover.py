@@ -1814,10 +1814,11 @@ def afk_end(st, sid, kind, reason):
 
 
 def blocked_by_refusal(st, last):
-    """An `AFK blocked:` line from a session whose refused subagent became the handover's focus: a fresh session
-    starts it, so the run does not wait for the user. A refusal the handover does not carry overrules nothing."""
+    """An `AFK blocked:` line from a session refused a subagent during its wind-down, before its handover was
+    written: a fresh session can start it, so the run does not wait for the user. A refusal once the handover is
+    written overrules nothing."""
     ends = AFK_END_RE.findall(last or "")
-    return bool(ends) and ends[-1][0].lower() == "blocked" and bool(st.get("focus_at")) and afk_goes_on(st)
+    return bool(ends) and ends[-1][0].lower() == "blocked" and bool(st.get("refused_open")) and afk_goes_on(st)
 
 
 def afk_declared_end(st, sid, last):
@@ -2586,10 +2587,12 @@ def on_pre_tool_use(inp):
         with S.locked(sid) as st:
             st["agents_refused"] = st.get("agents_refused", 0) + 1
             st["refused_call"] = refused_call(tool, ti)
-            if afk_goes_on(st) and not st.get("focus") and focus_open(st):
+            if afk_goes_on(st) and focus_open(st):
                 # Refused here, the work would wait for the user: the next session starts with it instead.
-                st["focus"], st["focus_at"] = refused_focus(st), time.time()
-                reason = AFK_AGENT_HANDOVER
+                st["refused_open"] = True
+                if not st.get("focus"):
+                    st["focus"], st["focus_at"] = refused_focus(st), time.time()
+                    reason = AFK_AGENT_HANDOVER
     afk = afk_active(st)
     if not reason and afk and yolo_on(afk, inp):
         hit = guard_hit(inp)

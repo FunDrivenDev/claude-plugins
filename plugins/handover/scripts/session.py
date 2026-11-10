@@ -61,6 +61,7 @@ COMPACTED = (
     "focus_at",
     "agents_refused",
     "refused_call",
+    "refused_open",
 )
 # Due again at a handover asked for after an earlier one.
 CLOSING = ("reply_due", "reply_reminded", "held_since", "reply_offset", "resume")
@@ -219,7 +220,9 @@ def requested(st):
     for k in CLOSING:
         st.pop(k, None)
     if replied(st):
-        # Past the closing reply, the relay's end included: the handover and the reply are due again.
+        # Past the closing reply, the relay's end included: the handover and the reply are due again, and an
+        # earlier refusal no longer overrules a block.
+        st.pop("refused_open", None)
         enter(st, WINDING_DOWN)
 
 
