@@ -1,7 +1,7 @@
 {
   "name": "handover",
   "description": "Hand a session over to a fresh one before its context fills up: a separate model writes the handover from the transcript, /clear loads it",
-  "version": "0.32.1",
+  "version": "0.33.0",
   "author": {
     "name": "FunDrivenDev",
     "url": "https://github.com/FunDrivenDev"
@@ -105,6 +105,12 @@
       "title": "Terminal command",
       "description": "With terminal set to command: what sh runs for each terminal verb, with HANDOVER_VERB (type_text, press_enter, clear_input, set_title, ring, report_status), HANDOVER_TEXT and HANDOVER_STATE in its environment; a non-zero exit means not done. AImux example: docs/relay.md",
       "default": ""
+    },
+    "stay_roots": {
+      "type": "string",
+      "title": "Stay roots",
+      "description": "Start directories a session never leaves, separated by spaces or commas (~ allowed): a relayed session started at one reaches the handover's working directory by absolute path instead of a cd",
+      "default": "~/Code/Guest-Suite/guest-environment"
     }
   }
 }

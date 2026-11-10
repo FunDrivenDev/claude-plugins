@@ -1,6 +1,7 @@
 """Unit tests of the working directory a relayed session is told to work from (handover_workdir and
 workdir_notice in scripts/handover.py): the handover's Working directory section names it, the session is told
-to `cd` there when it starts elsewhere, and to go to the main checkout when the directory is gone."""
+to `cd` there when it starts elsewhere, and to go to the main checkout when the directory is gone; a session started
+at a stay root stays there and reaches the directory by absolute path."""
 
 import os
 import sys
@@ -78,6 +79,47 @@ class Workdir(unittest.TestCase):
         notice = H.workdir_notice(handover(f"`{GONE}`"), HOME)
         self.assertIn(f"It sat inside {HOME}, where this session started: work from there.", notice)
         self.assertNotIn("main checkout", notice)
+
+    def test_a_session_at_a_stay_root_stays_and_reaches_the_worktree_by_path(self):
+        app = os.path.join(HOME, "apps", "worktree-api-x")
+        os.makedirs(app, exist_ok=True)
+        notice = H.workdir_notice(handover(f"`{app}`"), HOME, added=True, roots=[HOME])
+        self.assertIn("where it stays", notice)
+        self.assertIn(f"`git -C {app}`", notice)
+        self.assertIn("`ge -s <service> -w <branch>`", notice)
+        self.assertNotIn(f"`cd {app}`", notice)
+        self.assertNotIn("/add-dir", notice)
+
+    def test_a_stay_root_session_reaches_a_sibling_repo_by_path_after_the_relay_s_add_dir(self):
+        start = os.path.join(HOME, "repo")
+        os.makedirs(start, exist_ok=True)
+        notice = H.workdir_notice(handover(f"`{WORKTREE}`"), start, added=True, roots=[start])
+        self.assertIn(f"`git -C {WORKTREE}`", notice)
+        self.assertIn("`/add-dir`", notice)
+        self.assertNotIn(f"`cd {WORKTREE}`", notice)
+        self.assertNotIn("`ge -s", notice)
+        loop = H.workdir_notice(handover(f"`{WORKTREE}`"), start, roots=[start])
+        self.assertIn(f"`/add-dir {WORKTREE}`", loop)
+        self.assertNotIn(f"`cd {WORKTREE}`", loop)
+
+    def test_a_stay_root_session_stays_when_the_worktree_is_gone(self):
+        start = os.path.join(HOME, "repo")
+        os.makedirs(start, exist_ok=True)
+        for cwd in (HOME, start):
+            notice = H.workdir_notice(handover(f"`{GONE}`"), cwd, roots=[cwd])
+            self.assertIn("no longer exists", notice)
+            self.assertIn("where it stays", notice)
+            self.assertNotIn("`cd", notice)
+
+    def test_a_stay_root_session_already_there_is_told_nothing(self):
+        self.assertEqual(H.workdir_notice(handover(f"`{HOME}`"), HOME, roots=[HOME]), "")
+
+    def test_the_stay_roots_option_defaults_to_guest_environment(self):
+        self.assertEqual(
+            H.stay_roots(lambda key: "~/Code/Guest-Suite/guest-environment, /x"),
+            [os.path.realpath(os.path.join(HOME, "Code/Guest-Suite/guest-environment")), "/x"],
+        )
+        self.assertEqual(H.stay_roots(), [os.path.realpath(os.path.join(HOME, "Code/Guest-Suite/guest-environment"))])
 
     def test_an_old_handover_without_the_section_is_told_nothing(self):
         self.assertEqual(H.workdir_notice("# Handover: x\n", HOME), "")
