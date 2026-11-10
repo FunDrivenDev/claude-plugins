@@ -2199,8 +2199,8 @@ def sed_read_only(args):
 
 
 # An unquoted glob character, marked before shlex drops the quotes: a glob can expand to a file named like an
-# option (`-dele*` to `-delete`). Claude Code's zsh runs with `extendedglob`: `^`, `#` and a `~` inside a word
-# are glob operators too.
+# option (`-dele*` to `-delete`). `^`, `#` and a `~` inside a word are glob operators too once zsh's `extendedglob`
+# is set (Claude Code unsets it, a user's setting may not), so they are marked all the same.
 GLOB_MARKS = {"*": "\ue001", "?": "\ue002", "[": "\ue003", "^": "\ue004", "#": "\ue005", "~": "\ue006"}
 # An unquoted `$`, marked too: bash splits what its variable holds into several words.
 DOLLAR_MARK = "\ue007"
@@ -2209,6 +2209,9 @@ DOLLAR_MARK = "\ue007"
 # is never taken for one.
 FD_MARK = "\ue008"
 FD_RE = re.compile(r"[0-9](?=[<>])")
+# Digits that bash and zsh split differently: zsh reads `2&>` as a descriptor and `12>` as an argument, bash the
+# other way round. Either reading may hand a command an option the other hides (`printf 2&>/dev/null -v PATH …`).
+FD_EITHER_RE = re.compile(r"[0-9]+(?=&>)|[0-9]{2,}(?=[<>])")
 # A quoted or escaped operator character, marked too: shlex gives `';'`, `\;` and `'<'` as the operator itself, where
 # the shell passes a word (`find x '<' -delete` is one command).
 OPERATOR_MARKS = {c: chr(0xE010 + n) for n, c in enumerate("();<>|&")}
@@ -2219,11 +2222,14 @@ UNMARK = str.maketrans(
 
 def unquoted_newlines_to_semicolons(command):
     """The command with its unquoted newlines made `;`, its unquoted glob characters and `$` marked (GLOB_MARKS,
-    DOLLAR_MARK), and its quoted or escaped operator characters marked (OPERATOR_MARKS)."""
+    DOLLAR_MARK), and its quoted or escaped operator characters marked (OPERATOR_MARKS). Raises ValueError on
+    digits bash and zsh split differently before a redirection (FD_EITHER_RE)."""
     out, quote, escaped, start = [], None, False, True
     for i, c in enumerate(command):
         # A word starts after an unquoted, unescaped blank or operator character only (`x\ 2>` is one word).
         opens, start = start and not (quote or escaped), not (quote or escaped) and c in " \t\n;&|()"
+        if opens and FD_EITHER_RE.match(command, i):
+            raise ValueError("a descriptor bash and zsh read differently")
         if opens and FD_RE.match(command, i):
             out.append(FD_MARK)
             continue

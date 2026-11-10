@@ -244,7 +244,7 @@ class ReadOnlyBash(unittest.TestCase):
             f"sort {INDEX} *",
             f"READNULLCMD=sh; < /tmp/evil.sh; ls {KNOWLEDGE}",
             f"sed -ne '1w {INDEX}' {INDEX}",
-            # The fourth review's bypasses (zsh with extendedglob, as Claude Code runs it, and bash).
+            # The fourth review's bypasses (zsh with extendedglob, as a user's setting may run it, and bash).
             f"XY=a/-delete; find {KNOWLEDGE} $XY:t",
             f"find {KNOWLEDGE} -deletee#",
             f"find {KNOWLEDGE} ^pl",
@@ -347,6 +347,10 @@ class ReadOnlyBash(unittest.TestCase):
             f"cat {INDEX}; git -C /tmp config a.b <-> /dev/null",
             f"cat {INDEX}; git -C /tmp branch <1-9>>/dev/null",
             f"cat {INDEX}; git -C /tmp branch x<-3>y",
+            # The seventeenth review: zsh reads `2&>` as a descriptor (an option behind it is printf's), bash `12>`.
+            f"cat {INDEX}; printf 2&>/dev/null -v PATH %s /tmp/evil/bin:/usr/bin:/bin; cat {INDEX}",
+            f"cat {INDEX}; printf 2&>>/dev/null -v IFS %s x; cat {INDEX}",
+            f"cat {INDEX}; printf 12>/dev/null -v PATH %s /tmp/evil/bin; cat {INDEX}",
             # The eighth review: git runs what a repository's own config names (gpg.program for a plain `log` with
             # log.showSignature, core.fsmonitor for ls-files or a `:path`): no git on a repository among the plugins.
             f"git -C {KNOWLEDGE} log -3 --oneline",
