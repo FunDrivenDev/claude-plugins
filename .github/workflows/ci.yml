@@ -59,10 +59,10 @@ jobs:
           if [ "$RUNNER_OS" = Linux ]; then sudo apt-get install -y tmux; else brew install tmux; fi
       - run: just test
 
-  ci-ok:
-    name: ci-ok
+  required-checks:
+    name: required-checks
     needs: [lint, test]
-    # always(), not !cancelled(): a cancelled run must fail ci-ok, not skip it
+    # always(), not !cancelled(): a cancelled run must fail required-checks, not skip it
     # (GitHub counts a skipped required check as passing).
     if: always() && (github.event_name != 'pull_request' || github.event.pull_request.user.login == 'renovate[bot]')
     runs-on: ubuntu-24.04

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI's one verdict, from the results of the jobs the ci-ok job needs (success,
+# CI's one verdict, from the results of the jobs the required-checks job needs (success,
 # skipped, failure, cancelled). A skipped job is fine: the change did not need
 # it. A failed or cancelled one fails the whole run.
 set -euo pipefail
