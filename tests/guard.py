@@ -355,6 +355,9 @@ class ReadOnlyBash(unittest.TestCase):
             f"cat {INDEX}; git -C /tmp config --global k.x >&-''",
             f'cat {INDEX}; git -C /tmp config --local user.name 2>&-""',
             f"find {KNOWLEDGE} -delete\0x",
+            # The nineteenth review: blanks between `>&` and `-` change nothing for bash.
+            f"cat {INDEX}; git -C /tmp config --global k.x >& -''",
+            f'cat {INDEX}; git -C /tmp config --global k.x 2>&\t-""',
             # The eighth review: git runs what a repository's own config names (gpg.program for a plain `log` with
             # log.showSignature, core.fsmonitor for ls-files or a `:path`): no git on a repository among the plugins.
             f"git -C {KNOWLEDGE} log -3 --oneline",

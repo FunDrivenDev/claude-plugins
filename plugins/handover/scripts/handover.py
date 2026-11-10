@@ -2448,11 +2448,11 @@ def read_only_command(command):
     READ_ONLY_TOOLS without its writing options."""
     # ANSI-C and locale quoting (`$'…'`, `$"…"`), a line continuation and a carriage return (a blank to shlex, a
     # word's character to the shell) are read otherwise by shlex than by bash.
-    # bash lexes `>&-` as one token, so a quote glued to it (`>&-''`) is an empty argument more; zsh reads `-''` as
-    # `-`. A NUL byte ends zsh's word where Python's goes on.
+    # bash lexes the `-` after `>&` (blanks between them too) as a token of its own, so a quote glued to it
+    # (`>&-''`, `>& -''`) is an empty argument more; zsh reads `-''` as `-`. A NUL byte ends zsh's word where Python's goes on.
     if (
         any(s in command for s in ("`", "$(", "<(", ">(", "<<", "$'", '$"', "\\\n", "\r", "\0"))
-        or re.search(r">&-(?![\s;&|()<>]|$)", command)
+        or re.search(r">&[ \t]*-(?![\s;&|()<>]|$)", command)
         or unsafe_expansions(command)
     ):
         return False
