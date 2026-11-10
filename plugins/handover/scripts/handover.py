@@ -378,7 +378,12 @@ def compaction_conflict(cfg, cwd):
 
 def needs_refresh(st, tokens):
     written = st.get("written") or {}
-    return not written.get("ok") or abs(tokens - written.get("tokens", 0)) > config()["refresh"]
+    # A focus set after the handover was written (a refused subagent's) is not in it.
+    return (
+        not written.get("ok")
+        or st.get("focus_at", 0) > written.get("at", 0)
+        or abs(tokens - written.get("tokens", 0)) > config()["refresh"]
+    )
 
 
 # Starts the command in a session of its own, prints its pid and exits: the command is no longer the hook's child.
@@ -2596,7 +2601,7 @@ def on_pre_tool_use(inp):
             st["refused_call"] = refused_call(tool, ti)
             if afk_goes_on(st) and not st.get("focus") and focus_open(st):
                 # Refused here, the work would wait for the user: the next session starts with it instead.
-                st["focus"] = refused_focus(st)
+                st["focus"], st["focus_at"] = refused_focus(st), time.time()
                 reason = AFK_AGENT_HANDOVER
     afk = afk_active(st)
     if not reason and afk and yolo_on(afk, inp):

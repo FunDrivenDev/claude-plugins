@@ -131,6 +131,15 @@ class RefusedSubagent(unittest.TestCase):
                 self.assertEqual(refuse(sid), H.NO_NEW_AGENT)
                 self.assertNotIn("focus", state(sid))
 
+    def test_a_focus_set_after_the_handover_was_written_has_it_written_again(self):
+        session("a9")
+        wind_down("a9")
+        with S.locked("a9") as st:
+            st["written"] = {"ok": True, "at": time.time() - 10, "tokens": 260_000}
+            self.assertFalse(H.needs_refresh(st, 260_000))
+        refuse("a9")
+        self.assertTrue(H.needs_refresh(state("a9"), 260_000))
+
     def test_a_compaction_drops_the_focus_of_the_handover_it_loaded(self):
         session("a8", focus="Old step.")
         with S.locked("a8") as st:
@@ -162,6 +171,14 @@ class BlockedByRefusal(unittest.TestCase):
         out = stop("b3", "AFK blocked: the user must pick a design")
         self.assertNotIn("decision", out)
         self.assertEqual(state("b3")["afk"]["ended"], "blocked")
+
+    def test_a_refusal_before_a_compaction_does_not_overrule_a_later_block(self):
+        session("b5", agents_refused=1, refused_call={"call": "Workflow gs-dev-toolkit:review", "input": "{}"})
+        with S.locked("b5") as st:
+            S.compacted(st)
+        out = stop("b5", "AFK blocked: needs Raphael's 2FA code")
+        self.assertNotIn("decision", out)
+        self.assertEqual(state("b5")["afk"]["ended"], "blocked")
 
     def test_done_ends_the_run_even_after_a_refusal(self):
         session("b4", agents_refused=1)
