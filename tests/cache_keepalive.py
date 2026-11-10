@@ -156,10 +156,11 @@ class Hook(unittest.TestCase):
         transcript = self.data / "t.jsonl"
         transcript.write_text("{}\n")
         p = self.start("Stop", {"CACHE_KEEPALIVE_AFTER": "4"}, background_tasks=TASK, transcript_path=str(transcript))
+        self.armed()  # the grace counts from the hook's start, which a cold interpreter delays
         time.sleep(1.5)  # past the grace (AFTER / 4)
         with transcript.open("a") as f:
             f.write('{"type": "assistant"}\n')
-        p.wait(timeout=2)
+        p.wait(timeout=10)  # past AFTER: a hook that does not cancel fails on its exit code, not a timeout
         self.assertEqual((p.returncode, p.stderr.read()), (0, ""))
 
     def test_a_quiet_transcript_still_wakes(self):

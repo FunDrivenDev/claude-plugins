@@ -113,7 +113,9 @@ class TmuxHost:
     """A private tmux server, on its own socket and without the user's config."""
 
     def __init__(self):
-        self.socket = f"handover-contract-{os.getpid()}"
+        # One server per test class: a new-session on a name whose server another class just killed can reach it
+        # while it shuts down ("server exited unexpectedly").
+        self.socket = f"handover-contract-{os.getpid()}-{type(self).__name__}"
         self.options = {}
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(LEAKS)}
 
