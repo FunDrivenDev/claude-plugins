@@ -2197,15 +2197,16 @@ def sed_read_only(args):
 
 
 # An unquoted glob character, marked before shlex drops the quotes: a glob can expand to a file named like an
-# option (`-dele*` to `-delete`).
-GLOB_MARKS = {"*": "\ue001", "?": "\ue002", "[": "\ue003"}
+# option (`-dele*` to `-delete`). Claude Code's zsh runs with `extendedglob`: `^`, `#` and a `~` inside a word
+# are glob operators too.
+GLOB_MARKS = {"*": "\ue001", "?": "\ue002", "[": "\ue003", "^": "\ue004", "#": "\ue005", "~": "\ue006"}
 UNMARK = str.maketrans({v: k for k, v in GLOB_MARKS.items()})
 
 
 def unquoted_newlines_to_semicolons(command):
     """The command with its unquoted newlines made `;` and its unquoted glob characters marked (GLOB_MARKS)."""
     out, quote, escaped = [], None, False
-    for c in command:
+    for i, c in enumerate(command):
         if escaped:
             escaped = False
         elif c == "\\" and quote != "'":
@@ -2216,7 +2217,8 @@ def unquoted_newlines_to_semicolons(command):
             quote = c
         elif c == "\n":
             c = ";"
-        elif c in GLOB_MARKS:
+        elif c in GLOB_MARKS and not (c == "~" and (i == 0 or command[i - 1] in " \t\n;&|()<>=:")):
+            # A `~` opening a word (or a value, `X=~/a`) is the home directory.
             c = GLOB_MARKS[c]
         out.append(c)
     return "".join(out)
@@ -2224,6 +2226,9 @@ def unquoted_newlines_to_semicolons(command):
 
 # Commands whose options can write or run something: a variable among their words must be known.
 OPTION_WRITERS = {"find", "sed", "sort", "tail", "rg", "git", "file"}
+# `printf -v` and `test -v` assign or evaluate: a glob, or a word opening on an unknown variable, may become `-v`.
+ARG_EVALUATORS = {"printf", "test", "["}
+LEADING_VAR = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 VAR_RE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 # A `$` that VAR_RE leaves: a special parameter (`$_`, `$1`, `$@`…) or an expansion with an operator (`${X:=…}`).
 LEFT_EXPANSION = re.compile(r"\$[\w{@*#?$!-]")
@@ -2276,7 +2281,8 @@ def unsafe_expansions(command):
         if quote == "'":
             quote = None if c == "'" else quote
         elif c == "$":
-            m = re.match(r"\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*(?![\[:]))", command[i:])
+            # The lookahead takes `\w` too, so that `$XY:t` cannot backtrack to `$X`.
+            m = re.match(r"\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*(?![\w\[:]))", command[i:])
             if not m:
                 return True
             i += len(m.group(0))
@@ -2320,9 +2326,15 @@ def read_only_simple(words, env, trusted=frozenset({"HOME"})):
     if words[:1] == ["for"]:
         # `for x in <words>`: its words only expand, substitutions being refused upstream; the loop variable
         # gets values the parse does not follow, and must not be one the shell reads (`for IFS`, `for PATH`).
-        name = words[1] if len(words) > 1 else ""
-        env.pop(name, None)
-        return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)) and not unsafe_assignment(name)
+        # zsh takes several names (`for x PATH in …`); a `for` without `in` would hide its body.
+        if "in" not in words:
+            return False
+        names = words[1 : words.index("in")]
+        for name in names:
+            env.pop(name, None)
+        return bool(names) and all(
+            re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", n) and not unsafe_assignment(n) for n in names
+        )
     # A lone `[` is the test command, no glob.
     globbed = any(set(w) & set(GLOB_MARKS.values()) for w in words if w != GLOB_MARKS["["])
     words = [w.translate(UNMARK) for w in words]
@@ -2357,6 +2369,10 @@ def read_only_simple(words, env, trusted=frozenset({"HOME"})):
                 for w, e in zip(words, expanded)
             )
         )
+    ):
+        return False
+    if expanded[0] in ARG_EVALUATORS and (
+        globbed or any((m := LEADING_VAR.match(w)) and (m.group(1) or m.group(2)) not in env for w in words[1:])
     ):
         return False
     cmd, args = expanded[0], [w if w is not None else "" for w in expanded[1:]]

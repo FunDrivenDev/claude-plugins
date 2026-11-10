@@ -156,6 +156,8 @@ class ReadOnlyBash(unittest.TestCase):
             f"sed -ne 1p {INDEX}",
             f"find {KNOWLEDGE} -name '*.md' -print",
             f"[ -f {INDEX} ] && cat {INDEX}",
+            f"cat {KNOWLEDGE}/*.md",
+            f"git -C {KNOWLEDGE} log -3 --oneline",
             "grep -rn 'qgate' $HOME/.claude/plugins/cache 2>&1 | head -5",
         ):
             self.assertIsNone(hit(command), command)
@@ -229,6 +231,17 @@ class ReadOnlyBash(unittest.TestCase):
             f"sort {INDEX} *",
             f"READNULLCMD=sh; < /tmp/evil.sh; ls {KNOWLEDGE}",
             f"sed -ne '1w {INDEX}' {INDEX}",
+            # The fourth review's bypasses (zsh with extendedglob, as Claude Code runs it, and bash).
+            f"XY=a/-delete; find {KNOWLEDGE} $XY:t",
+            f"find {KNOWLEDGE} -deletee#",
+            f"find {KNOWLEDGE} ^pl",
+            f"find {KNOWLEDGE} -delete~x",
+            f"for x PATH in a pbin; do cat {INDEX}; done",
+            f"for x do cat {INDEX}; done",
+            f"for x in -v; do printf $x PATH pbin; cat {INDEX}; done",
+            f"printf *; cat {INDEX}",
+            f"test *; cat {INDEX}",
+            f"[ * ]; cat {INDEX}",
         ):
             self.assertIsNotNone(hit(command), command)
 
