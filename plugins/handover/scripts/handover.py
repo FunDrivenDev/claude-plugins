@@ -2102,6 +2102,8 @@ def names_path(text, path):
 
 # Shell words that run nothing themselves: the next simple command follows them.
 SHELL_KEYWORDS = {"if", "then", "else", "elif", "fi", "do", "done", "while", "until", "!", "{", "}"}
+# Any of these words in a statement leaves every later assignment untrusted: it may sit in a body that never runs.
+BLOCK_WORDS = SHELL_KEYWORDS | {"for", "case", "esac", "select", "repeat", "in", "foreach", "end"}
 # Commands that only read their files and print; read_only_simple refuses their writing options.
 READ_ONLY_TOOLS = {
     "git",
@@ -2436,23 +2438,24 @@ def read_only_command(command):
     except ValueError:
         return False
     words, i, env, trusted = [], 0, {"HOME": os.path.expanduser("~")}, trusted_names(command)
-    redirected, sep, depth = False, ";", 0
+    redirected, sep, blocks = False, ";", False
     while i <= len(tokens):
         t = tokens[i] if i < len(tokens) else ";"
         i += 1
         if t in (";", "&&", "||", "|"):
             # A redirection without a command (`< file`) runs zsh's READNULLCMD (`more`, then `less` and LESSOPEN).
-            # An assignment behind `&&`/`||`, in a pipeline (a subshell) or in a block's body may never run: the
-            # variable is then empty, and an unquoted empty `$X` vanishes and shifts the words after it.
-            first = words[0] if words else ""
-            depth += first in ("if", "for", "while", "until", "case", "{")
-            maybe = sep != ";" or t != ";" or depth > 0 or first in SHELL_KEYWORDS
-            depth -= first in ("fi", "done", "esac", "}")
+            # An assignment behind `&&`/`||`, in a pipeline (a subshell), with a redirection (zsh skips it when
+            # the redirection fails) or after any block keyword (quoted ones too: no count of the nesting is
+            # trusted) may never run: the variable is then empty, and an unquoted empty `$X` vanishes and shifts
+            # the words after it. An assignment before `&&` always runs.
+            blocks = blocks or any(w in BLOCK_WORDS for w in words)
+            maybe = sep != ";" or t == "|" or blocks or redirected
             if (redirected and not [w for w in words if w not in SHELL_KEYWORDS]) or not read_only_simple(
                 words, env, set() if maybe else trusted
             ):
                 return False
-            words, redirected, sep = [], False, t
+            # An empty statement (`&& ⏎`) keeps the separator before it.
+            words, redirected, sep = [], False, t if words else sep
         elif t and set(t) <= set("();<>|&"):
             nxt = tokens[i] if i < len(tokens) else ""
             if (

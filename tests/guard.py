@@ -164,6 +164,9 @@ class ReadOnlyBash(unittest.TestCase):
             f"printf '%s\\n' {INDEX}; printf '%-20s|%b%%' a b",
             f"cat < {INDEX}",
             f'K={KNOWLEDGE}; for f in php.md; do test -f "$K/$f" && head -5 "$K/$f"; done',
+            # An assignment before `&&` always runs.
+            f"K={KNOWLEDGE} && find \"$K\" -name '*.md'",
+            f"R=/tmp && git -C $R log -1; cat {INDEX}",
         ):
             self.assertIsNone(hit(command), command)
 
@@ -307,6 +310,18 @@ class ReadOnlyBash(unittest.TestCase):
             f'cd {KNOWLEDGE}; [ a = b ] && X=/tmp; git -C "$X" ls-files',
             f"cd {KNOWLEDGE}; echo x >&\u0663",
             f"cat {INDEX}; if true; then < {INDEX}; fi",
+            # The twelfth review: a block's nesting is not counted (a keyword not first, or quoted, fooled it); an
+            # empty statement after `&&` keeps that separator; zsh skips an assignment whose redirection fails.
+            f"! until true; do true; X=p; done; sed -n -e $X 's/.*/x/w {INDEX}' {INDEX}",
+            (
+                f"if true; then while [ a = b ]; do true; done; fi; while [ a = b ]; do true; X=p; done; "
+                f"sed -n -e $X 's/.*/x/w {INDEX}' {INDEX}"
+            ),
+            f"while [ a = b ]; do true; 'done'; X=p; done; sed -n -e $X 's/.*/x/w {INDEX}' {INDEX}",
+            f"! for i in; X=p; sed -n -e $X 's/.*/x/w {INDEX}' {INDEX}",
+            f"[ a = b ] && \nX=p\nsed -n -e $X 's/.*/x/w {INDEX}' {INDEX}",
+            f"X=p </nonexistent; sed -n -e $X 's/.*/x/w {INDEX}' {INDEX}",
+            f"X=p >&9; sed -n -e $X 's/.*/x/w {INDEX}' {INDEX}",
             # The eighth review: git runs what a repository's own config names (gpg.program for a plain `log` with
             # log.showSignature, core.fsmonitor for ls-files or a `:path`): no git on a repository among the plugins.
             f"git -C {KNOWLEDGE} log -3 --oneline",
