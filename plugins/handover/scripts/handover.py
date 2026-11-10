@@ -2132,9 +2132,59 @@ READ_ONLY_TOOLS = {
     "sed",
     "git",
 }
-# A sed `w`/`W` (write a file) or `e` (run a command): alone, after a line address (`1w`, `$w`, `/re/w`), or
-# as an `s` flag.
-SED_WRITES = re.compile(r"(?:^|[;{}\n0-9$/,!~+]|[/#|,][gpiImMe0-9]*)\s*[wWe](?:\s|$)")
+# The sed scripts let through: `;`-separated commands `p d q n N =` or `s<d>…<d>…<d>` with the flags `g p I`
+# and a count, each after an optional line address (a number, `$` or `/re/`) or range, nothing else: no `w`,
+# `W`, `e`, `r` or `R`, whatever their spelling.
+SED_ADDR = r"(?:\d+|\$|/(?:[^/\\\n]|\\.)*/I?)"
+SED_PIECE = re.compile(
+    rf"\s*(?:{SED_ADDR}(?:\s*,\s*{SED_ADDR})?\s*!?\s*)?"
+    r"(?:[pdqnN=]|s(?P<d>[/|#,:@%])(?:(?!(?P=d))[^\\\n]|\\.)*(?P=d)(?:(?!(?P=d))[^\\\n]|\\.)*(?P=d)[gpI0-9]*)\s*"
+)
+SED_SHORT = set("nErsuz")
+SED_LONG = {"--quiet", "--silent", "--regexp-extended", "--posix", "--null-data", "--separate", "--unbuffered"}
+
+
+def sed_script_ok(script):
+    pos = 0
+    while True:
+        m = SED_PIECE.match(script, pos)
+        if not m:
+            return False
+        pos = m.end()
+        if pos == len(script):
+            return True
+        if script[pos] != ";":
+            return False
+        pos += 1
+        if pos == len(script):
+            return True
+
+
+def sed_read_only(args):
+    """sed with only known reading options and scripts from the allowlist (SED_PIECE)."""
+    scripts, rest, i = [], [], 0
+    while i < len(args):
+        a = args[i]
+        if a == "-e" and i + 1 < len(args):
+            scripts.append(args[i + 1])
+            i += 2
+            continue
+        if a.startswith("--expression="):
+            scripts.append(a.split("=", 1)[1])
+        elif a.startswith("--"):
+            if a not in SED_LONG:
+                return False
+        elif a.startswith("-") and len(a) > 1:
+            if not set(a[1:]) <= SED_SHORT:
+                return False
+        else:
+            rest.append(a)
+        i += 1
+    if not scripts:
+        if not rest:
+            return False
+        scripts = [rest[0]]
+    return all(sed_script_ok(sc) for sc in scripts)
 
 
 def unquoted_newlines_to_semicolons(command):
@@ -2160,6 +2210,64 @@ VAR_RE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*)
 # A `$` that VAR_RE leaves: a special parameter (`$_`, `$1`, `$@`…) or an expansion with an operator (`${X:=…}`).
 LEFT_EXPANSION = re.compile(r"\$[\w{@*#?$!-]")
 ASSIGNED = re.compile(r"(?:^|[;&|\s(])([A-Za-z_][A-Za-z0-9_]*)=")
+# Variables the shell reads itself (bash and zsh): assigning one changes how the next words split, which
+# programs run or what they load.
+SHELL_READS = {
+    "IFS",
+    "PATH",
+    "CDPATH",
+    "HOME",
+    "ENV",
+    "BASH_ENV",
+    "GLOBIGNORE",
+    "FPATH",
+    "PS4",
+    "PROMPT_COMMAND",
+    "ZDOTDIR",
+    "path",
+    "cdpath",
+    "fpath",
+    "manpath",
+    "module_path",
+    "mailpath",
+    "histchars",
+    "SHELLOPTS",
+    "BASHOPTS",
+    "POSIXLY_CORRECT",
+    "TMPDIR",
+}
+
+
+def unsafe_assignment(name):
+    return name in SHELL_READS or name in os.environ or name.startswith(("GIT_", "LD_", "DYLD_", "BASH_", "ZSH_"))
+
+
+def unsafe_expansions(command):
+    """True when the text holds, outside single quotes, a `$` other than a plain `$NAME` or `${NAME}` (zsh's
+    `$=X`, `${(e)X}`, `$X[…]`, bash's `${X@P}`, special parameters), or, outside any quotes, a `{` (brace
+    expansion such as `{-delete,-print}`, a group)."""
+    quote, i = None, 0
+    while i < len(command):
+        c = command[i]
+        if c == "\\" and quote != "'":
+            i += 2
+            continue
+        if quote == "'":
+            quote = None if c == "'" else quote
+        elif c == "$":
+            m = re.match(r"\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)(?!\[)", command[i:])
+            if not m:
+                return True
+            i += len(m.group(0))
+            continue
+        elif quote == '"':
+            quote = None if c == '"' else quote
+        elif c in "'\"":
+            quote = c
+        elif c == "{":
+            return True
+        i += 1
+    return False
 
 
 def trusted_names(command):
@@ -2194,6 +2302,10 @@ def read_only_simple(words, env, trusted=frozenset({"HOME"})):
     while words and re.match(r"[A-Za-z_][A-Za-z0-9_]*=", words[0]):
         assigned.append(words[0].split("=", 1))
         words = words[1:]
+    # `X=a cmd` hands X to cmd's environment (GIT_EXTERNAL_DIFF, RIPGREP_CONFIG_PATH…); a variable the shell
+    # reads itself (IFS, PATH) changes what the next words mean.
+    if (assigned and words) or any(unsafe_assignment(name) for name, _ in assigned):
+        return False
     for name, val in assigned:
         # Only a statement of its own sets the variable for what follows; `X=a cmd` sets it for cmd alone.
         val = expand_vars(val, env)
@@ -2224,6 +2336,11 @@ def read_only_simple(words, env, trusted=frozenset({"HOME"})):
     if cmd == "git":
         while args[:1] in (["-C"], ["--no-pager"]):
             args = args[2:] if args[0] == "-C" else args[1:]
+        # Any other option before the subcommand (`-c…`, `--config-env`, `--exec-path`) may run a program.
+        if args[:1] and args[0].startswith("-"):
+            return False
+        if any(a.startswith(("--ext-diff", "--textconv")) for a in args):
+            return False
         flags = {a for a in args if a.startswith("-")}
         if args[:1] == ["config"]:
             return len(args) - len(flags) == 2 and flags <= {"--get", "--get-all", "--global", "--local"}
@@ -2231,22 +2348,32 @@ def read_only_simple(words, env, trusted=frozenset({"HOME"})):
         return not any(a.startswith("--ou") for a in args) and readonly_git(args)
     if cmd == "find":
         return not any(a in FIND_WRITES for a in args)
+    # A short option may sit in a cluster (`-1f`, `-uoFILE`).
     if cmd == "tail":
-        return not any(a in ("-f", "-F") or a.startswith("--f") for a in args)
+        return not any(
+            a.startswith("--f") or (a.startswith("-") and not a.startswith("--") and any(c in a for c in "fF"))
+            for a in args
+        )
     if cmd == "sort":
         # GNU long options take any unambiguous prefix: `--o` is `--output`, `--co` `--compress-program`.
-        return not any(a.startswith(("-o", "--o", "--co")) for a in args)
+        return not any(
+            a.startswith(("--o", "--co")) or (a.startswith("-") and not a.startswith("--") and any(c in a for c in "o"))
+            for a in args
+        )
+    if cmd == "printf":
+        return not (args[:1] and args[0].startswith("-"))  # `printf -v X` assigns.
+    if cmd in ("test", "["):
+        return not any(a in ("-v", "-R") for a in args)  # `test -v 'a[$X]'` evaluates a subscript.
     if cmd == "file":
         return not any(a.startswith("--c") or (not a.startswith("--") and a.startswith("-") and "C" in a) for a in args)
     if cmd == "rg":
-        return not any(a.startswith(("--pre", "--search-zip", "-z")) for a in args)
+        return not any(
+            a.startswith(("--pre", "--search-zip", "--hostname-bin", "--hyperlink"))
+            or (a.startswith("-") and not a.startswith("--") and any(c in a for c in "z"))
+            for a in args
+        )
     if cmd == "sed":
-        # In place (`-i`, `--i…`), or a script read from a file (`-f`, `--f…`) the guard cannot check.
-        opts = [a for a in args if a.startswith("-")]
-        if any(a.startswith(("--i", "--f", "-I")) or (not a.startswith("--") and ("i" in a or "f" in a)) for a in opts):
-            return False
-        # Every word, `-e1w x` and `--expression=1w x` included, is checked as a script.
-        return not any(SED_WRITES.search(a) for a in args)
+        return sed_read_only(args)
     return True
 
 
@@ -2255,7 +2382,7 @@ def read_only_command(command):
     background job, no redirection but to /dev/null or a file descriptor, and every simple command one of
     READ_ONLY_TOOLS without its writing options."""
     # ANSI-C and locale quoting (`$'…'`, `$"…"`) and a line continuation are read otherwise by shlex than by bash.
-    if any(s in command for s in ("`", "$(", "<(", ">(", "<<", "$'", '$"', "\\\n")):
+    if any(s in command for s in ("`", "$(", "<(", ">(", "<<", "$'", '$"', "\\\n")) or unsafe_expansions(command):
         return False
     try:
         lex = shlex.shlex(unquoted_newlines_to_semicolons(command), posix=True, punctuation_chars="();<>|&")

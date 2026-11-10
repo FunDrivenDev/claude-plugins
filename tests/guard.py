@@ -200,6 +200,22 @@ class ReadOnlyBash(unittest.TestCase):
             f"sort --compress-program=sh {INDEX}",
             f"file -C -m {INDEX}",
             f"tail --fo {INDEX}",
+            # The second review's bypasses (bash and zsh).
+            f"GIT_EXTERNAL_DIFF='touch {INDEX};:' git diff --no-index {INDEX} {INDEX}",
+            f"X='touch {INDEX};:' git --config-env=diff.external=X diff --no-index {INDEX} {INDEX}",
+            f"git -C /r -ccore.fsmonitor='touch {INDEX};:' status",
+            f"find {KNOWLEDGE} {{-delete,-print}}",
+            f"X=-delete; find {KNOWLEDGE} $=X",
+            f'Y=a; echo "${{(e)Y}}" {INDEX}',
+            f"IFS=_; X=_-delete; find {KNOWLEDGE} -print$X",
+            f"X=a; printf -vX %s -delete; find {KNOWLEDGE} $X",
+            f'X=a; test -v "a[$X]"; cat {INDEX}',
+            f"sed -n 's/a/b/w{INDEX}' {INDEX}",
+            f"sed -n '\\%a%w {INDEX}' {INDEX}",
+            f"sort -uo{INDEX} {INDEX}",
+            f"tail -1f {INDEX}",
+            f"rg --hostname-bin=/tmp/x --hyperlink-format=default a {INDEX}",
+            f"PATH=/tmp; ls {INDEX}",
         ):
             self.assertIsNotNone(hit(command), command)
 
