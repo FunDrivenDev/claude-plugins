@@ -55,7 +55,7 @@ halts for the user at `relay_limit` of them.
 AFK mode (`toolbox session run --afk`, or the afk skill) runs a relay toward a goal while the
 user is away: no `relay_limit`, an optional deadline after which no new handover starts,
 and a Stop hook that sends the session back to work until it ends a reply with
-`AFK done: <why>` or `AFK blocked: <why>`. A YOLO run (`toolbox session run --afk --yolo`) skips
+`AFK done: <why>` or `AFK blocked: <why>`. A YOLO run (`toolbox session run --afk --bypass-permissions`) skips
 permission prompts: every tool call goes to an audit log, tagged by whether it would have
 run without YOLO, and the plugin, its data and the settings files are off limits to it.
 
@@ -2207,9 +2207,9 @@ def yolo_on(afk, inp):
 
 
 def bypass_seen(afk, inp):
-    """A run started without --yolo but running under bypassPermissions is guarded and audited like a YOLO
-    run: record once what afk_start records for one (baseline, plugin hash), so stats and the audit check
-    count it as a YOLO run."""
+    """A run started without --bypass-permissions but running under bypassPermissions is guarded and audited
+    like a YOLO run: record once what afk_start records for one (baseline, plugin hash), so stats and the
+    audit check count it as a YOLO run."""
     sid = inp["session_id"]
     with S.locked(sid) as st:
         mine = st.get("afk") or {}
@@ -2806,7 +2806,16 @@ def resume_command(sid, afk):
     pane comes back from a restart, and in Rex the relay is `toolbox rex-session run`."""
     toolbox = os.environ.get("HANDOVER_TOOLBOX") or "toolbox"
     return shlex.join(
-        [toolbox, "rex-session", "run", "--afk", afk["goal"], *["--yolo"] * bool(afk.get("yolo")), "--resume", sid]
+        [
+            toolbox,
+            "rex-session",
+            "run",
+            "--afk",
+            afk["goal"],
+            *["--bypass-permissions"] * bool(afk.get("yolo")),
+            "--resume",
+            sid,
+        ]
     )
 
 

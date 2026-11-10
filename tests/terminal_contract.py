@@ -601,7 +601,9 @@ class Recovery(unittest.TestCase):
         self.assertIn("afk_recovered", self.events())
         with open(os.path.join(self.root, "toolbox.args"), encoding="utf-8") as f:
             args = f.read().splitlines()
-        self.assertEqual(args, ["rex-session", "run", "--afk", "ship it's goal", "--yolo", "--resume", "s1"])
+        self.assertEqual(
+            args, ["rex-session", "run", "--afk", "ship it's goal", "--bypass-permissions", "--resume", "s1"]
+        )
         self.assertNotIn("ended", self.state()["afk"])
         self.assertTrue(wait_until(lambda: self.host.title(self.pane) == self.title), self.host.title(self.pane))
 

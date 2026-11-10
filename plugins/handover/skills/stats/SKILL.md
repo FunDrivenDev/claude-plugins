@@ -33,7 +33,7 @@ The `AFK runs` table, when there is one, has one row per AFK run (`toolbox sessi
 
 - `how`: `claude-relay` or `skill`; `until`: the deadline, if any; `sessions` and `handovers` over the whole run.
 - `sent back`: stops the `Stop` hook sent back to work.
-- `yolo`: in a `--yolo` run, calls only YOLO let through (`prompt`, `classifier`, `protected` in the audit log) over all audited calls; `guarded`: calls the command guard refused (a write to the plugin, its data or the settings).
+- `yolo`: in a `--bypass-permissions` run, calls only YOLO let through (`prompt`, `classifier`, `protected` in the audit log) over all audited calls; `guarded`: calls the command guard refused (a write to the plugin, its data or the settings).
 - `waits`: times the run stood still for the user (a permission prompt, an idle prompt, an API error); `denied`: calls auto mode denied; `agent waits`: turn ends held while subagents ran.
 - `end`: `done` or `blocked` (declared by the model, reason below), `deadline`, `idle` (sent back three times in a row without working), `off`, `exit` (its session ended other than by a relayed handover), or `open`; `hours`: from its start to its last event.
 
