@@ -150,21 +150,23 @@ class RefusedSubagent(unittest.TestCase):
 
 
 class BlockedByRefusal(unittest.TestCase):
-    def test_a_block_the_refusal_caused_hands_over_instead_of_ending_the_run(self):
-        session("b1", agents_refused=1, refused_call={"call": "Workflow gs-dev-toolkit:review", "input": "{}"})
-        out = stop("b1", "Review cannot start.\nAFK blocked: a hook blocks new subagents")
-        self.assertEqual(out["decision"], "block")
-        self.assertIn("Workflow gs-dev-toolkit:review", out["reason"])
-        st = state("b1")
-        self.assertFalse(st["afk"].get("ended"))
-        self.assertTrue(S.wound_down(st))
-        self.assertEqual(requested("b1"), ["afk_blocked"])
-
     def test_a_closing_reply_blocked_by_the_refusal_still_relays(self):
-        session("b2", agents_refused=1)
+        session("b2")
+        wind_down("b2")
+        self.assertEqual(refuse("b2"), H.AFK_AGENT_HANDOVER)
         with S.locked("b2") as st:
             self.assertIsNone(H.afk_declared_end(st, "b2", "AFK blocked: subagents refused"))
         self.assertFalse(state("b2")["afk"].get("ended"))
+
+    def test_a_refusal_after_the_handover_was_written_does_not_overrule_a_block(self):
+        session("b1")
+        wind_down("b1")
+        with S.locked("b1") as st:
+            st["held_since"] = time.time()
+        self.assertEqual(refuse("b1"), H.NO_NEW_AGENT)
+        with S.locked("b1") as st:
+            self.assertIsNotNone(H.afk_declared_end(st, "b1", "AFK blocked: needs Raphael's 2FA code"))
+        self.assertEqual(state("b1")["afk"]["ended"], "blocked")
 
     def test_a_block_without_a_refusal_ends_the_run(self):
         session("b3")
