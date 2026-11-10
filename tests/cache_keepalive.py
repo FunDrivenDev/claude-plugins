@@ -157,10 +157,14 @@ class Hook(unittest.TestCase):
         transcript.write_text("{}\n")
         p = self.start("Stop", {"CACHE_KEEPALIVE_AFTER": "4"}, background_tasks=TASK, transcript_path=str(transcript))
         self.armed()  # the grace counts from the hook's start, which a cold interpreter delays
-        time.sleep(1.5)  # past the grace (AFTER / 4)
-        with transcript.open("a") as f:
-            f.write('{"type": "assistant"}\n')
-        p.wait(timeout=10)  # past AFTER: a hook that does not cancel fails on its exit code, not a timeout
+        # The transcript keeps growing until the hook exits: some growth lands after its baseline, however late the
+        # runner takes it. Past AFTER, a hook that does not cancel fails on its exit code, not a timeout.
+        deadline = time.monotonic() + 10
+        while p.poll() is None and time.monotonic() < deadline:
+            with transcript.open("a") as f:
+                f.write('{"type": "assistant"}\n')
+            time.sleep(0.1)
+        p.wait(timeout=1)
         self.assertEqual((p.returncode, p.stderr.read()), (0, ""))
 
     def test_a_quiet_transcript_still_wakes(self):
