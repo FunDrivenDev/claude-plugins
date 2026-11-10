@@ -2104,6 +2104,7 @@ def names_path(text, path):
 SHELL_KEYWORDS = {"if", "then", "else", "elif", "fi", "do", "done", "while", "until", "!", "{", "}"}
 # Commands that only read their files and print; read_only_simple refuses their writing options.
 READ_ONLY_TOOLS = {
+    "git",
     "echo",
     "printf",
     "ls",
@@ -2130,7 +2131,6 @@ READ_ONLY_TOOLS = {
     "pwd",
     "true",
     "sed",
-    "git",
 }
 # The sed scripts let through: `;`-separated commands `p d q n N =` or `s<d>…<d>…<d>` with the flags `g p I`
 # and a count, each after an optional line address (a number, `$` or `/re/`) or range, nothing else: no `w`,
@@ -2380,28 +2380,7 @@ def read_only_simple(words, env, trusted=frozenset({"HOME"})):
     if cmd not in READ_ONLY_TOOLS:
         return False
     if cmd == "git":
-        while args[:1] in (["-C"], ["--no-pager"]):
-            args = args[2:] if args[0] == "-C" else args[1:]
-        # Any other option before the subcommand (`-c…`, `--config-env`, `--exec-path`) may run a program.
-        if args[:1] and args[0].startswith("-"):
-            return False
-        if any(a.startswith(("--ext-diff", "--textconv")) for a in args):
-            return False
-        flags = {a for a in args if a.startswith("-")}
-        if args[:1] == ["config"]:
-            # Since git 2.46 a word may be a subcommand (`config edit` runs the editor): a key holds a dot.
-            return (
-                len(args) - len(flags) == 2
-                and flags <= {"--get", "--get-all", "--global", "--local"}
-                and "." in next(a for a in args[1:] if not a.startswith("-"))
-            )
-        # `--output=<file>` (log, diff, show) writes, abbreviated to `--ou…` too.
-        return (
-            not any(a.startswith("--ou") for a in args)
-            and args[:1] != []
-            and args[0] not in GIT_CONFIG_RUNNERS
-            and readonly_git(args)
-        )
+        return git_read_only(args)
     if cmd == "find":
         return not any(a in FIND_WRITES for a in args)
     # A short option may sit in a cluster (`-1f`, `-uoFILE`).
@@ -2755,7 +2734,7 @@ READONLY_CMDS = {
     "test",
     "[",
 }
-# git subcommands that only read. Some run a program the repository's config names (GIT_CONFIG_RUNNERS).
+# git subcommands that only read. Some run a program the repository's config names (git_read_only).
 READONLY_GIT = {
     "status",
     "diff",
@@ -2977,9 +2956,35 @@ GIT_LOG_VALUED = (
 )
 
 
-# diff, show and blame run the config's textconv and diff.external, status its core.fsmonitor and refreshes the
-# index: the guard refuses them, since a repository among the installed plugins comes with its own config.
+# diff, show and blame run the config's textconv and diff.external, status its core.fsmonitor and refreshes the index.
 GIT_CONFIG_RUNNERS = {"status", "diff", "show", "blame"}
+
+
+def git_read_only(args):
+    """git run on a repository outside the installed plugins, named by one absolute `-C`. git runs what the
+    repository's config names (gpg.program for a plain `log` with log.showSignature, core.fsmonitor for ls-files),
+    and a plugin may ship a bare repository with its config: a repository there stays refused. One of the session's
+    own repositories it could run git on without naming the plugins, so the guard adds nothing by refusing it."""
+    if args[:1] != ["-C"] or len(args) < 3:
+        return False
+    target, args = args[1], args[2:]
+    plugins = os.path.realpath(os.path.join(os.path.expanduser("~"), ".claude", "plugins"))
+    real = os.path.realpath(target)
+    if not os.path.isabs(target) or ".." in target.split("/") or real == plugins or real.startswith(plugins + "/"):
+        return False
+    if args[:1] == ["--no-pager"]:
+        args = args[1:]
+    # Any other option before the subcommand (`-c…`, `--config-env`, `--exec-path`) may run a program.
+    if not args or args[0].startswith("-") or args[0] in GIT_CONFIG_RUNNERS:
+        return False
+    if any(a.startswith(("--ext-diff", "--textconv", "--ou")) for a in args):
+        return False  # `--output=<file>` writes, abbreviated to `--ou…` too.
+    flags = {a for a in args if a.startswith("-")}
+    if args[0] == "config":
+        # Since git 2.46 a word may be a subcommand (`config edit` runs the editor): a key holds a dot.
+        keys = [a for a in args[1:] if not a.startswith("-")]
+        return len(keys) == 1 and "." in keys[0] and flags <= {"--get", "--get-all", "--global", "--local"}
+    return readonly_git(args)
 
 
 def readonly_git(args):

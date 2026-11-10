@@ -151,20 +151,16 @@ class ReadOnlyBash(unittest.TestCase):
         for command in (
             listing,
             f"ls -la {KNOWLEDGE} && head -40 {KNOWLEDGE}/php.md",
+            f"git -C /r log -3 --oneline; git -C /r cat-file -p HEAD:x; cat {INDEX}",
+            f"R=/r; git -C $R ls-files; git -C $R config --get remote.origin.url; ls {KNOWLEDGE}",
             f'for f in {KNOWLEDGE}/*.md; do\n  wc -l "$f"\ndone',
             f"sed -n '1,60p' {INDEX}",
             f"sed -ne 1p {INDEX}",
             f"find {KNOWLEDGE} -name '*.md' -print",
             f"[ -f {INDEX} ] && cat {INDEX}",
             f"cat {KNOWLEDGE}/*.md",
-            f"git -C {KNOWLEDGE} log -3 --oneline",
             "grep -rn 'qgate' $HOME/.claude/plugins/cache 2>&1 | head -5",
             f"printf '%s\\n' {INDEX}; printf '%-20s|%b%%' a b",
-            f"git -C {KNOWLEDGE} branch -a --contains=HEAD",
-            f"git -C {KNOWLEDGE} branch --show-current",
-            f"git -C {KNOWLEDGE} reflog -5; git -C {KNOWLEDGE} reflog show HEAD",
-            f"git -C {KNOWLEDGE} log -3 --format=%h%x09%s --name-only; git -C {KNOWLEDGE} describe --tags --always",
-            f"git -C {KNOWLEDGE} cat-file -p HEAD:index.json; git -C {KNOWLEDGE} config --get remote.origin.url",
             f"cat < {INDEX}",
             f'K={KNOWLEDGE}; for f in php.md; do test -f "$K/$f" && head -5 "$K/$f"; done',
         ):
@@ -289,6 +285,18 @@ class ReadOnlyBash(unittest.TestCase):
             f"git remote show https://example.com/x; cat {INDEX}",
             f"< {INDEX}",
             f"cat {INDEX}; < {INDEX}",
+            f"git log; cat {INDEX}",
+            f"git -C r log; cat {INDEX}",
+            f"git -C /r/../{KNOWLEDGE} log",
+            f"git -C /r status; cat {INDEX}",
+            # The eighth review: git runs what a repository's own config names (gpg.program for a plain `log` with
+            # log.showSignature, core.fsmonitor for ls-files or a `:path`): no git on a repository among the plugins.
+            f"git -C {KNOWLEDGE} log -3 --oneline",
+            f"git -C {KNOWLEDGE} branch -a --contains=HEAD",
+            f"git -C {KNOWLEDGE} branch --show-current",
+            f"git -C {KNOWLEDGE} reflog -5; git -C {KNOWLEDGE} reflog show HEAD",
+            f"git -C {KNOWLEDGE} log -3 --format=%h%x09%s --name-only; git -C {KNOWLEDGE} describe --tags --always",
+            f"git -C {KNOWLEDGE} cat-file -p HEAD:index.json; git -C {KNOWLEDGE} config --get remote.origin.url",
         ):
             self.assertIsNotNone(hit(command), command)
 
