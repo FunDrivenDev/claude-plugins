@@ -1813,24 +1813,16 @@ def afk_end(st, sid, kind, reason):
     alert(f"AFK run {kind}: {reason}"[:200], state="done" if kind in ("done", "off") else "error")
 
 
-AFK_NOT_BLOCKED = (
-    "Not blocked: this session was refused {call} because it is handing over, and a fresh session can start "
-    "it. The handover is requested, and the run goes on in the next session. End your turn now on one short "
-    "line saying where the work stands; the hook tells you once the handover is written, then write your "
-    "closing reply, without `AFK done` nor `AFK blocked`."
-)
-
-
 def blocked_by_refusal(st, last):
-    """An `AFK blocked:` line from a session refused a subagent: a fresh session can start it, so the run does
-    not wait for the user."""
+    """An `AFK blocked:` line from a session whose refused subagent became the handover's focus: a fresh session
+    starts it, so the run does not wait for the user. A refusal the handover does not carry overrules nothing."""
     ends = AFK_END_RE.findall(last or "")
-    return bool(ends) and ends[-1][0].lower() == "blocked" and bool(st.get("agents_refused")) and afk_goes_on(st)
+    return bool(ends) and ends[-1][0].lower() == "blocked" and bool(st.get("focus_at")) and afk_goes_on(st)
 
 
 def afk_declared_end(st, sid, last):
     """End the run on the `AFK done:` or `AFK blocked:` line the session's reply ends it with; returns a note.
-    A block that only a full context caused does not end it: the handover relays to a fresh session."""
+    A block that only a refused subagent caused does not end it: the handover relays to a fresh session."""
     ends = AFK_END_RE.findall(last or "")
     if not ends:
         return None
@@ -1862,11 +1854,6 @@ def afk_on_activity(st, sid, inp, event):
     if S.settled(st) == S.WINDING_DOWN or st.get("relay_outcome"):
         return None
     last = inp.get("last_assistant_message") or T.last_assistant_text(inp["transcript_path"]) or ""
-    if blocked_by_refusal(st, last):
-        why = AFK_END_RE.findall(last)[-1][1].strip()
-        record("afk_block_overruled", sid, run=afk["run"], reason=why[:300])
-        request_handover(st, sid, "afk_blocked", session_config(sid, st), reason=why, focus=refused_focus(st))
-        return {"decision": "block", "reason": AFK_NOT_BLOCKED.format(call=st["refused_call"]["call"])}
     note = afk_declared_end(st, sid, last)
     if note:
         return {"systemMessage": note}
