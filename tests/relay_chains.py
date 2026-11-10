@@ -142,9 +142,27 @@ def again(sid):
         return H.relay(st, sid, 0, H.config(), "Carry on.")
 
 
-def drive(sid, attempt, pane):
+class Clock:
+    """The driver's wait for the new session, on a fake clock: a sleep moves it on and runs `at` once past each time."""
+
+    def __init__(self, at=None):
+        self.now, self.at = 0.0, dict(at or {})
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+        for t in sorted(self.at):
+            if self.now >= t:
+                self.at.pop(t)()
+
+
+def drive(sid, attempt, pane, clock=None):
     """The relay's driver of `attempt`, typing into `pane`: what it returns, and the events it records."""
     events = []
+    clock = clock or Clock()
+    wait = H.R.await_confirmation
     args = SimpleNamespace(
         session=sid, attempt=attempt, kill=None, terminal="rex", address=pane.address, message="Carry on.", add_dir=None
     )
@@ -152,6 +170,7 @@ def drive(sid, attempt, pane):
         mock.patch.object(H.time, "sleep"),
         mock.patch.object(TERM, "adapter", lambda *a: pane),
         mock.patch.object(H, "record", lambda event, *a, **k: events.append(event)),
+        mock.patch.object(H.R, "await_confirmation", lambda *a, **k: wait(*a, clock=clock, sleep=clock.sleep, **k)),
     ):
         return H.cmd_relay_drive(args), events
 
@@ -197,6 +216,34 @@ class AClearThatDidNotEndTheSession(unittest.TestCase):
         late = Typed(A.address)
         self.assertEqual(drive("h1", 1, late), (0, []))
         self.assertEqual(late.typed, [])
+
+    def test_the_halt_ends_the_last_driver_and_its_offer(self):
+        chain("j1", A, "capped", "goal")
+        for _ in range(H.RELAY_ATTEMPTS - 1):
+            again("j1")
+        # The last attempt's /clear runs another command too: that handover halts the chain.
+        pane = Typed(A.address, on_enter=lambda: again("j1"))
+        self.assertEqual(drive("j1", H.RELAY_ATTEMPTS, pane), (0, ["relay_failed"]))
+        # The /clear the halt asks the user for starts a chain of its own.
+        self.assertIsNone(start("j2", A))
+
+    def test_a_writer_slower_than_the_wait_raises_no_stall(self):
+        chain("k1", A, "slow", "goal")
+
+        def handing_over():
+            with S.locked("k1") as st:
+                S.requested(st)
+
+        # Its /clear runs /handover:trigger, whose writer outlasts the driver's wait before the next attempt.
+        pane = Typed(A.address, on_enter=handing_over)
+        clock = Clock({H.R.CONFIRM_SECONDS + 60: lambda: again("k1")})
+        self.assertEqual(drive("k1", 1, pane, clock), (0, ["relay_retried"]))
+
+    def test_a_relay_whose_new_session_never_answers_stalls(self):
+        chain("l1", A, "stalled", "goal")
+        clock = Clock()
+        self.assertEqual(drive("l1", 1, Typed(A.address), clock), (1, ["relay_stalled"]))
+        self.assertEqual(clock.now, H.R.CONFIRM_SECONDS)
 
     def test_the_current_driver_resumes(self):
         chain("i1", A, "current", "goal")

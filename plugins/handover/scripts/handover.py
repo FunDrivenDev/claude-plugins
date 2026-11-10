@@ -1616,6 +1616,10 @@ def relay(st, sid, tokens, cfg, message):
     if not relay_on(st) or outcome and not outcome.get("mode"):
         return None
     attempt = outcome.get("attempt", 1) + 1 if outcome else 1
+    project = st.get("project") or os.getcwd()
+    if outcome:
+        # The earlier attempt's offer goes: this one makes its own, and a halt leaves none for a /clear of the user's.
+        R.withdraw(relay_key(project, terminal()), sid)
     if attempt > RELAY_ATTEMPTS:
         n = outcome.get("n") or chain_n(st)
         S.halted(st, "failed", n)
@@ -1644,7 +1648,6 @@ def relay(st, sid, tokens, cfg, message):
         return "handover: cannot relay here: no terminal to type into, no toolbox session run. Run /clear."
     from_reply = bool(message)
     message = message or "Continue the work from the handover loaded above."
-    project = st.get("project") or os.getcwd()
     R.offer(relay_key(project, term), sid, term.name)
     cmd = ["relay-drive", "--session", sid, f"--attempt={attempt}"]
     if term.types:
@@ -2788,8 +2791,16 @@ def retitle(term, chain, afk):
 
 
 def superseded(sid, attempt):
-    """Whether the relay of `sid` was launched again after its attempt `attempt`: that driver's work is over."""
-    return (S.read(sid).get("relay_outcome") or {}).get("attempt", 1) > attempt
+    """Whether the relay of `sid` was launched again after its attempt `attempt`, or halted: that driver's work is
+    over."""
+    st = S.read(sid)
+    return S.phase(st) == S.HALTED or (st.get("relay_outcome") or {}).get("attempt", 1) > attempt
+
+
+def handing_over_again(sid):
+    """Whether session `sid`, relayed, asked for a handover again: its /clear left it there, and the relay of that
+    handover comes once it is written."""
+    return S.settled(S.read(sid)) in (S.WINDING_DOWN, S.HANDED_OVER)
 
 
 def cmd_relay_drive(args):
@@ -2818,7 +2829,14 @@ def cmd_relay_drive(args):
     t0 = time.time()
     if not submit("/clear"):
         return stalled(0)
-    loaded = R.await_confirmation(args.session, superseded=lambda: superseded(args.session, args.attempt))
+
+    def gone():
+        return superseded(args.session, args.attempt)
+
+    loaded = R.await_confirmation(args.session, superseded=gone)
+    if loaded is False and handing_over_again(args.session):
+        # Its writer may outlast the wait: the next attempt supersedes this driver once that handover is written.
+        loaded = R.await_confirmation(args.session, seconds=STOP_WRITE_SECONDS + R.CONFIRM_SECONDS, superseded=gone)
     if loaded is None:
         return 0
     if not loaded:

@@ -2,6 +2,7 @@
 
     offer(key, sid, mode)        the session handing over offers its handover to the next session at `key`
     claim(key, sid)              the next session takes the offer: once, unless stale or its own
+    withdraw(key, sid)           the session that made the offer takes it back: its relay is tried again, or halted
     confirm(prev, ok)            it says whether the handover of `prev` loaded
     await_confirmation(prev)     the relay's driver waits for that answer before it types the resume message, unless
                                  a later relay of `prev` supersedes it
@@ -69,6 +70,14 @@ def claim(key, sid, now=None):
     if not valid or pending["session"] == sid or not isinstance(at, (int, float)) or now - at > OFFER_SECONDS:
         return None
     return pending
+
+
+def withdraw(key, sid):
+    """Removes the offer at `key` when `sid` made it: no session takes it any more."""
+    seen = read_json(offer_path(key))
+    if isinstance(seen, dict) and seen.get("session") == sid:
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(offer_path(key))
 
 
 def sweep(key, now):
