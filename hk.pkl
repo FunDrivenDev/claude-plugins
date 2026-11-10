@@ -1,7 +1,7 @@
 amends "package://github.com/jdx/hk/releases/download/v2.5.0/hk@2.5.0#/Config.pkl"
 
 // Git hooks call the Justfile, never the tools behind it (fundrivenOS rules/ci/hooks.md).
-// They are the CI: GitHub Actions runs ci.yml by hand only.
+// They are the CI: GitHub Actions runs ci.yml only by hand and on Renovate's PRs.
 hooks {
     // No commit that fails the linters; unstaged work is stashed meanwhile.
     ["pre-commit"] {
