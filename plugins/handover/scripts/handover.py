@@ -38,8 +38,8 @@ on and is cleared, exited or compacted later, and the next session in the same p
 
 Background commands: each one is tagged at launch, its description starting with
 `[await]` (a test run, a build, a CI watch: its result is waited for) or `[endless]` (a dev
-server, a watcher: it never ends by itself). An untagged one is refused once, then guessed
-from its command, or taken for endless when the guess is unsure. During the wind-down the
+server, a watcher: it never ends by itself). An untagged one is refused once (a subagent's
+is not), then guessed from its command, or taken for endless when the guess is unsure. During the wind-down the
 plugin waits for the [await] ones, up to `await_minutes` each, and stops the [endless]
 ones and those it gave up on; the session names them in its reply, the writer in the
 handover.
@@ -615,7 +615,8 @@ def guess_tag(command):
 
 def untagged_background(inp):
     """PreToolUse: a background command without its tag is refused once, with the format; launched the same
-    way again, it runs, tagged by a guess. Each step is logged, to see why tags go missing."""
+    way again, it runs, tagged by a guess. A subagent's is guessed at once: subagents are never told the tags.
+    Each step is logged, to see why tags go missing."""
     ti = inp.get("tool_input") or {}
     if inp.get("tool_name") != "Bash" or not ti.get("run_in_background") or TAG_RE.match(ti.get("description") or ""):
         return None
@@ -629,7 +630,7 @@ def untagged_background(inp):
             "subagent": bool(inp.get("agent_id")),
             "guided": bool(tasks.get("guided")),
         }
-        if key not in refused:
+        if key not in refused and not fields["subagent"]:
             refused[key] = time.time()
             record("command_untagged", sid, step="refused", **fields)
             return UNTAGGED
