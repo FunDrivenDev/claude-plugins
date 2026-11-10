@@ -168,14 +168,35 @@ class BlockedByRefusal(unittest.TestCase):
             self.assertIsNotNone(H.afk_declared_end(st, "b1", "AFK blocked: needs Raphael's 2FA code"))
         self.assertEqual(state("b1")["afk"]["ended"], "blocked")
 
+    def test_a_block_after_a_refusal_still_relays_when_the_session_set_the_focus(self):
+        session("b6", focus="Push the branch first.")
+        wind_down("b6")
+        self.assertEqual(refuse("b6"), H.NO_NEW_AGENT)
+        with S.locked("b6") as st:
+            self.assertIsNone(H.afk_declared_end(st, "b6", "AFK blocked: the review workflow is refused"))
+        self.assertFalse(state("b6")["afk"].get("ended"))
+
+    def test_a_refusal_before_an_earlier_closing_reply_does_not_overrule_a_later_block(self):
+        session("b7")
+        wind_down("b7")
+        refuse("b7")
+        with S.locked("b7") as st:
+            S.enter(st, S.HALTED)
+            S.requested(st)
+            self.assertIsNotNone(H.afk_declared_end(st, "b7", "AFK blocked: needs Raphael's 2FA code"))
+        self.assertEqual(state("b7")["afk"]["ended"], "blocked")
+
     def test_a_block_without_a_refusal_ends_the_run(self):
+
         session("b3")
         out = stop("b3", "AFK blocked: the user must pick a design")
         self.assertNotIn("decision", out)
         self.assertEqual(state("b3")["afk"]["ended"], "blocked")
 
     def test_a_refusal_before_a_compaction_does_not_overrule_a_later_block(self):
-        session("b5", agents_refused=1, refused_call={"call": "Workflow gs-dev-toolkit:review", "input": "{}"})
+        session("b5")
+        wind_down("b5")
+        self.assertEqual(refuse("b5"), H.AFK_AGENT_HANDOVER)
         with S.locked("b5") as st:
             S.compacted(st)
         out = stop("b5", "AFK blocked: needs Raphael's 2FA code")
