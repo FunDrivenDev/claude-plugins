@@ -19,7 +19,7 @@ At `relay_limit` handovers (10) the chain halts: the last handover is written, b
 
 Without tmux, `toolbox session run` falls back to a loop: the relay leaves the resume message in `$HANDOVER_RELAY_FILE` and ends `claude` with SIGTERM, and the loop starts `claude` again with the same arguments plus that message. There, give flags only and type the first prompt in the session.
 
-The launcher is the [toolbox](https://github.com/FunDrivenDev/toolbox) CLI (`brew install fundrivendev/tap/toolbox`), which finds `handover.py` through the plugin's install path on every call, so it keeps working across plugin versions. `/handover:relay` and `/handover:afk` need a session the plugin can type into: in Rex or a `command` terminal any session, otherwise one in tmux, which these commands give every Claude Code they start:
+The launcher is the [toolbox](https://github.com/FunDrivenDev/toolbox) CLI (`brew install fundrivendev/tap/toolbox`), 0.16.0 or later: a relaunch after a crash or a pane restart passes it `--bypass-permissions`, which older versions hand to `claude` as an unknown option. It finds `handover.py` through the plugin's install path on every call, so it keeps working across plugin versions. `/handover:relay` and `/handover:afk` need a session the plugin can type into: in Rex or a `command` terminal any session, otherwise one in tmux, which these commands give every Claude Code they start:
 
 ```zsh
 toolbox session create                      # Claude Code with the relay; outside tmux, in a session that closes with the tab; inside tmux, in the current pane
