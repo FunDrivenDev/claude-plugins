@@ -153,6 +153,9 @@ class ReadOnlyBash(unittest.TestCase):
             f"ls -la {KNOWLEDGE} && head -40 {KNOWLEDGE}/php.md",
             f'for f in {KNOWLEDGE}/*.md; do\n  wc -l "$f"\ndone',
             f"sed -n '1,60p' {INDEX}",
+            f"sed -ne 1p {INDEX}",
+            f"find {KNOWLEDGE} -name '*.md' -print",
+            f"[ -f {INDEX} ] && cat {INDEX}",
             "grep -rn 'qgate' $HOME/.claude/plugins/cache 2>&1 | head -5",
         ):
             self.assertIsNone(hit(command), command)
@@ -216,6 +219,16 @@ class ReadOnlyBash(unittest.TestCase):
             f"tail -1f {INDEX}",
             f"rg --hostname-bin=/tmp/x --hyperlink-format=default a {INDEX}",
             f"PATH=/tmp; ls {INDEX}",
+            # The third review's bypasses (bash and zsh).
+            f"ls {KNOWLEDGE} #'\ntouch ~/PWN\n#'",
+            f"X=DELETE; find {KNOWLEDGE} -$X:l",
+            f"X=O; sort -$X:l {INDEX} {INDEX}",
+            f"for IFS in _; do X=_-delete; find {KNOWLEDGE} -print$X; done",
+            f"for PATH in /tmp/evil; do ls {KNOWLEDGE}; done",
+            f"find {KNOWLEDGE} -dele*",
+            f"sort {INDEX} *",
+            f"READNULLCMD=sh; < /tmp/evil.sh; ls {KNOWLEDGE}",
+            f"sed -ne '1w {INDEX}' {INDEX}",
         ):
             self.assertIsNotNone(hit(command), command)
 

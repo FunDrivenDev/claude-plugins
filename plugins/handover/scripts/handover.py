@@ -2175,8 +2175,17 @@ def sed_read_only(args):
             if a not in SED_LONG:
                 return False
         elif a.startswith("-") and len(a) > 1:
-            if not set(a[1:]) <= SED_SHORT:
+            # A cluster may end on `e` and its script (`-ne 1p`, `-ne1p`).
+            flags, e, script = a[1:].partition("e")
+            if not set(flags) <= SED_SHORT:
                 return False
+            if e:
+                if not script:
+                    if i + 1 >= len(args):
+                        return False
+                    script = args[i + 1]
+                    i += 1
+                scripts.append(script)
         else:
             rest.append(a)
         i += 1
@@ -2187,7 +2196,14 @@ def sed_read_only(args):
     return all(sed_script_ok(sc) for sc in scripts)
 
 
+# An unquoted glob character, marked before shlex drops the quotes: a glob can expand to a file named like an
+# option (`-dele*` to `-delete`).
+GLOB_MARKS = {"*": "\ue001", "?": "\ue002", "[": "\ue003"}
+UNMARK = str.maketrans({v: k for k, v in GLOB_MARKS.items()})
+
+
 def unquoted_newlines_to_semicolons(command):
+    """The command with its unquoted newlines made `;` and its unquoted glob characters marked (GLOB_MARKS)."""
     out, quote, escaped = [], None, False
     for c in command:
         if escaped:
@@ -2200,6 +2216,8 @@ def unquoted_newlines_to_semicolons(command):
             quote = c
         elif c == "\n":
             c = ";"
+        elif c in GLOB_MARKS:
+            c = GLOB_MARKS[c]
         out.append(c)
     return "".join(out)
 
@@ -2235,6 +2253,8 @@ SHELL_READS = {
     "BASHOPTS",
     "POSIXLY_CORRECT",
     "TMPDIR",
+    "NULLCMD",
+    "READNULLCMD",
 }
 
 
@@ -2244,8 +2264,9 @@ def unsafe_assignment(name):
 
 def unsafe_expansions(command):
     """True when the text holds, outside single quotes, a `$` other than a plain `$NAME` or `${NAME}` (zsh's
-    `$=X`, `${(e)X}`, `$X[…]`, bash's `${X@P}`, special parameters), or, outside any quotes, a `{` (brace
-    expansion such as `{-delete,-print}`, a group)."""
+    `$=X`, `${(e)X}`, `$X[…]`, `$X:l`, bash's `${X@P}`, special parameters), or, outside any quotes, a `{`
+    (brace expansion such as `{-delete,-print}`, a group) or a comment: a quote in a comment would hide the
+    next lines from the parse."""
     quote, i = None, 0
     while i < len(command):
         c = command[i]
@@ -2255,7 +2276,7 @@ def unsafe_expansions(command):
         if quote == "'":
             quote = None if c == "'" else quote
         elif c == "$":
-            m = re.match(r"\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)(?!\[)", command[i:])
+            m = re.match(r"\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*(?![\[:]))", command[i:])
             if not m:
                 return True
             i += len(m.group(0))
@@ -2264,7 +2285,7 @@ def unsafe_expansions(command):
             quote = None if c == '"' else quote
         elif c in "'\"":
             quote = c
-        elif c == "{":
+        elif c == "{" or (c == "#" and (i == 0 or command[i - 1] in " \t\n;&|()<>")):
             return True
         i += 1
     return False
@@ -2297,7 +2318,14 @@ def read_only_simple(words, env, trusted=frozenset({"HOME"})):
     while words and words[0] in SHELL_KEYWORDS:
         words = words[1:]
     if words[:1] == ["for"]:
-        return True  # `for x in <words>`: its words only expand, substitutions being refused upstream.
+        # `for x in <words>`: its words only expand, substitutions being refused upstream; the loop variable
+        # gets values the parse does not follow, and must not be one the shell reads (`for IFS`, `for PATH`).
+        name = words[1] if len(words) > 1 else ""
+        env.pop(name, None)
+        return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)) and not unsafe_assignment(name)
+    # A lone `[` is the test command, no glob.
+    globbed = any(set(w) & set(GLOB_MARKS.values()) for w in words if w != GLOB_MARKS["["])
+    words = [w.translate(UNMARK) for w in words]
     assigned = []
     while words and re.match(r"[A-Za-z_][A-Za-z0-9_]*=", words[0]):
         assigned.append(words[0].split("=", 1))
@@ -2319,7 +2347,8 @@ def read_only_simple(words, env, trusted=frozenset({"HOME"})):
     if expanded[0] is None or (
         expanded[0] in OPTION_WRITERS
         and (
-            None in expanded
+            globbed
+            or None in expanded
             or any(LEFT_EXPANSION.search(w) for w in expanded)
             # Unquoted, a value is split and globbed (`X='-name n -delete'`): the quotes are gone here, so a
             # variable's value that holds a blank or a glob, or opens a word with `-`, is refused.
