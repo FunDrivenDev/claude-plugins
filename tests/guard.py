@@ -338,6 +338,10 @@ class ReadOnlyBash(unittest.TestCase):
             f"git -C /tmp branch \u00b2>/dev/null; cat {INDEX}",
             f"git -C /tmp config user.name 2 >/dev/null; cat {INDEX}",
             f"git -C /tmp config --global gc.auto 0 >/dev/null; cat {INDEX}",
+            # The fifteenth review: zsh reads one digit as a descriptor (`12>` is the argument 12), and an escaped
+            # blank opens no word.
+            f"git -C /tmp branch 12>/dev/null; cat {INDEX}",
+            f"git -C /tmp config k.x 12>/dev/null; cat {INDEX}",
             # The eighth review: git runs what a repository's own config names (gpg.program for a plain `log` with
             # log.showSignature, core.fsmonitor for ls-files or a `:path`): no git on a repository among the plugins.
             f"git -C {KNOWLEDGE} log -3 --oneline",

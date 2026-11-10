@@ -2204,10 +2204,11 @@ def sed_read_only(args):
 GLOB_MARKS = {"*": "\ue001", "?": "\ue002", "[": "\ue003", "^": "\ue004", "#": "\ue005", "~": "\ue006"}
 # An unquoted `$`, marked too: bash splits what its variable holds into several words.
 DOLLAR_MARK = "\ue007"
-# A redirection's descriptor (`2>`: ASCII digits, unquoted, opening a word, against `<` or `>`), which shlex splits from
-# its operator: made this one mark, so a numeric argument (`branch 2 >x`, `'2'>x`) is never taken for one.
+# A redirection's descriptor (`2>`: one ASCII digit, as zsh reads it, unquoted, opening a word, against `<` or `>`),
+# which shlex splits from its operator: made this mark, so a numeric argument (`branch 2 >x`, `'2'>x`, zsh's `12>x`)
+# is never taken for one.
 FD_MARK = "\ue008"
-FD_RE = re.compile(r"[0-9]+(?=[<>])")
+FD_RE = re.compile(r"[0-9](?=[<>])")
 # A quoted or escaped operator character, marked too: shlex gives `';'`, `\;` and `'<'` as the operator itself, where
 # the shell passes a word (`find x '<' -delete` is one command).
 OPERATOR_MARKS = {c: chr(0xE010 + n) for n, c in enumerate("();<>|&")}
@@ -2219,15 +2220,12 @@ UNMARK = str.maketrans(
 def unquoted_newlines_to_semicolons(command):
     """The command with its unquoted newlines made `;`, its unquoted glob characters and `$` marked (GLOB_MARKS,
     DOLLAR_MARK), and its quoted or escaped operator characters marked (OPERATOR_MARKS)."""
-    out, quote, escaped, skip = [], None, False, 0
+    out, quote, escaped, start = [], None, False, True
     for i, c in enumerate(command):
-        if skip:
-            skip -= 1
-            continue
-        fd = FD_RE.match(command, i) if not (quote or escaped) and (i == 0 or command[i - 1] in " \t\n;&|()") else None
-        if fd:
+        # A word starts after an unquoted, unescaped blank or operator character only (`x\ 2>` is one word).
+        opens, start = start and not (quote or escaped), not (quote or escaped) and c in " \t\n;&|()"
+        if opens and FD_RE.match(command, i):
             out.append(FD_MARK)
-            skip = fd.end() - i - 1
             continue
         if escaped:
             escaped = False
