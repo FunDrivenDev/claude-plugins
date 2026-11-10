@@ -163,6 +163,9 @@ class ReadOnlyBash(unittest.TestCase):
             f"git -C {KNOWLEDGE} branch -a --contains=HEAD",
             f"git -C {KNOWLEDGE} branch --show-current",
             f"git -C {KNOWLEDGE} reflog -5; git -C {KNOWLEDGE} reflog show HEAD",
+            f"git -C {KNOWLEDGE} log -3 --format=%h%x09%s --name-only; git -C {KNOWLEDGE} describe --tags --always",
+            f"git -C {KNOWLEDGE} cat-file -p HEAD:index.json; git -C {KNOWLEDGE} config --get remote.origin.url",
+            f"cat < {INDEX}",
             f'K={KNOWLEDGE}; for f in php.md; do test -f "$K/$f" && head -5 "$K/$f"; done',
         ):
             self.assertIsNone(hit(command), command)
@@ -266,6 +269,26 @@ class ReadOnlyBash(unittest.TestCase):
             f'ls {KNOWLEDGE}; A=\\$; Z="a[${{A}}(touch pwned2)]"; for Y in \' -a -v a[Z]\'; do [ "x$X"$Y ]; done',
             f"K=' -v'; [ \"x$X\"$K ]; ls {KNOWLEDGE}",
             f"git -C {KNOWLEDGE} reflog write HEAD 1 1 m",
+            # The seventh review's bypasses: variables bash and zsh read, git subcommands that run the repository's
+            # config (textconv, diff.external, core.fsmonitor, a transport, the editor), a null command.
+            f"MODULE_PATH=/tmp/m; echo $WATCH; cat {INDEX}",
+            f"EXECIGNORE=/usr/bin/cat:/bin/cat; cat {INDEX}",
+            f"git -C {KNOWLEDGE} config edit",
+            f"git -C {KNOWLEDGE} config edit --global",
+            f"git -C {KNOWLEDGE} cat-file --te HEAD:f",
+            f"git -C {KNOWLEDGE} cat-file --filters HEAD:f",
+            f"git -C {KNOWLEDGE} diff",
+            f"git -C {KNOWLEDGE} show HEAD",
+            f"git -C {KNOWLEDGE} blame f",
+            f"git -C {KNOWLEDGE} status",
+            f"git -C {KNOWLEDGE} log -p",
+            f"git -C {KNOWLEDGE} log --format=%G?",
+            f"git -C {KNOWLEDGE} reflog show -p",
+            f"git -C {KNOWLEDGE} describe --dirty",
+            f"git -C {KNOWLEDGE} describe --dir",
+            f"git remote show https://example.com/x; cat {INDEX}",
+            f"< {INDEX}",
+            f"cat {INDEX}; < {INDEX}",
         ):
             self.assertIsNotNone(hit(command), command)
 

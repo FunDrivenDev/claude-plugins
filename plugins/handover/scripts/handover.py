@@ -2240,38 +2240,12 @@ VAR_RE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*)
 # A `$` that VAR_RE leaves: a special parameter (`$_`, `$1`, `$@`…) or an expansion with an operator (`${X:=…}`).
 LEFT_EXPANSION = re.compile(r"\$[\w{@*#?$!-]")
 ASSIGNED = re.compile(r"(?:^|[;&|\s(])([A-Za-z_][A-Za-z0-9_]*)=")
-# Variables the shell reads itself (bash and zsh): assigning one changes how the next words split, which
-# programs run or what they load.
-SHELL_READS = {
-    "IFS",
-    "PATH",
-    "CDPATH",
-    "HOME",
-    "ENV",
-    "BASH_ENV",
-    "GLOBIGNORE",
-    "FPATH",
-    "PS4",
-    "PROMPT_COMMAND",
-    "ZDOTDIR",
-    "path",
-    "cdpath",
-    "fpath",
-    "manpath",
-    "module_path",
-    "mailpath",
-    "histchars",
-    "SHELLOPTS",
-    "BASHOPTS",
-    "POSIXLY_CORRECT",
-    "TMPDIR",
-    "NULLCMD",
-    "READNULLCMD",
-}
 
 
 def unsafe_assignment(name):
-    return name in SHELL_READS or name in os.environ or name.startswith(("GIT_", "LD_", "DYLD_", "BASH_", "ZSH_"))
+    """Any name but a single letter: bash and zsh read too many variables (zsh's MODULE_PATH loads a module on the
+    next `$WATCH`, bash's EXECIGNORE skips a program in PATH) for a list of them to hold."""
+    return not re.fullmatch(r"[A-Za-z]", name) or name in os.environ
 
 
 def unsafe_expansions(command):
@@ -2415,9 +2389,19 @@ def read_only_simple(words, env, trusted=frozenset({"HOME"})):
             return False
         flags = {a for a in args if a.startswith("-")}
         if args[:1] == ["config"]:
-            return len(args) - len(flags) == 2 and flags <= {"--get", "--get-all", "--global", "--local"}
+            # Since git 2.46 a word may be a subcommand (`config edit` runs the editor): a key holds a dot.
+            return (
+                len(args) - len(flags) == 2
+                and flags <= {"--get", "--get-all", "--global", "--local"}
+                and "." in next(a for a in args[1:] if not a.startswith("-"))
+            )
         # `--output=<file>` (log, diff, show) writes, abbreviated to `--ou…` too.
-        return not any(a.startswith("--ou") for a in args) and readonly_git(args)
+        return (
+            not any(a.startswith("--ou") for a in args)
+            and args[:1] != []
+            and args[0] not in GIT_CONFIG_RUNNERS
+            and readonly_git(args)
+        )
     if cmd == "find":
         return not any(a in FIND_WRITES for a in args)
     # A short option may sit in a cluster (`-1f`, `-uoFILE`).
@@ -2466,17 +2450,20 @@ def read_only_command(command):
     except ValueError:
         return False
     words, i, env, trusted = [], 0, {"HOME": os.path.expanduser("~")}, trusted_names(command)
+    redirected = False
     while i <= len(tokens):
         t = tokens[i] if i < len(tokens) else ";"
         i += 1
         if t in (";", "&&", "||", "|"):
-            if not read_only_simple(words, env, trusted):
+            # A redirection without a command (`< file`) runs zsh's READNULLCMD (`more`, then `less` and LESSOPEN).
+            if (redirected and not words) or not read_only_simple(words, env, trusted):
                 return False
-            words = []
+            words, redirected = [], False
         elif t and set(t) <= set("();<>|&"):
             nxt = tokens[i] if i < len(tokens) else ""
             if t == "<" or (t in (">", ">>", "&>", "&>>") and nxt == "/dev/null") or (t == ">&" and nxt.isdigit()):
                 i += 1
+                redirected = True
             else:
                 return False
         else:
@@ -2768,14 +2755,15 @@ READONLY_CMDS = {
     "test",
     "[",
 }
+# git subcommands that only read. Some run a program the repository's config names (GIT_CONFIG_RUNNERS).
 READONLY_GIT = {
     "status",
-    "log",
     "diff",
     "show",
+    "blame",
+    "log",
     "rev-parse",
     "ls-files",
-    "blame",
     "branch",
     "remote",
     "describe",
@@ -2953,6 +2941,47 @@ GIT_BRANCH_LIST_VALUED = (
 )
 
 
+GIT_LOG_FLAGS = {
+    "--oneline",
+    "--graph",
+    "--decorate",
+    "--no-decorate",
+    "--all",
+    "--reverse",
+    "--first-parent",
+    "--no-merges",
+    "--merges",
+    "--abbrev-commit",
+    "--name-only",
+    "--name-status",
+    "--date-order",
+    "--topo-order",
+    "--color",
+    "--no-color",
+    "-n",
+}
+GIT_LOG_VALUED = (
+    "--format=",
+    "--pretty=",
+    "--since=",
+    "--until=",
+    "--after=",
+    "--before=",
+    "--author=",
+    "--committer=",
+    "--grep=",
+    "--max-count=",
+    "--skip=",
+    "--date=",
+    "--decorate=",
+)
+
+
+# diff, show and blame run the config's textconv and diff.external, status its core.fsmonitor and refreshes the
+# index: the guard refuses them, since a repository among the installed plugins comes with its own config.
+GIT_CONFIG_RUNNERS = {"status", "diff", "show", "blame"}
+
+
 def readonly_git(args):
     """git subcommands that only read; branch, remote, worktree and reflog only in their listing forms."""
     flags = [w for w in args if w.startswith("-")]
@@ -2965,7 +2994,26 @@ def readonly_git(args):
             return False
         return not more or any(f in ("-l", "--list") for f in flags)
     if sub == "remote":
-        return not more or more[0] in ("show", "get-url")
+        # `remote show <name>` contacts the remote (a transport, `core.sshCommand`); `-v` and get-url only read.
+        return set(flags) <= {"-v", "--verbose"} and (not more or more[0] == "get-url")
+    if sub in ("log", "reflog") and not all(
+        f in GIT_LOG_FLAGS or re.fullmatch(r"-\d+", f) or (f.startswith(GIT_LOG_VALUED) and "%G" not in f)
+        for f in flags
+    ):
+        # `--format=%G?` checks signatures with gpg.program; patches (`-p`, `reflog show -p` too) run textconv.
+        return False
+    if sub == "shortlog":
+        return set(flags) <= {"-s", "-n", "-e", "-sn", "-ns", "-sne", "--summary", "--numbered", "--email"}
+    if sub == "describe":
+        # `--dirty` and `--broken` refresh the index; long options take any unambiguous prefix.
+        return all(
+            f in ("--tags", "--always", "--long", "--all", "--contains", "--exact-match")
+            or f.startswith(("--abbrev=", "--match=", "--exclude="))
+            for f in flags
+        )
+    if sub == "cat-file":
+        # `--textconv` and `--filters` run the config's programs, abbreviated too (`--te`).
+        return bool(flags) and set(flags) <= {"-t", "-s", "-e", "-p"}
     if sub == "worktree":
         return bool(more) and more[0] == "list"
     if sub == "reflog":
