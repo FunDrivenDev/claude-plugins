@@ -342,6 +342,11 @@ class ReadOnlyBash(unittest.TestCase):
             # blank opens no word.
             f"git -C /tmp branch 12>/dev/null; cat {INDEX}",
             f"git -C /tmp config k.x 12>/dev/null; cat {INDEX}",
+            # The sixteenth review: zsh's numeric glob (`<->`) expands to the number-named files, no redirection.
+            f"cat {INDEX}; git -C /tmp branch <->>/dev/null",
+            f"cat {INDEX}; git -C /tmp config a.b <-> /dev/null",
+            f"cat {INDEX}; git -C /tmp branch <1-9>>/dev/null",
+            f"cat {INDEX}; git -C /tmp branch x<-3>y",
             # The eighth review: git runs what a repository's own config names (gpg.program for a plain `log` with
             # log.showSignature, core.fsmonitor for ls-files or a `:path`): no git on a repository among the plugins.
             f"git -C {KNOWLEDGE} log -3 --oneline",

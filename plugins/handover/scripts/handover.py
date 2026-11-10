@@ -2271,7 +2271,8 @@ def unsafe_expansions(command):
     """True when the text holds, outside single quotes, a `$` other than a plain `$NAME` or `${NAME}` (zsh's
     `$=X`, `${(e)X}`, `$X[…]`, `$X:l`, bash's `${X@P}`, special parameters), or, outside any quotes, a `{`
     (brace expansion such as `{-delete,-print}`, a group) or a comment: a quote in a comment would hide the
-    next lines from the parse."""
+    next lines from the parse, or zsh's numeric glob (`<->`, `<1-9>`), which bash and the parse read as a
+    redirection from `-` or a number."""
     quote, i = None, 0
     while i < len(command):
         c = command[i]
@@ -2291,7 +2292,11 @@ def unsafe_expansions(command):
             quote = None if c == '"' else quote
         elif c in "'\"":
             quote = c
-        elif c == "{" or (c == "#" and (i == 0 or command[i - 1] in " \t\n;&|()<>")):
+        elif (
+            c == "{"
+            or (c == "#" and (i == 0 or command[i - 1] in " \t\n;&|()<>"))
+            or (c == "<" and re.match(r"<[0-9]*-[0-9]*>", command[i:]))
+        ):
             return True
         i += 1
     return False
