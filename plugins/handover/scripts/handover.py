@@ -2336,8 +2336,10 @@ def unknown_may_lead(marked, env):
             if unquoted and re.search(r"[\s*?\[]", env[name]):
                 return True
             continue
+        # A None `before` follows an unknown variable already judged: its literal prefix was neither empty nor `-`.
         before = expand_vars(word[: m.start()], env)
-        return unquoted or not before or before.startswith("-")
+        if unquoted or before == "" or (before or "").startswith("-"):
+            return True
     return False
 
 
@@ -2967,7 +2969,9 @@ def readonly_git(args):
     if sub == "worktree":
         return bool(more) and more[0] == "list"
     if sub == "reflog":
-        return not more or more[0] not in ("expire", "delete", "drop")
+        # `reflog write` (git 2.56) and the others write; a bare reflog, or one opening on an option, shows.
+        after = args[args.index("reflog") + 1 :]
+        return not after or after[0].startswith("-") or after[0] in ("show", "list", "exists")
     return True
 
 

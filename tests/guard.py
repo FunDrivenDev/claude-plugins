@@ -162,6 +162,7 @@ class ReadOnlyBash(unittest.TestCase):
             f"printf '%s\\n' {INDEX}; printf '%-20s|%b%%' a b",
             f"git -C {KNOWLEDGE} branch -a --contains=HEAD",
             f"git -C {KNOWLEDGE} branch --show-current",
+            f"git -C {KNOWLEDGE} reflog -5; git -C {KNOWLEDGE} reflog show HEAD",
             f'K={KNOWLEDGE}; for f in php.md; do test -f "$K/$f" && head -5 "$K/$f"; done',
         ):
             self.assertIsNone(hit(command), command)
@@ -261,6 +262,10 @@ class ReadOnlyBash(unittest.TestCase):
             f'for f in -v; do [ "$f" "a[Y]" ]; done; ls {KNOWLEDGE}',
             f"for f in a; do test -f {KNOWLEDGE}/$f; done",
             f'for f in %d; do printf "$f" HOME=1; done; ls {KNOWLEDGE}',
+            # The sixth review's bypasses: a later variable of a test word, git reflog write.
+            f'ls {KNOWLEDGE}; A=\\$; Z="a[${{A}}(touch pwned2)]"; for Y in \' -a -v a[Z]\'; do [ "x$X"$Y ]; done',
+            f"K=' -v'; [ \"x$X\"$K ]; ls {KNOWLEDGE}",
+            f"git -C {KNOWLEDGE} reflog write HEAD 1 1 m",
         ):
             self.assertIsNotNone(hit(command), command)
 
