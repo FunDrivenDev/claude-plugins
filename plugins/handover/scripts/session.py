@@ -57,6 +57,7 @@ COMPACTED = (
     "reply_offset",
     "written",
     "resume",
+    "focus",
 )
 # Due again at a handover asked for after an earlier one.
 CLOSING = ("reply_due", "reply_reminded", "held_since", "reply_offset", "resume")
