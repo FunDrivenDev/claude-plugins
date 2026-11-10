@@ -114,6 +114,31 @@ class RefusedSubagent(unittest.TestCase):
         self.assertEqual(refuse("a4"), H.NO_NEW_AGENT)
         self.assertFalse(S.wound_down(state("a4")))
 
+    def test_past_the_afk_deadline_before_the_hook_tells_it_no_subagent_starts(self):
+        session("a6")
+        with S.locked("a6") as st:
+            st["afk"]["until"] = time.time() - 60
+        self.assertEqual(refuse("a6", "Agent", {"subagent_type": "Explore", "description": "find x"}), H.NO_NEW_AGENT)
+
+    def test_once_the_handover_is_written_the_refused_call_is_left_to_the_closing_reply(self):
+        for key in ("reply_due", "held_since"):
+            with self.subTest(key=key):
+                sid = f"a7-{key}"
+                session(sid)
+                wind_down(sid)
+                with S.locked(sid) as st:
+                    st[key] = time.time()
+                self.assertEqual(refuse(sid), H.NO_NEW_AGENT)
+                self.assertNotIn("focus", state(sid))
+
+    def test_a_compaction_drops_the_focus_of_the_handover_it_loaded(self):
+        session("a8", focus="Old step.")
+        with S.locked("a8") as st:
+            S.compacted(st)
+        wind_down("a8")
+        self.assertEqual(refuse("a8"), H.AFK_AGENT_HANDOVER)
+        self.assertIn("Workflow gs-dev-toolkit:review", state("a8")["focus"])
+
 
 class BlockedByRefusal(unittest.TestCase):
     def test_a_block_the_refusal_caused_hands_over_instead_of_ending_the_run(self):

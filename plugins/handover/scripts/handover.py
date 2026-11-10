@@ -535,8 +535,14 @@ def refuses_agents(st):
     """Winding down, or past an AFK deadline: no new work, so no new subagent. Past the suggestion alone, a
     subagent still starts: the step of the task in progress it carries (the review before a push) would
     otherwise leave committed work unpushed."""
-    afk = st.get("afk") or {}
-    return bool(S.wound_down(st) or afk.get("deadline_told"))
+    afk = afk_active(st)
+    return bool(S.wound_down(st) or afk and (afk.get("deadline_told") or afk_overdue(afk)))
+
+
+def focus_open(st):
+    """Whether the handover is still to write, so a focus set now reaches the next session: winding down, not
+    held by the Stop hook for the writer, no writer running, no closing reply owed."""
+    return S.phase(st) == S.WINDING_DOWN and not st.get("held_since") and not st.get("reply_due") and not S.writing(st)
 
 
 NO_NEW_AGENT = (
@@ -2588,7 +2594,7 @@ def on_pre_tool_use(inp):
         with S.locked(sid) as st:
             st["agents_refused"] = st.get("agents_refused", 0) + 1
             st["refused_call"] = refused_call(tool, ti)
-            if afk_goes_on(st) and not st.get("focus"):
+            if afk_goes_on(st) and not st.get("focus") and focus_open(st):
                 # Refused here, the work would wait for the user: the next session starts with it instead.
                 st["focus"] = refused_focus(st)
                 reason = AFK_AGENT_HANDOVER
