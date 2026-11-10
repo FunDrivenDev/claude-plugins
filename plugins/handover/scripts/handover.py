@@ -2204,6 +2204,10 @@ def sed_read_only(args):
 GLOB_MARKS = {"*": "\ue001", "?": "\ue002", "[": "\ue003", "^": "\ue004", "#": "\ue005", "~": "\ue006"}
 # An unquoted `$`, marked too: bash splits what its variable holds into several words.
 DOLLAR_MARK = "\ue007"
+# A redirection's descriptor (`2>`: ASCII digits, unquoted, opening a word, against `<` or `>`), which shlex splits from
+# its operator: made this one mark, so a numeric argument (`branch 2 >x`, `'2'>x`) is never taken for one.
+FD_MARK = "\ue008"
+FD_RE = re.compile(r"[0-9]+(?=[<>])")
 # A quoted or escaped operator character, marked too: shlex gives `';'`, `\;` and `'<'` as the operator itself, where
 # the shell passes a word (`find x '<' -delete` is one command).
 OPERATOR_MARKS = {c: chr(0xE010 + n) for n, c in enumerate("();<>|&")}
@@ -2215,8 +2219,16 @@ UNMARK = str.maketrans(
 def unquoted_newlines_to_semicolons(command):
     """The command with its unquoted newlines made `;`, its unquoted glob characters and `$` marked (GLOB_MARKS,
     DOLLAR_MARK), and its quoted or escaped operator characters marked (OPERATOR_MARKS)."""
-    out, quote, escaped = [], None, False
+    out, quote, escaped, skip = [], None, False, 0
     for i, c in enumerate(command):
+        if skip:
+            skip -= 1
+            continue
+        fd = FD_RE.match(command, i) if not (quote or escaped) and (i == 0 or command[i - 1] in " \t\n;&|()") else None
+        if fd:
+            out.append(FD_MARK)
+            skip = fd.end() - i - 1
+            continue
         if escaped:
             escaped = False
             c = OPERATOR_MARKS.get(c, c)
@@ -2462,10 +2474,10 @@ def read_only_command(command):
             if (
                 t == "<"
                 or (t in (">", ">>", "&>", "&>>") and nxt == "/dev/null")
-                or (t == ">&" and re.fullmatch(r"[0-9]+", nxt))
+                or (t == ">&" and re.fullmatch(r"[0-9]+|-", nxt))
             ):
-                # shlex splits a descriptor from its operator (`2>` gives `2`, `>`): the digits are no argument.
-                if words and words[-1].isdigit():
+                # The descriptor before the operator (FD_MARK) is no argument.
+                if words and words[-1] == FD_MARK:
                     words.pop()
                 i += 1
                 redirected = True

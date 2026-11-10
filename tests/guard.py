@@ -171,6 +171,7 @@ class ReadOnlyBash(unittest.TestCase):
             f"git -C /tmp branch -a 2>/dev/null; ls {KNOWLEDGE}",
             f"git -C /tmp config --get user.name 2>/dev/null; cat {INDEX}",
             f"git -C /tmp remote -v 2>/dev/null; cat {INDEX}",
+            f"cat {INDEX} 2>&-; cat {INDEX} 1>&2",
         ):
             self.assertIsNone(hit(command), command)
 
@@ -330,6 +331,13 @@ class ReadOnlyBash(unittest.TestCase):
             f"Y=\\$; Z='(touch {KNOWLEDGE}/PW)'; printf 2>/dev/null %d 'path[${{(e)${{:-$Y$Z}}}}]'",
             f"printf 2>/dev/null -v HOME %s /tmp; git -C $HOME log -1; cat {INDEX}",
             f"sed -n -e 'p;'\r's/.*/x/w {INDEX}' {INDEX}",
+            # The fourteenth review: only an unquoted descriptor against its operator is one, not a numeric argument.
+            f"git -C /tmp branch 2 >/dev/null; cat {INDEX}",
+            f"git -C /tmp branch '2'>/dev/null; cat {INDEX}",
+            f"git -C /tmp branch 2&>/dev/null; cat {INDEX}",
+            f"git -C /tmp branch \u00b2>/dev/null; cat {INDEX}",
+            f"git -C /tmp config user.name 2 >/dev/null; cat {INDEX}",
+            f"git -C /tmp config --global gc.auto 0 >/dev/null; cat {INDEX}",
             # The eighth review: git runs what a repository's own config names (gpg.program for a plain `log` with
             # log.showSignature, core.fsmonitor for ls-files or a `:path`): no git on a repository among the plugins.
             f"git -C {KNOWLEDGE} log -3 --oneline",
