@@ -2425,8 +2425,9 @@ def read_only_command(command):
     """True when a Bash command only reads, by a strict parse: no substitution, heredoc, subshell or
     background job, no redirection but to /dev/null or a file descriptor, and every simple command one of
     READ_ONLY_TOOLS without its writing options."""
-    # ANSI-C and locale quoting (`$'…'`, `$"…"`) and a line continuation are read otherwise by shlex than by bash.
-    if any(s in command for s in ("`", "$(", "<(", ">(", "<<", "$'", '$"', "\\\n")) or unsafe_expansions(command):
+    # ANSI-C and locale quoting (`$'…'`, `$"…"`), a line continuation and a carriage return (a blank to shlex, a
+    # word's character to the shell) are read otherwise by shlex than by bash.
+    if any(s in command for s in ("`", "$(", "<(", ">(", "<<", "$'", '$"', "\\\n", "\r")) or unsafe_expansions(command):
         return False
     try:
         lex = shlex.shlex(unquoted_newlines_to_semicolons(command), posix=True, punctuation_chars="();<>|&")
@@ -2463,6 +2464,9 @@ def read_only_command(command):
                 or (t in (">", ">>", "&>", "&>>") and nxt == "/dev/null")
                 or (t == ">&" and re.fullmatch(r"[0-9]+", nxt))
             ):
+                # shlex splits a descriptor from its operator (`2>` gives `2`, `>`): the digits are no argument.
+                if words and words[-1].isdigit():
+                    words.pop()
                 i += 1
                 redirected = True
             else:

@@ -167,6 +167,10 @@ class ReadOnlyBash(unittest.TestCase):
             # An assignment before `&&` always runs.
             f"K={KNOWLEDGE} && find \"$K\" -name '*.md'",
             f"R=/tmp && git -C $R log -1; cat {INDEX}",
+            # The thirteenth review: a descriptor before a redirection is no argument.
+            f"git -C /tmp branch -a 2>/dev/null; ls {KNOWLEDGE}",
+            f"git -C /tmp config --get user.name 2>/dev/null; cat {INDEX}",
+            f"git -C /tmp remote -v 2>/dev/null; cat {INDEX}",
         ):
             self.assertIsNone(hit(command), command)
 
@@ -322,6 +326,10 @@ class ReadOnlyBash(unittest.TestCase):
             f"[ a = b ] && \nX=p\nsed -n -e $X 's/.*/x/w {INDEX}' {INDEX}",
             f"X=p </nonexistent; sed -n -e $X 's/.*/x/w {INDEX}' {INDEX}",
             f"X=p >&9; sed -n -e $X 's/.*/x/w {INDEX}' {INDEX}",
+            # The thirteenth review: the descriptor of `2>` is no printf format; a carriage return is in a word.
+            f"Y=\\$; Z='(touch {KNOWLEDGE}/PW)'; printf 2>/dev/null %d 'path[${{(e)${{:-$Y$Z}}}}]'",
+            f"printf 2>/dev/null -v HOME %s /tmp; git -C $HOME log -1; cat {INDEX}",
+            f"sed -n -e 'p;'\r's/.*/x/w {INDEX}' {INDEX}",
             # The eighth review: git runs what a repository's own config names (gpg.program for a plain `log` with
             # log.showSignature, core.fsmonitor for ls-files or a `:path`): no git on a repository among the plugins.
             f"git -C {KNOWLEDGE} log -3 --oneline",
