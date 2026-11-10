@@ -547,7 +547,9 @@ def refuses_agents(st):
 def focus_open(st):
     """Whether the handover is still to write, so a focus set now reaches the next session: winding down, not
     held by the Stop hook for the writer, no writer running, no closing reply owed."""
-    return S.phase(st) == S.WINDING_DOWN and not st.get("held_since") and not st.get("reply_due") and not S.writing(st)
+    return (
+        S.settled(st) == S.WINDING_DOWN and not st.get("held_since") and not st.get("reply_due") and not S.writing(st)
+    )
 
 
 NO_NEW_AGENT = (
