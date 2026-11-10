@@ -2202,20 +2202,27 @@ def sed_read_only(args):
 GLOB_MARKS = {"*": "\ue001", "?": "\ue002", "[": "\ue003", "^": "\ue004", "#": "\ue005", "~": "\ue006"}
 # An unquoted `$`, marked too: bash splits what its variable holds into several words.
 DOLLAR_MARK = "\ue007"
-UNMARK = str.maketrans({**{v: k for k, v in GLOB_MARKS.items()}, DOLLAR_MARK: "$"})
+# A quoted or escaped operator character, marked too: shlex gives `';'`, `\;` and `'<'` as the operator itself, where
+# the shell passes a word (`find x '<' -delete` is one command).
+OPERATOR_MARKS = {c: chr(0xE010 + n) for n, c in enumerate("();<>|&")}
+UNMARK = str.maketrans(
+    {**{v: k for k, v in GLOB_MARKS.items()}, **{v: k for k, v in OPERATOR_MARKS.items()}, DOLLAR_MARK: "$"}
+)
 
 
 def unquoted_newlines_to_semicolons(command):
-    """The command with its unquoted newlines made `;` and its unquoted glob characters and `$` marked (GLOB_MARKS,
-    DOLLAR_MARK)."""
+    """The command with its unquoted newlines made `;`, its unquoted glob characters and `$` marked (GLOB_MARKS,
+    DOLLAR_MARK), and its quoted or escaped operator characters marked (OPERATOR_MARKS)."""
     out, quote, escaped = [], None, False
     for i, c in enumerate(command):
         if escaped:
             escaped = False
+            c = OPERATOR_MARKS.get(c, c)
         elif c == "\\" and quote != "'":
             escaped = True
         elif quote:
             quote = None if c == quote else quote
+            c = OPERATOR_MARKS.get(c, c)
         elif c in "'\"":
             quote = c
         elif c == "\n":

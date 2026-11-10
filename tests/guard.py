@@ -152,6 +152,7 @@ class ReadOnlyBash(unittest.TestCase):
             listing,
             f"ls -la {KNOWLEDGE} && head -40 {KNOWLEDGE}/php.md",
             f"git -C /r log -3 --oneline; git -C /r cat-file -p HEAD:x; cat {INDEX}",
+            f"grep -E 'a|b;c' {INDEX}; grep -c \\; {INDEX}",
             f"R=/r; git -C $R ls-files; git -C $R config --get remote.origin.url; ls {KNOWLEDGE}",
             f'for f in {KNOWLEDGE}/*.md; do\n  wc -l "$f"\ndone',
             f"sed -n '1,60p' {INDEX}",
@@ -289,6 +290,15 @@ class ReadOnlyBash(unittest.TestCase):
             f"git -C r log; cat {INDEX}",
             f"git -C /r/../{KNOWLEDGE} log",
             f"git -C /r status; cat {INDEX}",
+            # The tenth review: a quoted or escaped operator is a word, so the words after it belong to the same
+            # command (`find x '<' -delete` deletes).
+            f"find {KNOWLEDGE} '<' -delete",
+            f"find {KNOWLEDGE} \\; cat -delete",
+            f"find {KNOWLEDGE} ';' cat -exec sh -c 'id' ';'",
+            f'find {KNOWLEDGE} "||" cat -delete',
+            f"rg x {KNOWLEDGE} '<' --pre=/bin/sh",
+            f"sort {INDEX} '<' -o/tmp/out",
+            f"sort {INDEX} \\< -o/tmp/out",
             # The eighth review: git runs what a repository's own config names (gpg.program for a plain `log` with
             # log.showSignature, core.fsmonitor for ls-files or a `:path`): no git on a repository among the plugins.
             f"git -C {KNOWLEDGE} log -3 --oneline",
