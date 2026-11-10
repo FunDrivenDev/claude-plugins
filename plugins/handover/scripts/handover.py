@@ -322,6 +322,15 @@ def project_key(project):
     return hashlib.sha1(os.path.realpath(project).encode()).hexdigest()[:16]
 
 
+def relay_key(project, term):
+    """The key of a relay's offer: the project and the pane the session runs in, the terminal's address. The session
+    the relay starts claims only the offer made in its own pane: two chains of one project (a Guest-Suite session
+    starts from the guest-environment root, whatever it changes) that hand over together each resume their own
+    handover and AFK goal. A terminal without a pane of its own (`command`) keys by the project and its command."""
+    where = f"{os.path.realpath(project)}\n{term.name}\n{term.address}"
+    return hashlib.sha1(where.encode()).hexdigest()[:16]
+
+
 def metrics_path():
     return os.path.join(data_dir(), "metrics.jsonl")
 
@@ -1621,7 +1630,7 @@ def relay(st, sid, tokens, cfg, message):
     from_reply = bool(message)
     message = message or "Continue the work from the handover loaded above."
     project = st.get("project") or os.getcwd()
-    R.offer(project_key(project), sid, term.name)
+    R.offer(relay_key(project, term), sid, term.name)
     cmd = ["relay-drive", "--session", sid]
     if term.types:
         cmd += [f"--terminal={term.name}", f"--address={term.address}", f"--message={message}"]
@@ -3109,13 +3118,16 @@ def on_session_start(inp):
 
 def take_relay(inp):
     """A session the relay started: load the handover of the session it replaces, and carry the chain on."""
-    key = project_key(project_of(inp))
-    pending = R.claim(key, inp["session_id"])
+    project, term = project_of(inp), terminal()
+    pending = R.claim(relay_key(project, term), inp["session_id"])
     if not pending:
         return None
-    # Relayed, the session ending leaves no /clear pointer for a later session to load.
-    with contextlib.suppress(FileNotFoundError):
-        os.remove(os.path.join(data_dir(), "latest", f"{key}.json"))
+    # Relayed, the session ending leaves no /clear pointer for a later session to load; another session's stays.
+    latest = os.path.join(data_dir(), "latest", f"{project_key(project)}.json")
+    pointer = read_json(latest)
+    if isinstance(pointer, dict) and pointer.get("session") == pending["session"]:
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(latest)
     t0 = time.time()
     st = wait_for(pending["session"], R.LOAD_SECONDS)
     text = read_handover(st) if (st.get("written") or {}).get("ok") else None
@@ -3143,7 +3155,6 @@ def take_relay(inp):
         # The loop starts claude with the message: it is resumed as soon as it loads.
         record("relay_resumed", pending["session"], mode="loop", seconds=round(time.time() - pending["at"]))
     afk = afk_active(st)
-    term = terminal()
     term.report_status("clear")
     retitle(term, chain, afk)
     with S.locked(inp["session_id"]) as new:
