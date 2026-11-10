@@ -176,6 +176,33 @@ class ReadOnlyBash(unittest.TestCase):
         ):
             self.assertIsNotNone(hit(command), command)
 
+    def test_what_bash_reads_otherwise_than_the_parse_stays_denied(self):
+        # The bypasses a review of claude-plugins#80 ran: each one wrote or ran something under bash.
+        for command in (
+            f"ls {KNOWLEDGE}#; touch ~/PWN1",
+            f"X='-name n -delete'; find {KNOWLEDGE} $X",
+            f"X=-delete; X=a true; find {KNOWLEDGE} $X",
+            f"X=a; for X in -delete; do find {KNOWLEDGE} $X; done",
+            f"X=a; printf -v X %s -delete; find {KNOWLEDGE} $X",
+            f"echo -delete; find {KNOWLEDGE} $_",
+            f"find {KNOWLEDGE} ${{X:=-delete}}",
+            f"find {KNOWLEDGE} $'-delete'",
+            f'sed -n "1w {INDEX}" /dev/null',
+            f"sed -n '$w {INDEX}' /dev/null",
+            f"sed -n '/x/w {INDEX}' /dev/null",
+            f"sed -n --expression='1w {INDEX}' /dev/null",
+            f"sed -n -f /tmp/script {INDEX}",
+            f"sed --in {INDEX}",
+            f"git -C /r log -1 --output={INDEX}",
+            f"git -C /r log -1 --out={INDEX}",
+            f"find {KNOWLEDGE} -de\\\nlete",
+            f"sort --o={INDEX} {INDEX}",
+            f"sort --compress-program=sh {INDEX}",
+            f"file -C -m {INDEX}",
+            f"tail --fo {INDEX}",
+        ):
+            self.assertIsNotNone(hit(command), command)
+
     def test_reading_this_plugin_its_data_or_the_settings_by_bash_stays_denied(self):
         for command in (
             f"cat {SCRIPT}",

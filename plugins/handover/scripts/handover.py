@@ -2132,8 +2132,9 @@ READ_ONLY_TOOLS = {
     "sed",
     "git",
 }
-# A sed `w`/`W` (write a file) or `e` (run a command), alone or as an `s` flag.
-SED_WRITES = re.compile(r"(?:^|[;{}\n]|[/#|,][gpiImMe0-9]*)\s*[wWe](?:\s|$)")
+# A sed `w`/`W` (write a file) or `e` (run a command): alone, after a line address (`1w`, `$w`, `/re/w`), or
+# as an `s` flag.
+SED_WRITES = re.compile(r"(?:^|[;{}\n0-9$/,!~+]|[/#|,][gpiImMe0-9]*)\s*[wWe](?:\s|$)")
 
 
 def unquoted_newlines_to_semicolons(command):
@@ -2154,8 +2155,18 @@ def unquoted_newlines_to_semicolons(command):
 
 
 # Commands whose options can write or run something: a variable among their words must be known.
-OPTION_WRITERS = {"find", "sed", "sort", "tail", "rg", "git"}
+OPTION_WRITERS = {"find", "sed", "sort", "tail", "rg", "git", "file"}
 VAR_RE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+# A `$` that VAR_RE leaves: a special parameter (`$_`, `$1`, `$@`…) or an expansion with an operator (`${X:=…}`).
+LEFT_EXPANSION = re.compile(r"\$[\w{@*#?$!-]")
+ASSIGNED = re.compile(r"(?:^|[;&|\s(])([A-Za-z_][A-Za-z0-9_]*)=")
+
+
+def trusted_names(command):
+    """The variables the command assigns that it names nowhere else but as `$X`/`${X}`: no `for X`, `read X`,
+    `printf -v X` or second assignment can then change them behind read_only_simple's back."""
+    names = set(ASSIGNED.findall(command)) | {"HOME"}
+    return {n for n in names if len(re.findall(r"(?<![\w$])(?<!\$\{)" + n + r"(?!\w)", command)) <= 1}
 
 
 def expand_vars(word, env):
@@ -2172,25 +2183,40 @@ def expand_vars(word, env):
     return None if unknown else out
 
 
-def read_only_simple(words, env):
+def read_only_simple(words, env, trusted=frozenset({"HOME"})):
     """True when one simple command, its leading keywords and assignments removed, only reads. `env` holds the
     command's own assignments so far, so that `X=-delete; find . $X` is judged on what it runs."""
     while words and words[0] in SHELL_KEYWORDS:
         words = words[1:]
     if words[:1] == ["for"]:
         return True  # `for x in <words>`: its words only expand, substitutions being refused upstream.
+    assigned = []
     while words and re.match(r"[A-Za-z_][A-Za-z0-9_]*=", words[0]):
-        name, val = words[0].split("=", 1)
+        assigned.append(words[0].split("=", 1))
+        words = words[1:]
+    for name, val in assigned:
+        # Only a statement of its own sets the variable for what follows; `X=a cmd` sets it for cmd alone.
         val = expand_vars(val, env)
-        if val is None:
+        if words or val is None or name not in trusted:
             env.pop(name, None)
         else:
             env[name] = val
-        words = words[1:]
     if not words:
         return True
     expanded = [expand_vars(w, env) for w in words]
-    if expanded[0] is None or (expanded[0] in OPTION_WRITERS and None in expanded):
+    if expanded[0] is None or (
+        expanded[0] in OPTION_WRITERS
+        and (
+            None in expanded
+            or any(LEFT_EXPANSION.search(w) for w in expanded)
+            # Unquoted, a value is split and globbed (`X='-name n -delete'`): the quotes are gone here, so a
+            # variable's value that holds a blank or a glob, or opens a word with `-`, is refused.
+            or any(
+                "$" in w and (re.search(r"[\s*?\[]", e) or (w.startswith("$") and e.startswith("-")))
+                for w, e in zip(words, expanded)
+            )
+        )
+    ):
         return False
     cmd, args = expanded[0], [w if w is not None else "" for w in expanded[1:]]
     if cmd not in READ_ONLY_TOOLS:
@@ -2201,20 +2227,26 @@ def read_only_simple(words, env):
         flags = {a for a in args if a.startswith("-")}
         if args[:1] == ["config"]:
             return len(args) - len(flags) == 2 and flags <= {"--get", "--get-all", "--global", "--local"}
-        return readonly_git(args)
+        # `--output=<file>` (log, diff, show) writes, abbreviated to `--ou…` too.
+        return not any(a.startswith("--ou") for a in args) and readonly_git(args)
     if cmd == "find":
         return not any(a in FIND_WRITES for a in args)
     if cmd == "tail":
-        return not any(a in ("-f", "-F") or a.startswith("--follow") for a in args)
+        return not any(a in ("-f", "-F") or a.startswith("--f") for a in args)
     if cmd == "sort":
-        return not any(a.startswith(("-o", "--output")) for a in args)
+        # GNU long options take any unambiguous prefix: `--o` is `--output`, `--co` `--compress-program`.
+        return not any(a.startswith(("-o", "--o", "--co")) for a in args)
+    if cmd == "file":
+        return not any(a.startswith("--c") or (not a.startswith("--") and a.startswith("-") and "C" in a) for a in args)
     if cmd == "rg":
         return not any(a.startswith(("--pre", "--search-zip", "-z")) for a in args)
     if cmd == "sed":
+        # In place (`-i`, `--i…`), or a script read from a file (`-f`, `--f…`) the guard cannot check.
         opts = [a for a in args if a.startswith("-")]
-        if any(a.startswith(("--in-place", "-I")) or (not a.startswith("--") and "i" in a) for a in opts):
+        if any(a.startswith(("--i", "--f", "-I")) or (not a.startswith("--") and ("i" in a or "f" in a)) for a in opts):
             return False
-        return not any(SED_WRITES.search(a) for a in args if not a.startswith("-"))
+        # Every word, `-e1w x` and `--expression=1w x` included, is checked as a script.
+        return not any(SED_WRITES.search(a) for a in args)
     return True
 
 
@@ -2222,20 +2254,24 @@ def read_only_command(command):
     """True when a Bash command only reads, by a strict parse: no substitution, heredoc, subshell or
     background job, no redirection but to /dev/null or a file descriptor, and every simple command one of
     READ_ONLY_TOOLS without its writing options."""
-    if any(s in command for s in ("`", "$(", "<(", ">(", "<<")):
+    # ANSI-C and locale quoting (`$'…'`, `$"…"`) and a line continuation are read otherwise by shlex than by bash.
+    if any(s in command for s in ("`", "$(", "<(", ">(", "<<", "$'", '$"', "\\\n")):
         return False
     try:
         lex = shlex.shlex(unquoted_newlines_to_semicolons(command), posix=True, punctuation_chars="();<>|&")
         lex.whitespace_split = True
+        # bash starts a comment only at a word's start (`a#` is a word); a `#` stays in the word here, so a
+        # real comment's words are judged too.
+        lex.commenters = ""
         tokens = list(lex)
     except ValueError:
         return False
-    words, i, env = [], 0, {"HOME": os.path.expanduser("~")}
+    words, i, env, trusted = [], 0, {"HOME": os.path.expanduser("~")}, trusted_names(command)
     while i <= len(tokens):
         t = tokens[i] if i < len(tokens) else ";"
         i += 1
         if t in (";", "&&", "||", "|"):
-            if not read_only_simple(words, env):
+            if not read_only_simple(words, env, trusted):
                 return False
             words = []
         elif t and set(t) <= set("();<>|&"):
