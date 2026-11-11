@@ -2,8 +2,8 @@
 # Claude Code release that breaks a mod shows up with no commit of ours (the
 # validator, the mods' tests and the type-check run on the latest claude); by hand;
 # and on Renovate's pull requests, which no laptop checks. A human's pull request
-# runs none: the git hooks are its CI (hk.pkl). The smoke tests also run on macOS,
-# whose /bin/bash 3.2 is what most colleagues' status lines run under.
+# runs none: the git hooks are its CI (hk.pkl). Linux only: the laptop's pre-push
+# hook covers macOS, and the harness needs bash 5 anyway.
 name: CI
 
 on:
@@ -85,13 +85,9 @@ jobs:
       - run: just audit
 
   test:
-    name: Smoke tests (just test, ${{ matrix.os }})
+    name: Smoke tests (just test)
     if: github.event_name != 'pull_request' || github.event.pull_request.user.login == 'renovate[bot]'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-26]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -102,8 +98,7 @@ jobs:
           install_args: just jq
       # The handover terminal contract skips the hosts it does not find.
       - name: Install tmux
-        run: |
-          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get install -y tmux; else brew install tmux; fi
+        run: sudo apt-get install -y tmux
       - run: just test
 
   required-checks:
@@ -122,7 +117,7 @@ jobs:
         with:
           install_args: just
       # Skipped jobs are fine (the change did not need them); a failed or
-      # cancelled one is not. The matrix's legs count as one result.
+      # cancelled one is not.
       - run: |
           # shellcheck disable=SC2086 # one argument per job result
           just ci-verdict $RESULTS
