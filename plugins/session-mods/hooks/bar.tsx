@@ -1,5 +1,6 @@
 import type { Quota, Ttl } from '../types'
 
+/** The colour an action without its own takes under the pointer: Catppuccin Frappé blue. */
 export const ACTION = '#8caaee'
 const DIM = '#51576d'
 

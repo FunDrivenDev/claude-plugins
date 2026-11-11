@@ -1,6 +1,6 @@
 /**
- * How both mods look: the OS appearance, read once for the pane and the bar,
- * the light twin of each colour they draw, and the names they share.
+ * How both mods look: the light twin of each colour they draw, and the names
+ * they share. `register.tsx` reads the OS appearance they draw with.
  */
 
 export type Scheme = 'dark' | 'light'

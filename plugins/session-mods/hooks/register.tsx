@@ -122,7 +122,6 @@ const PANE = 'session-panel'
 const TITLE = 'Session'
 /** The dock's opening width in fullscreen: more than any terminal gives, so the engine opens it at its ceiling (45% of the terminal); a width the person dragged or keyed wins. */
 const DOCK_COLUMNS = 512
-/** The colour an action without its own takes under the pointer: Catppuccin Frappé blue. */
 const HISTORY_CAP = 400
 /** An open sub-agent's latest entries and the head of its task: the whole of either can pass the engine's 100,000 drawn characters. */
 const OPEN_HISTORY = 40
@@ -589,144 +588,6 @@ export async function* stepPanel($: StepArgs[0], e: StepArgs[1], next: StepArgs[
 }
 
 export const register: Register = (on, options) => {
-  {
-    const defaultTtl: Ttl = options.cacheTtl === '5m' ? '5m' : '1h'
-
-    on('classic.PreModelSwitch', async ($, e, next) => {
-      await update($, info, i => ({ ...i, ttl: e.cache_ttl }))
-      return next(e)
-    })
-
-    /** Beneath the prompt's hint line, the engine's own line kept live above the bar. */
-    on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
-      const { Box, Text, Button } = $.ui.resolve(e)
-      const hint = await next(e)
-      const [now, i, picker, isQuotasOpen, usage] = await Promise.all([
-        $.clock.now(),
-        read($, info),
-        read($, picking),
-        read($, quotasOpen),
-        $.session.usage(),
-      ])
-
-      const ttl = i.ttl ?? defaultTtl
-      const cache =
-        i.lastRequestAt === null
-          ? { text: 'no request yet', color: undefined }
-          : (() => {
-              const left = i.lastRequestAt + ttlMs(ttl) - now
-              if (left <= 0) return { text: 'expired', color: '#ff0000' }
-              return { text: minutesLeft(left), color: cacheColor(left, ttlMs(ttl)) }
-            })()
-      const context = contextOf(usage.context.tokens, limit)
-      const quotas = usage.rateLimits.map(l => quotaOf(l.kind, l.percentUsed, l.resetsAt, now)).filter((q): q is Quota => q !== null)
-
-      const columns = Math.max(12, (e.viewport?.columns ?? 80) - 2)
-      const isBright = Math.floor(now / 1000) % 2 === 0
-      const hot = (key: string, color: string = ACTION) => ({ scope: key.slice(-64), color })
-
-      /** A coloured dot and a label that presses: Button takes no colour of its own. */
-      const chip = (key: string, label: string, color: string, onPress: () => unknown, dot = '●') => (
-        <Box key={`${key}:chip`} flexDirection="row" flexShrink={0}>
-          <Text color={color}>{dot} </Text>
-          <Button key={key} label={label} plain hover={hot(key, color)} onPress={onPress} />
-        </Box>
-      )
-
-      const toggle = (which: Exclude<Picker, null>) => update($, picking, cur => (cur === which ? null : which))
-      const pickModel = async (id: string) => {
-        await update($, picking, () => null)
-        await update($, info, cur => ({ ...cur, model: id }))
-        await $.command.run({ command: 'model', args: id })
-      }
-      const pickEffort = async (level: string) => {
-        await update($, picking, () => null)
-        await update($, info, cur => ({ ...cur, effort: level }))
-        await $.command.run({ command: 'effort', args: level })
-      }
-      const toggleQuotas = () => update($, quotasOpen, cur => !cur)
-
-      const options =
-        picker === 'model'
-          ? MODELS.map(m => chip(`model:${m.id}`, prettyModel(m.id), m.color, () => pickModel(m.id), i.model !== null && modelColor(i.model) === m.color ? '●' : '○'))
-          : picker === 'effort'
-            ? EFFORTS.map(l => chip(`effort:${l.level}`, effortLabel(l.level), l.color, () => pickEffort(l.level), i.effort === l.level ? '●' : '○'))
-            : null
-
-      const quotaBar = (q: Quota, width: number) => (
-        <Box key={`quota:${q.label}`} flexDirection="column" width={width}>
-          <Box flexDirection="row" justifyContent="space-between">
-            <Text>
-              <Text dimColor>{q.label} </Text>
-              <Text bold color={TONE[q.verdict?.tone ?? 'ok']}>
-                {q.used}%
-              </Text>
-              {q.verdict && <Text color={TONE[q.verdict.tone]}> {q.verdict.text}</Text>}
-            </Text>
-            {q.resetsIn !== null && <Text dimColor>🔄 {span(q.resetsIn)}</Text>}
-          </Box>
-          <Text>
-            {barRuns(q, width).map((run, k) => (
-              <Text key={`run:${k}`} color={run.color} bold={run.isPace} dimColor={run.isAhead && q.verdict?.tone !== 'ok' && !isBright}>
-                {run.text}
-              </Text>
-            ))}
-          </Text>
-        </Box>
-      )
-
-      const bar = (
-        <Box flexDirection="column">
-          {hint}
-          <Box flexDirection="row" flexWrap="wrap" columnGap={3} justifyContent="space-between">
-            <Box flexDirection="row" columnGap={3} flexShrink={0}>
-              <Text>
-                ⌛ <Text dimColor>running </Text>
-                {duration(now - usage.startedAt)}
-              </Text>
-              <Text>
-                ⏳ <Text dimColor>cache </Text>
-                <Text color={cache.color}>{cache.text}</Text>
-              </Text>
-              <Text wrap="truncate-end">
-                <Text dimColor>context </Text>
-                <Text bold color={context.color} inverse={context.isCompacting}>
-                  {context.text}
-                </Text>
-              </Text>
-            </Box>
-            <Box flexDirection="row" columnGap={2} flexShrink={0}>
-              {chip('pick:model', i.model ? prettyModel(i.model) : 'model…', modelColor(i.model), () => toggle('model'), picker === 'model' ? '●' : '○')}
-              {chip('pick:effort', effortLabel(i.effort), effortColor(i.effort), () => toggle('effort'), picker === 'effort' ? '●' : '○')}
-              {quotas.length > 0 && (
-                <Box key="quotas:row" flexDirection="row" flexShrink={0}>
-                  {quotas.map((q, k) => (
-                    <Box key={`quotas:${q.label}:row`} flexDirection="row">
-                      {k > 0 && <Text dimColor> │ </Text>}
-                      <Text color={TONE[q.verdict?.tone ?? 'ok']}>● </Text>
-                      <Button key={`quotas:${q.label}`} label={`${q.label} ${q.used}%`} plain hover={{ color: TONE[q.verdict?.tone ?? 'ok'] }} onPress={toggleQuotas} />
-                    </Box>
-                  ))}
-                  <Button key="quotas:fold" label={isQuotasOpen ? ' 🔼' : ' 🔽'} plain hover={hot('quotas:fold')} onPress={toggleQuotas} />
-                </Box>
-              )}
-            </Box>
-          </Box>
-          {options && (
-            <Box flexDirection="row" flexWrap="wrap" columnGap={2} justifyContent="flex-end">
-              {options}
-            </Box>
-          )}
-          {isQuotasOpen && quotas.length > 0 && (
-            <Box flexDirection="row" columnGap={3}>
-              {quotas.map(q => quotaBar(q, Math.floor((columns - 3 * (quotas.length - 1)) / quotas.length)))}
-            </Box>
-          )}
-        </Box>
-      )
-      return recolor(bar, currentScheme())
-    })
-  }
   {
 
     on('command.run', { command: 'session-panel' }, async $ => {
@@ -1643,6 +1504,144 @@ export const register: Register = (on, options) => {
         </Box>
       )
       return recolor(pane, currentScheme())
+    })
+  }
+  {
+    const defaultTtl: Ttl = options.cacheTtl === '5m' ? '5m' : '1h'
+
+    on('classic.PreModelSwitch', async ($, e, next) => {
+      await update($, info, i => ({ ...i, ttl: e.cache_ttl }))
+      return next(e)
+    })
+
+    /** Beneath the prompt's hint line, the engine's own line kept live above the bar. */
+    on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
+      const { Box, Text, Button } = $.ui.resolve(e)
+      const hint = await next(e)
+      const [now, i, picker, isQuotasOpen, usage] = await Promise.all([
+        $.clock.now(),
+        read($, info),
+        read($, picking),
+        read($, quotasOpen),
+        $.session.usage(),
+      ])
+
+      const ttl = i.ttl ?? defaultTtl
+      const cache =
+        i.lastRequestAt === null
+          ? { text: 'no request yet', color: undefined }
+          : (() => {
+              const left = i.lastRequestAt + ttlMs(ttl) - now
+              if (left <= 0) return { text: 'expired', color: '#ff0000' }
+              return { text: minutesLeft(left), color: cacheColor(left, ttlMs(ttl)) }
+            })()
+      const context = contextOf(usage.context.tokens, limit)
+      const quotas = usage.rateLimits.map(l => quotaOf(l.kind, l.percentUsed, l.resetsAt, now)).filter((q): q is Quota => q !== null)
+
+      const columns = Math.max(12, (e.viewport?.columns ?? 80) - 2)
+      const isBright = Math.floor(now / 1000) % 2 === 0
+      const hot = (key: string, color: string = ACTION) => ({ scope: key.slice(-64), color })
+
+      /** A coloured dot and a label that presses: Button takes no colour of its own. */
+      const chip = (key: string, label: string, color: string, onPress: () => unknown, dot = '●') => (
+        <Box key={`${key}:chip`} flexDirection="row" flexShrink={0}>
+          <Text color={color}>{dot} </Text>
+          <Button key={key} label={label} plain hover={hot(key, color)} onPress={onPress} />
+        </Box>
+      )
+
+      const toggle = (which: Exclude<Picker, null>) => update($, picking, cur => (cur === which ? null : which))
+      const pickModel = async (id: string) => {
+        await update($, picking, () => null)
+        await update($, info, cur => ({ ...cur, model: id }))
+        await $.command.run({ command: 'model', args: id })
+      }
+      const pickEffort = async (level: string) => {
+        await update($, picking, () => null)
+        await update($, info, cur => ({ ...cur, effort: level }))
+        await $.command.run({ command: 'effort', args: level })
+      }
+      const toggleQuotas = () => update($, quotasOpen, cur => !cur)
+
+      const options =
+        picker === 'model'
+          ? MODELS.map(m => chip(`model:${m.id}`, prettyModel(m.id), m.color, () => pickModel(m.id), i.model !== null && modelColor(i.model) === m.color ? '●' : '○'))
+          : picker === 'effort'
+            ? EFFORTS.map(l => chip(`effort:${l.level}`, effortLabel(l.level), l.color, () => pickEffort(l.level), i.effort === l.level ? '●' : '○'))
+            : null
+
+      const quotaBar = (q: Quota, width: number) => (
+        <Box key={`quota:${q.label}`} flexDirection="column" width={width}>
+          <Box flexDirection="row" justifyContent="space-between">
+            <Text>
+              <Text dimColor>{q.label} </Text>
+              <Text bold color={TONE[q.verdict?.tone ?? 'ok']}>
+                {q.used}%
+              </Text>
+              {q.verdict && <Text color={TONE[q.verdict.tone]}> {q.verdict.text}</Text>}
+            </Text>
+            {q.resetsIn !== null && <Text dimColor>🔄 {span(q.resetsIn)}</Text>}
+          </Box>
+          <Text>
+            {barRuns(q, width).map((run, k) => (
+              <Text key={`run:${k}`} color={run.color} bold={run.isPace} dimColor={run.isAhead && q.verdict?.tone !== 'ok' && !isBright}>
+                {run.text}
+              </Text>
+            ))}
+          </Text>
+        </Box>
+      )
+
+      const bar = (
+        <Box flexDirection="column">
+          {hint}
+          <Box flexDirection="row" flexWrap="wrap" columnGap={3} justifyContent="space-between">
+            <Box flexDirection="row" columnGap={3} flexShrink={0}>
+              <Text>
+                ⌛ <Text dimColor>running </Text>
+                {duration(now - usage.startedAt)}
+              </Text>
+              <Text>
+                ⏳ <Text dimColor>cache </Text>
+                <Text color={cache.color}>{cache.text}</Text>
+              </Text>
+              <Text wrap="truncate-end">
+                <Text dimColor>context </Text>
+                <Text bold color={context.color} inverse={context.isCompacting}>
+                  {context.text}
+                </Text>
+              </Text>
+            </Box>
+            <Box flexDirection="row" columnGap={2} flexShrink={0}>
+              {chip('pick:model', i.model ? prettyModel(i.model) : 'model…', modelColor(i.model), () => toggle('model'), picker === 'model' ? '●' : '○')}
+              {chip('pick:effort', effortLabel(i.effort), effortColor(i.effort), () => toggle('effort'), picker === 'effort' ? '●' : '○')}
+              {quotas.length > 0 && (
+                <Box key="quotas:row" flexDirection="row" flexShrink={0}>
+                  {quotas.map((q, k) => (
+                    <Box key={`quotas:${q.label}:row`} flexDirection="row">
+                      {k > 0 && <Text dimColor> │ </Text>}
+                      <Text color={TONE[q.verdict?.tone ?? 'ok']}>● </Text>
+                      <Button key={`quotas:${q.label}`} label={`${q.label} ${q.used}%`} plain hover={{ color: TONE[q.verdict?.tone ?? 'ok'] }} onPress={toggleQuotas} />
+                    </Box>
+                  ))}
+                  <Button key="quotas:fold" label={isQuotasOpen ? ' 🔼' : ' 🔽'} plain hover={hot('quotas:fold')} onPress={toggleQuotas} />
+                </Box>
+              )}
+            </Box>
+          </Box>
+          {options && (
+            <Box flexDirection="row" flexWrap="wrap" columnGap={2} justifyContent="flex-end">
+              {options}
+            </Box>
+          )}
+          {isQuotasOpen && quotas.length > 0 && (
+            <Box flexDirection="row" columnGap={3}>
+              {quotas.map(q => quotaBar(q, Math.floor((columns - 3 * (quotas.length - 1)) / quotas.length)))}
+            </Box>
+          )}
+        </Box>
+      )
+      return recolor(bar, currentScheme())
     })
   }
 
