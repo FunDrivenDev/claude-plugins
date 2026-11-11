@@ -1,11 +1,17 @@
-# Continuous integration, run by hand and on Renovate's pull requests, which no
-# laptop checks: `just lint` and `just test`, with the toolchain from mise.toml. The
-# git hooks are the CI (hk.pkl: `just lint` before a commit, `just check` before a
-# push). The smoke tests also run on macOS, whose /bin/bash 3.2 is what most
-# colleagues' status lines run under.
+# The checks of the pre-push hook, on GitHub: on each push to main and weekly, so a
+# Claude Code release that breaks a mod shows up with no commit of ours (the
+# validator, the mods' tests and the type-check run on the latest claude); by hand;
+# and on Renovate's pull requests, which no laptop checks. A human's pull request
+# runs none: the git hooks are its CI (hk.pkl). The smoke tests also run on macOS,
+# whose /bin/bash 3.2 is what most colleagues' status lines run under.
 name: CI
 
 on:
+  push:
+    branches: [main]
+  schedule:
+    # Mondays, 05:17 UTC.
+    - cron: "17 5 * * 1"
   workflow_dispatch:
   # Renovate's pull requests, which no laptop checks: each job runs on them alone
   # (`if:` below), a human pull request runs none.
@@ -37,6 +43,47 @@ jobs:
           install_args: just shellcheck actionlint biome ruff
       - run: just lint
 
+  claude:
+    name: Validator, mods' tests, type-check (latest claude)
+    if: github.event_name != 'pull_request' || github.event.pull_request.user.login == 'renovate[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PNPM_HOME: ${{ github.workspace }}/../pnpm-home
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        with:
+          install_args: just node pnpm npm:typescript
+      # The latest release on purpose: the run checks the mods against the Claude Code
+      # people get today. Its build script fetches the native binary.
+      - name: Install Claude Code (pnpm)
+        # zizmor: ignore[adhoc-packages] the latest, unpinned on purpose (above)
+        run: |
+          echo "$PNPM_HOME/bin" >> "$GITHUB_PATH"
+          PATH="$PNPM_HOME/bin:$PATH" pnpm add -g --allow-build=@anthropic-ai/claude-code @anthropic-ai/claude-code
+          "$PNPM_HOME/bin/claude" --version
+      - run: just typecheck
+      - run: just validate
+
+  audit:
+    name: Audit (just audit)
+    if: github.event_name != 'pull_request' || github.event.pull_request.user.login == 'renovate[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # gitleaks reads the whole history.
+          fetch-depth: 0
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        with:
+          install_args: just gitleaks zizmor
+      - run: just audit
+
   test:
     name: Smoke tests (just test, ${{ matrix.os }})
     if: github.event_name != 'pull_request' || github.event.pull_request.user.login == 'renovate[bot]'
@@ -61,7 +108,7 @@ jobs:
 
   required-checks:
     name: required-checks
-    needs: [lint, test]
+    needs: [lint, test, claude, audit]
     # always(), not !cancelled(): a cancelled run must fail required-checks, not skip it
     # (GitHub counts a skipped required check as passing).
     if: always() && (github.event_name != 'pull_request' || github.event.pull_request.user.login == 'renovate[bot]')
