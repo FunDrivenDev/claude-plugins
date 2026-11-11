@@ -1,25 +1,35 @@
 amends "package://github.com/jdx/hk/releases/download/v2.5.0/hk@2.5.0#/Config.pkl"
 
 // Git hooks call the Justfile, never the tools behind it (fundrivenOS rules/ci/hooks.md).
-// They are the CI: GitHub Actions runs ci.yml only by hand and on Renovate's PRs.
+// They are the PR's CI: GitHub Actions runs ci.yml on main, weekly, by hand and on
+// Renovate's PRs.
 hooks {
-    // No commit that fails the linters; unstaged work is stashed meanwhile.
+    // Narrow and fast: no secret and no lint error in the staged files; unstaged work
+    // is stashed meanwhile.
     ["pre-commit"] {
+        fix = true
         stash = "git"
         steps {
+            ["secrets"] {
+                check = "just audit staged"
+            }
             ["just"] {
                 glob = "**/*"
-                check = "just lint"
+                check = "just lint staged"
+                fix = "just fmt staged && just lint staged"
             }
         }
     }
-    // No push with a failing check: lint, smoke tests, the version bumps, the validator
-    // and the mods' tests.
+    // Everything before it leaves the machine: lint, smoke tests, version bumps,
+    // type-check, the validator and the mods' tests, then the history's secrets and
+    // the workflows' audit.
     ["pre-push"] {
         steps {
-            ["just"] {
-                glob = "**/*"
+            ["check"] {
                 check = "just check"
+            }
+            ["audit"] {
+                check = "just audit"
             }
         }
     }

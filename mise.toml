@@ -3,12 +3,19 @@
 [tools]
 actionlint = "1.7.12"
 biome = "2.5.15"
+gitleaks = "8.30.1"
 hk = "2.5.0"
 jq = "1.8.2"
 just = "1.58.0"
+node = "24.22.3"
+"npm:typescript" = "7.0.2"
+pnpm = "12.19.0"
 ruff = "0.16.10"
 shellcheck = "0.11.0"
+zizmor = "1.32.0"
 
 [settings]
 lockfile = true
 lockfile_platforms = ["macos-arm64", "linux-x64"]
+# npm: tools (typescript) install through pnpm, never npm.
+npm.package_manager = "pnpm"
