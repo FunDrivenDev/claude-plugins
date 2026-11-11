@@ -1,5 +1,3 @@
-import type { EngineInterface } from 'claude-code'
-
 /**
  * How both mods look: the OS appearance, read once for the pane and the bar,
  * the light twin of each colour they draw, and the names they share.
@@ -55,31 +53,6 @@ export const recolor = <T,>(node: T, scheme: Scheme): T => {
     ...(el.hover && { hover: swap(el.hover) }),
     ...(el.children && { children: el.children.map(child => recolor(child, scheme)) }),
   } as T
-}
-
-/** macOS's appearance: `AppleInterfaceStyle` is `Dark` in dark mode and unset in light mode; dark elsewhere. */
-async function readScheme($: EngineInterface): Promise<Scheme> {
-  const r = await $.process.run(['defaults', 'read', '-g', 'AppleInterfaceStyle'])
-  if (r.exitCode === 0) return 'dark'
-  return /does not exist/.test(r.stderr) ? 'light' : 'dark'
-}
-
-/** How often the appearance is read again, so a switch shows within this time. */
-const SCHEME_EVERY_MS = 5000
-
-let scheme: Scheme = 'dark'
-let schemeTicker: { cancel: () => void } | null = null
-
-/** The appearance both mods draw with: dark until `startScheme` has read it. */
-export const currentScheme = (): Scheme => scheme
-
-/** Reads the appearance at session start, then every SCHEME_EVERY_MS; `register` calls it once for both mods. */
-export async function startScheme($: EngineInterface): Promise<void> {
-  schemeTicker?.cancel()
-  schemeTicker = $.clock.every(SCHEME_EVERY_MS, () => {
-    void readScheme($).then(s => (scheme = s))
-  })
-  scheme = await readScheme($)
 }
 
 /** `claude-opus-5-5[1m]` → `Opus 5.5`; anything else as given. */

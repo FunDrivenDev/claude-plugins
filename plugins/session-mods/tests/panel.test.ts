@@ -109,7 +109,7 @@ test('an open sub-agent shows its latest entries only and collapses from its foo
   on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
   on('tool.call', () => ({ result: {} as never, text: 'y'.repeat(300) }) as never)
   on('process.run', () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
-  on('ui.open', () => ({ value: undefined }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
   await $.agent.spawn({
     tool_use_id: 'tu1',
     prompt: 'P'.repeat(9000),
@@ -204,9 +204,9 @@ test('a bare #N numbering a list yields to the pull request the session works on
   on('session.model', () => ({ value: 'opus' }))
   on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
-  on('command.register', () => ({ value: undefined }))
+  on('command.register', () => ({ value: { command: 'session-panel' } }))
   on('session.id', () => ({ value: 's1' }))
-  on('ui.open', () => ({ value: undefined }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
   on('env.get', () => ({ value: undefined }))
   on('settings.read', () => ({ value: {} }))
   on('session.messages', () => ({
@@ -235,10 +235,10 @@ test('a new session lists only the commits made since it began, in its linked wo
   on('session.usage', () => ({ value: { startedAt: 1_700_000_000_000, context: {} as never, rateLimits: [] } }))
   on('session.model', () => ({ value: 'opus' }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
-  on('command.register', () => ({ value: undefined }))
+  on('command.register', () => ({ value: { command: 'session-panel' } }))
   on('session.messages', () => ({ value: [] }))
   on('session.id', () => ({ value: 's1' }))
-  on('ui.open', () => ({ value: undefined }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
   on('env.get', () => ({ value: undefined }))
   on('settings.read', () => ({ value: {} }))
   const logs: string[][] = []
@@ -354,10 +354,10 @@ test('the pane takes its light colours on a light macOS', async ($, on) => {
   on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('session.model', () => ({ value: 'opus' }))
-  on('command.register', () => ({ value: undefined }))
+  on('command.register', () => ({ value: { command: 'session-panel' } }))
   on('session.messages', () => ({ value: [] }))
   on('session.id', () => ({ value: 's1' }))
-  on('ui.open', () => ({ value: undefined }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
   on('env.get', () => ({ value: undefined }))
   on('settings.read', () => ({ value: {} }))
   on('process.run', ($, e) => {
