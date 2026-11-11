@@ -31,6 +31,11 @@ hooks {
             ["audit"] {
                 check = "just audit"
             }
+            // Prototype: the PR's `checks` status, posted once GitHub has the commit.
+            ["status"] {
+                depends = List("check", "audit")
+                check = "just post-status"
+            }
         }
     }
 }

@@ -50,3 +50,7 @@ check: lint test versions typecheck validate
 # Look for secrets (gitleaks: the whole history, or `staged` for the pre-commit hook) and audit the workflows (zizmor).
 audit scope="all":
     scripts/audit.sh {{ quote(scope) }}
+
+# Post the `checks` status on HEAD once GitHub has it, in the background; the pre-push hook's last step (prototype).
+post-status:
+    scripts/post-status.sh
