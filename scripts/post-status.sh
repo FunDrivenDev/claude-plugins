@@ -9,7 +9,11 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 sha=$(git rev-parse HEAD)
-repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+# A prototype never refuses a push: without gh, or logged out, it posts nothing.
+if ! command -v gh >/dev/null || ! repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null); then
+  echo "post-status: skipped, gh is missing or cannot read the repo"
+  exit 0
+fi
 log=${XDG_STATE_HOME:-$HOME/.local/state}/post-status/${repo//\//-}-$sha.log
 mkdir -p "$(dirname "$log")"
 
