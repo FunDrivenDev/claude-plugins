@@ -1,8 +1,17 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { duration, prettyModel, recolor } from '../hooks/appearance'
+import { duration, herdrScheme, prettyModel, recolor } from '../hooks/appearance'
 
 describe('appearance', () => {
+  test("Herdr's pinned appearance wins, and an unset or broken one leaves the choice to the OS", () => {
+    expect(herdrScheme('{"appearance":"light","theme":{"light":"catppuccin-latte"}}')).toBe('light')
+    expect(herdrScheme('{"appearance":"dark"}')).toBe('dark')
+    expect(herdrScheme('{"zoom":1}')).toBeNull()
+    expect(herdrScheme('{"appearance":"system"}')).toBeNull()
+    expect(herdrScheme('null')).toBeNull()
+    expect(herdrScheme('{not json')).toBeNull()
+  })
+
   test('names models and durations calmly', () => {
     expect(prettyModel('claude-opus-5-5')).toBe('Opus 5.5')
     expect(prettyModel('claude-haiku-4-5-20251001')).toBe('Haiku 4.5')

@@ -25,6 +25,6 @@ Beneath the title, the tabs on the left, and a close mark on the right.
 
 ## Colours
 
-Catppuccin Frappé on a dark macOS appearance. On a light one, every colour turns to its twin that reads on white (Catppuccin Latte, darker tones for GitHub's colours), following the system setting within five seconds. Off macOS, the dark palette.
+Catppuccin Frappé on a dark macOS appearance. On a light one, every colour turns to its twin that reads on white (Catppuccin Latte, darker tones for GitHub's colours), following the system setting within five seconds. In the Herdr app, its own `appearance` setting (`~/.config/herdr-app/settings.json`) wins when set, since it can show a light theme on a dark macOS. Off macOS, the dark palette.
 
 Under the pointer, every action (a tab, a pill, a fold, a sub-agent or a commit) lights in its colour, blue when it has none, and every link (a document, a handover, the issue and the pull request) underlines.

@@ -1,9 +1,23 @@
 /**
  * How both mods look: the light twin of each colour they draw, and the names
- * they share. `register.tsx` reads the OS appearance they draw with.
+ * they share. `register.tsx` reads the appearance they draw with: Herdr's own
+ * when the session runs in Herdr and it pins one, else the OS's.
  */
 
 export type Scheme = 'dark' | 'light'
+
+/** `__CFBundleIdentifier` of a process started by the Herdr app. */
+export const HERDR_BUNDLE = 'dev.herdr.app'
+
+/** Herdr's `appearance` from its settings.json, `light` or `dark`; null when unset (Herdr then follows the OS) or unreadable. */
+export const herdrScheme = (settings: string): Scheme | null => {
+  try {
+    const appearance = (JSON.parse(settings) as { appearance?: unknown } | null)?.appearance
+    return appearance === 'light' || appearance === 'dark' ? appearance : null
+  } catch {
+    return null
+  }
+}
 
 /**
  * Each colour the pane and the bar draw, as written for a dark background, with

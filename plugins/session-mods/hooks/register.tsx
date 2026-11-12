@@ -3,7 +3,7 @@ import type { EngineInterface, Hook, Register, RenderElement, ToolCallInput, Too
 
 import type { Agent, Config, Doc, Entry, Handover, HandoverFile, Info, Picker, Prompt, Quota, Repo, RepoChanges, Step, Tab, TrackedIssue, TrackedPr, Ttl } from '../types'
 
-import { duration, prettyModel, recolor, type Scheme } from './appearance'
+import { duration, HERDR_BUNDLE, herdrScheme, prettyModel, recolor, type Scheme } from './appearance'
 import { ACTION, barRuns, cacheColor, contextOf, effortColor, effortLabel, EFFORTS, minutesLeft, modelColor, modelId, MODELS, quotaOf, RESERVE, span, TONE, ttlMs, whole, WINDOW, type Limit } from './bar'
 import { changesOf, treeRows } from './files'
 import { HANDOVER_STATE, handoverOf } from './handover'
@@ -20,8 +20,17 @@ import type { GithubRef, LinearRef } from './tracker'
  */
 
 // --- appearance
-/** macOS's appearance: `AppleInterfaceStyle` is `Dark` in dark mode and unset in light mode; dark elsewhere. */
+/**
+ * The terminal's appearance. In Herdr, its own `appearance` setting when one is
+ * set, since it can pin a light theme on a dark macOS. Otherwise macOS's:
+ * `AppleInterfaceStyle` is `Dark` in dark mode and unset in light mode; dark elsewhere.
+ */
 async function readScheme($: EngineInterface): Promise<Scheme> {
+  if ((await $.env.get('__CFBundleIdentifier')) === HERDR_BUNDLE) {
+    const settings = await $.process.run(['sh', '-c', 'cat "$HOME/.config/herdr-app/settings.json"'])
+    const pinned = settings.exitCode === 0 ? herdrScheme(settings.stdout) : null
+    if (pinned) return pinned
+  }
   const r = await $.process.run(['defaults', 'read', '-g', 'AppleInterfaceStyle'])
   if (r.exitCode === 0) return 'dark'
   return /does not exist/.test(r.stderr) ? 'light' : 'dark'
