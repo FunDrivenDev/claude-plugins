@@ -1,0 +1,14 @@
+# gitleaks' own rules for secrets, plus one for personal data: claude-plugins is
+# public, so no file may name the person who built it.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "home-directory-path"
+description = "An absolute path into a home directory gives away a user name"
+regex = '''/(?:Users|home)/[A-Za-z0-9._-]+/'''
+
+# CI runners build as `runner`; the tests use `/home/me`.
+[[rules.allowlists]]
+regexes = ['''/(?:Users|home)/(?:runner|me)/''']

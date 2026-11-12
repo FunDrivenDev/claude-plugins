@@ -1,18 +1,24 @@
-# Continuous integration, run by hand and on Renovate's pull requests, which no
-# laptop checks: `just lint` and `just test`, with the toolchain from mise.toml. The
-# git hooks are the CI (hk.pkl: `just lint` before a commit, `just check` before a
-# push). The smoke tests also run on macOS, whose /bin/bash 3.2 is what most
-# colleagues' status lines run under.
+# The checks of the pre-push hook but `just versions` (it compares a branch with
+# origin/main), on GitHub: on each push to main and weekly, so a
+# Claude Code release that breaks a mod shows up with no commit of ours (the
+# validator, the mods' tests and the type-check run on the latest claude); by hand;
+# and on Renovate's pull requests, which no laptop checks. A human's pull request
+# runs none: the git hooks are its CI (hk.pkl). Linux only: the laptop's pre-push
+# hook covers macOS, and the harness needs bash 5 anyway.
 name: CI
 
 on:
+  push:
+    branches: [main]
+  schedule:
+    # Mondays, 05:17 UTC.
+    - cron: "17 5 * * 1"
   workflow_dispatch:
   # Renovate's pull requests, which no laptop checks: each job runs on them alone
   # (`if:` below), a human pull request runs none.
   pull_request:
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
@@ -27,6 +33,8 @@ jobs:
     name: Lint (just lint)
     if: github.event_name != 'pull_request' || github.event.pull_request.user.login == 'renovate[bot]'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -34,17 +42,65 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
+          version: 2026.10.3
           install_args: just shellcheck actionlint biome ruff
       - run: just lint
 
-  test:
-    name: Smoke tests (just test, ${{ matrix.os }})
+  claude:
+    name: Validator, mods' tests, type-check (latest claude)
     if: github.event_name != 'pull_request' || github.event.pull_request.user.login == 'renovate[bot]'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-26]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    env:
+      PNPM_HOME: ${{ github.workspace }}/../pnpm-home
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        with:
+          version: 2026.10.3
+          install_args: just node pnpm npm:typescript
+      # The latest release on purpose: the run checks the mods against the Claude Code
+      # people get today. Its build script fetches the native binary.
+      - name: Install Claude Code (pnpm)
+        # zizmor: ignore[adhoc-packages] the latest, unpinned on purpose (above)
+        run: |
+          echo "$PNPM_HOME/bin" >> "$GITHUB_PATH"
+          PATH="$PNPM_HOME/bin:$PATH" pnpm add -g --allow-build=@anthropic-ai/claude-code @anthropic-ai/claude-code
+          "$PNPM_HOME/bin/claude" --version
+          # The scripts take it over the version mise.toml pins for the hooks.
+          echo "CLAUDE=$PNPM_HOME/bin/claude" >> "$GITHUB_ENV"
+      - run: just typecheck
+      - run: just validate
+
+  audit:
+    name: Audit (just audit)
+    if: github.event_name != 'pull_request' || github.event.pull_request.user.login == 'renovate[bot]'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # gitleaks reads the whole history.
+          fetch-depth: 0
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        with:
+          version: 2026.10.3
+          install_args: just gitleaks zizmor
+      - run: just audit
+
+  test:
+    name: Smoke tests (just test)
+    if: github.event_name != 'pull_request' || github.event.pull_request.user.login == 'renovate[bot]'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -52,20 +108,22 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
+          version: 2026.10.3
           install_args: just jq
       # The handover terminal contract skips the hosts it does not find.
       - name: Install tmux
-        run: |
-          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get install -y tmux; else brew install tmux; fi
+        run: sudo apt-get install -y tmux
       - run: just test
 
   required-checks:
     name: required-checks
-    needs: [lint, test]
+    needs: [lint, test, claude, audit]
     # always(), not !cancelled(): a cancelled run must fail required-checks, not skip it
     # (GitHub counts a skipped required check as passing).
     if: always() && (github.event_name != 'pull_request' || github.event.pull_request.user.login == 'renovate[bot]')
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -73,9 +131,10 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
+          version: 2026.10.3
           install_args: just
       # Skipped jobs are fine (the change did not need them); a failed or
-      # cancelled one is not. The matrix's legs count as one result.
+      # cancelled one is not.
       - run: |
           # shellcheck disable=SC2086 # one argument per job result
           just ci-verdict $RESULTS

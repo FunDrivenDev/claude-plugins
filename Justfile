@@ -7,13 +7,13 @@ _default:
 init:
     scripts/init.sh
 
-# Lint every shell script (shellcheck), the CI workflow (actionlint), the mods' TypeScript (biome) and the Python scripts (ruff format --check and ruff check, ruff.toml); the pre-commit hook.
-lint:
-    git ls-files -z --cached --others --exclude-standard '*.sh' | xargs -0 mise exec -- shellcheck
-    mise exec -- actionlint
-    mise exec -- biome lint --error-on-warnings
-    mise exec -- ruff format --check --quiet
-    mise exec -- ruff check --quiet
+# Format the files in scope (all, changed, staged): ruff on the Python scripts.
+fmt scope="all":
+    scripts/fmt.sh {{ quote(scope) }}
+
+# Lint the files in scope (all, changed, staged): shellcheck, actionlint, biome on the mods' TypeScript, ruff on the Python scripts; the pre-commit hook runs `staged`.
+lint scope="all":
+    scripts/lint.sh {{ quote(scope) }}
 
 # Run the plugins' smoke tests: every tests/*.sh, then every tests/*.py, in name order, stopping at the first failure; a name starting with _ is a helper, not a test.
 test:
@@ -36,9 +36,21 @@ bump plugin level:
 ci-verdict *results:
     scripts/ci-verdict.sh {{ results }}
 
-# Check the marketplace and every plugin with Claude Code's own validator, and run the mods' tests (needs the claude CLI, so not in ci.yml).
+# Check the marketplace and every plugin with Claude Code's own validator, and run the mods' tests, with the Claude Code version mise.toml pins.
 validate:
     scripts/validate.sh
 
-# Every check: lint, the smoke tests, the version bumps, then the validator and the mods' tests; the pre-push hook.
-check: lint test versions validate
+# Type-check each mod's TypeScript (tsc) against the types of the Claude Code version mise.toml pins, which it lays first.
+typecheck:
+    scripts/typecheck.sh
+
+# Every check: lint, the smoke tests, the version bumps, the type-check, then the validator and the mods' tests; the pre-push hook.
+check: lint test versions typecheck validate
+
+# Look for secrets (gitleaks: the whole history, or `staged` for the pre-commit hook) and audit the workflows (zizmor).
+audit scope="all":
+    scripts/audit.sh {{ quote(scope) }}
+
+# Post the `checks` status on HEAD once GitHub has it, in the background; the pre-push hook's last step.
+post-status:
+    scripts/post-status.sh
