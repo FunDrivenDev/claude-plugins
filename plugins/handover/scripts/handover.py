@@ -38,8 +38,8 @@ on and is cleared, exited or compacted later, and the next session in the same p
 
 Background commands: each one is tagged at launch, its description starting with
 `[await]` (a test run, a build, a CI watch: its result is waited for) or `[endless]` (a dev
-server, a watcher: it never ends by itself). An untagged one is refused once, then guessed
-from its command, or taken for endless when the guess is unsure. During the wind-down the
+server, a watcher: it never ends by itself). An untagged one is refused once (a subagent's
+is not), then guessed from its command, or taken for endless when the guess is unsure. During the wind-down the
 plugin waits for the [await] ones, up to `await_minutes` each, and stops the [endless]
 ones and those it gave up on; the session names them in its reply, the writer in the
 handover.
@@ -625,7 +625,8 @@ def guess_tag(command):
 
 def untagged_background(inp):
     """PreToolUse: a background command without its tag is refused once, with the format; launched the same
-    way again, it runs, tagged by a guess. Each step is logged, to see why tags go missing."""
+    way again, it runs, tagged by a guess. A subagent's is guessed at once: subagents are never told the tags.
+    Each step is logged, to see why tags go missing."""
     ti = inp.get("tool_input") or {}
     if inp.get("tool_name") != "Bash" or not ti.get("run_in_background") or TAG_RE.match(ti.get("description") or ""):
         return None
@@ -639,7 +640,7 @@ def untagged_background(inp):
             "subagent": bool(inp.get("agent_id")),
             "guided": bool(tasks.get("guided")),
         }
-        if key not in refused:
+        if key not in refused and not fields["subagent"]:
             refused[key] = time.time()
             record("command_untagged", sid, step="refused", **fields)
             return UNTAGGED
@@ -2097,7 +2098,7 @@ def own_command(command):
 
 
 # Interpreters an installed plugin script may be run with; none of their own flags (`bash -c`) is let through.
-SCRIPT_RUNNERS = {"bash", "sh", "zsh", "python3", "python"}
+SCRIPT_RUNNERS = {"bash", "sh", "zsh", "python3", "python", "perl"}
 
 
 def plain_command(command):
@@ -2162,13 +2163,432 @@ def names_path(text, path):
     return any(f in text for f in forms)
 
 
+# Shell words that run nothing themselves: the next simple command follows them.
+SHELL_KEYWORDS = {"if", "then", "else", "elif", "fi", "do", "done", "while", "until", "!", "{", "}"}
+# Any of these words in a statement leaves every later assignment untrusted: it may sit in a body that never runs.
+BLOCK_WORDS = SHELL_KEYWORDS | {"for", "case", "esac", "select", "repeat", "in", "foreach", "end"}
+# Commands that only read their files and print; read_only_simple refuses their writing options.
+READ_ONLY_TOOLS = {
+    "git",
+    "echo",
+    "printf",
+    "ls",
+    "cat",
+    "head",
+    "tail",
+    "find",
+    "grep",
+    "rg",
+    "jq",
+    "sort",
+    "cut",
+    "wc",
+    "test",
+    "[",
+    "stat",
+    "file",
+    "diff",
+    "du",
+    "realpath",
+    "basename",
+    "dirname",
+    "cd",
+    "pwd",
+    "true",
+    "sed",
+}
+# The sed scripts let through: `;`-separated commands `p d q n N =` or `s<d>…<d>…<d>` with the flags `g p I`
+# and a count, each after an optional line address (a number, `$` or `/re/`) or range, nothing else: no `w`,
+# `W`, `e`, `r` or `R`, whatever their spelling.
+SED_ADDR = r"(?:\d+|\$|/(?:[^/\\\n]|\\.)*/I?)"
+SED_PIECE = re.compile(
+    rf"\s*(?:{SED_ADDR}(?:\s*,\s*{SED_ADDR})?\s*!?\s*)?"
+    r"(?:[pdqnN=]|s(?P<d>[/|#,:@%])(?:(?!(?P=d))[^\\\n]|\\.)*(?P=d)(?:(?!(?P=d))[^\\\n]|\\.)*(?P=d)[gpI0-9]*)\s*"
+)
+SED_SHORT = set("nErsuz")
+SED_LONG = {"--quiet", "--silent", "--regexp-extended", "--posix", "--null-data", "--separate", "--unbuffered"}
+
+
+def sed_script_ok(script):
+    pos = 0
+    while True:
+        m = SED_PIECE.match(script, pos)
+        if not m:
+            return False
+        pos = m.end()
+        if pos == len(script):
+            return True
+        if script[pos] != ";":
+            return False
+        pos += 1
+        if pos == len(script):
+            return True
+
+
+def sed_read_only(args):
+    """sed with only known reading options and scripts from the allowlist (SED_PIECE)."""
+    scripts, rest, i = [], [], 0
+    while i < len(args):
+        a = args[i]
+        if a == "-e" and i + 1 < len(args):
+            scripts.append(args[i + 1])
+            i += 2
+            continue
+        if a.startswith("--expression="):
+            scripts.append(a.split("=", 1)[1])
+        elif a.startswith("--"):
+            if a not in SED_LONG:
+                return False
+        elif a.startswith("-") and len(a) > 1:
+            # A cluster may end on `e` and its script (`-ne 1p`, `-ne1p`).
+            flags, e, script = a[1:].partition("e")
+            if not set(flags) <= SED_SHORT:
+                return False
+            if e:
+                if not script:
+                    if i + 1 >= len(args):
+                        return False
+                    script = args[i + 1]
+                    i += 1
+                scripts.append(script)
+        else:
+            rest.append(a)
+        i += 1
+    if not scripts:
+        if not rest:
+            return False
+        scripts = [rest[0]]
+    return all(sed_script_ok(sc) for sc in scripts)
+
+
+# An unquoted glob character, marked before shlex drops the quotes: a glob can expand to a file named like an
+# option (`-dele*` to `-delete`). `^`, `#` and a `~` inside a word are glob operators too once zsh's `extendedglob`
+# is set (Claude Code unsets it, a user's setting may not), so they are marked all the same.
+GLOB_MARKS = {"*": "\ue001", "?": "\ue002", "[": "\ue003", "^": "\ue004", "#": "\ue005", "~": "\ue006"}
+# An unquoted `$`, marked too: bash splits what its variable holds into several words.
+DOLLAR_MARK = "\ue007"
+# A redirection's descriptor (`2>`: one ASCII digit, as zsh reads it, unquoted, opening a word, against `<` or `>`),
+# which shlex splits from its operator: made this mark, so a numeric argument (`branch 2 >x`, `'2'>x`, zsh's `12>x`)
+# is never taken for one.
+FD_MARK = "\ue008"
+FD_RE = re.compile(r"[0-9](?=[<>])")
+# Digits that bash and zsh split differently: zsh reads `2&>` as a descriptor and `12>` as an argument, bash the
+# other way round. Either reading may hand a command an option the other hides (`printf 2&>/dev/null -v PATH …`).
+FD_EITHER_RE = re.compile(r"[0-9]+(?=&>)|[0-9]{2,}(?=[<>])")
+# A quoted or escaped operator character, marked too: shlex gives `';'`, `\;` and `'<'` as the operator itself, where
+# the shell passes a word (`find x '<' -delete` is one command).
+OPERATOR_MARKS = {c: chr(0xE010 + n) for n, c in enumerate("();<>|&")}
+UNMARK = str.maketrans(
+    {**{v: k for k, v in GLOB_MARKS.items()}, **{v: k for k, v in OPERATOR_MARKS.items()}, DOLLAR_MARK: "$"}
+)
+
+
+def unquoted_newlines_to_semicolons(command):
+    """The command with its unquoted newlines made `;`, its unquoted glob characters and `$` marked (GLOB_MARKS,
+    DOLLAR_MARK), and its quoted or escaped operator characters marked (OPERATOR_MARKS). Raises ValueError on
+    digits bash and zsh split differently before a redirection (FD_EITHER_RE)."""
+    out, quote, escaped, start = [], None, False, True
+    for i, c in enumerate(command):
+        # A word starts after an unquoted, unescaped blank or operator character only (`x\ 2>` is one word).
+        opens, start = start and not (quote or escaped), not (quote or escaped) and c in " \t\n;&|()"
+        if opens and FD_EITHER_RE.match(command, i):
+            raise ValueError("a descriptor bash and zsh read differently")
+        if opens and FD_RE.match(command, i):
+            out.append(FD_MARK)
+            continue
+        if escaped:
+            escaped = False
+            c = OPERATOR_MARKS.get(c, c)
+        elif c == "\\" and quote != "'":
+            escaped = True
+        elif quote:
+            quote = None if c == quote else quote
+            c = OPERATOR_MARKS.get(c, c)
+        elif c in "'\"":
+            quote = c
+        elif c == "\n":
+            c = ";"
+        elif c in GLOB_MARKS and not (c == "~" and (i == 0 or command[i - 1] in " \t\n;&|()<>=:")):
+            # A `~` opening a word (or a value, `X=~/a`) is the home directory.
+            c = GLOB_MARKS[c]
+        elif c == "$":
+            c = DOLLAR_MARK
+        out.append(c)
+    return "".join(out)
+
+
+# Commands whose options can write or run something: a variable among their words must be known.
+OPTION_WRITERS = {"find", "sed", "sort", "tail", "rg", "git", "file"}
+# `printf -v` and `test -v` assign or evaluate: a glob, or an unknown variable that may open a word (`$X`, `-$X`) or
+# split into several, may become `-v`.
+ARG_EVALUATORS = {"printf", "test", "["}
+# A printf conversion: its flags, width and precision, then its letter.
+PRINTF_SPEC = re.compile(r"%([^A-Za-z%]*)([A-Za-z%])")
+VAR_RE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+# A `$` that VAR_RE leaves: a special parameter (`$_`, `$1`, `$@`…) or an expansion with an operator (`${X:=…}`).
+LEFT_EXPANSION = re.compile(r"\$[\w{@*#?$!-]")
+ASSIGNED = re.compile(r"(?:^|[;&|\s(])([A-Za-z_][A-Za-z0-9_]*)=")
+
+
+def unsafe_assignment(name):
+    """Any name but a single letter: bash and zsh read too many variables (zsh's MODULE_PATH loads a module on the
+    next `$WATCH`, bash's EXECIGNORE skips a program in PATH) for a list of them to hold."""
+    return not re.fullmatch(r"[A-Za-z]", name) or name in os.environ
+
+
+def unsafe_expansions(command):
+    """True when the text holds, outside single quotes, a `$` other than a plain `$NAME` or `${NAME}` (zsh's
+    `$=X`, `${(e)X}`, `$X[…]`, `$X:l`, bash's `${X@P}`, special parameters), or, outside any quotes, a `{`
+    (brace expansion such as `{-delete,-print}`, a group) or a comment: a quote in a comment would hide the
+    next lines from the parse, or zsh's numeric glob (`<->`, `<1-9>`), which bash and the parse read as a
+    redirection from `-` or a number."""
+    quote, i = None, 0
+    while i < len(command):
+        c = command[i]
+        if c == "\\" and quote != "'":
+            i += 2
+            continue
+        if quote == "'":
+            quote = None if c == "'" else quote
+        elif c == "$":
+            # The lookahead takes `\w` too, so that `$XY:t` cannot backtrack to `$X`.
+            m = re.match(r"\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*(?![\w\[:]))", command[i:])
+            if not m:
+                return True
+            i += len(m.group(0))
+            continue
+        elif quote == '"':
+            quote = None if c == '"' else quote
+        elif c in "'\"":
+            quote = c
+        elif (
+            c == "{"
+            or (c == "#" and (i == 0 or command[i - 1] in " \t\n;&|()<>"))
+            or (c == "<" and re.match(r"<[0-9]*-[0-9]*>", command[i:]))
+        ):
+            return True
+        i += 1
+    return False
+
+
+def trusted_names(command):
+    """The variables the command assigns that it names nowhere else but as `$X`/`${X}`: no `for X`, `read X`,
+    `printf -v X` or second assignment can then change them behind read_only_simple's back."""
+    names = set(ASSIGNED.findall(command)) | {"HOME"}
+    return {n for n in names if len(re.findall(r"(?<![\w$])(?<!\$\{)" + n + r"(?!\w)", command)) <= 1}
+
+
+def expand_vars(word, env):
+    """The word with the variables the command assigned (and HOME) expanded; None when one is unknown."""
+    unknown = []
+
+    def value(m):
+        name = m.group(1) or m.group(2)
+        if name not in env:
+            unknown.append(name)
+        return env.get(name, "")
+
+    out = VAR_RE.sub(value, word)
+    return None if unknown else out
+
+
+def unknown_may_lead(marked, env):
+    """True when a variable may open the word as an operator or split it into several: an unknown one unquoted
+    (DOLLAR_MARK) or after nothing but a `-` (`"$f"`, `-"$f"`, but not `"$R/$f"`), a known one unquoted whose value
+    holds a blank or a glob. `marked` is the word before UNMARK."""
+    word = marked.translate(UNMARK)
+    for m in VAR_RE.finditer(word):
+        name, unquoted = m.group(1) or m.group(2), marked[m.start()] == DOLLAR_MARK
+        if name in env:
+            if unquoted and re.search(r"[\s*?\[]", env[name]):
+                return True
+            continue
+        # A None `before` follows an unknown variable already judged: its literal prefix was neither empty nor `-`.
+        before = expand_vars(word[: m.start()], env)
+        if unquoted or before == "" or (before or "").startswith("-"):
+            return True
+    return False
+
+
+def read_only_simple(words, env, trusted=frozenset({"HOME"})):
+    """True when one simple command, its leading keywords and assignments removed, only reads. `env` holds the
+    command's own assignments so far, so that `X=-delete; find . $X` is judged on what it runs."""
+    while words and words[0] in SHELL_KEYWORDS:
+        words = words[1:]
+    if words[:1] == ["for"]:
+        # `for x in <words>`: its words only expand, substitutions being refused upstream; the loop variable
+        # gets values the parse does not follow, and must not be one the shell reads (`for IFS`, `for PATH`).
+        # zsh takes several names (`for x PATH in …`); a `for` without `in` would hide its body.
+        if "in" not in words:
+            return False
+        names = words[1 : words.index("in")]
+        for name in names:
+            env.pop(name, None)
+        return bool(names) and all(
+            re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", n) and not unsafe_assignment(n) for n in names
+        )
+    # A lone `[` is the test command, no glob.
+    globbed = any(set(w) & set(GLOB_MARKS.values()) for w in words if w != GLOB_MARKS["["])
+    marked, words = words, [w.translate(UNMARK) for w in words]
+    assigned = []
+    while words and re.match(r"[A-Za-z_][A-Za-z0-9_]*=", words[0]):
+        assigned.append(words[0].split("=", 1))
+        words = words[1:]
+    # `X=a cmd` hands X to cmd's environment (GIT_EXTERNAL_DIFF, RIPGREP_CONFIG_PATH…); a variable the shell
+    # reads itself (IFS, PATH) changes what the next words mean.
+    if (assigned and words) or any(unsafe_assignment(name) for name, _ in assigned):
+        return False
+    for name, val in assigned:
+        # Only a statement of its own sets the variable for what follows; `X=a cmd` sets it for cmd alone.
+        val = expand_vars(val, env)
+        if words or val is None or name not in trusted:
+            env.pop(name, None)
+        else:
+            env[name] = val
+    if not words:
+        return True
+    expanded = [expand_vars(w, env) for w in words]
+    if expanded[0] is None or (
+        expanded[0] in OPTION_WRITERS
+        and (
+            globbed
+            or None in expanded
+            or any(LEFT_EXPANSION.search(w) for w in expanded)
+            # Unquoted, a value is split and globbed (`X='-name n -delete'`): the quotes are gone here, so a
+            # variable's value that holds a blank or a glob, or opens a word with `-`, is refused.
+            or any(
+                "$" in w and (re.search(r"[\s*?\[]", e) or (w.startswith("$") and e.startswith("-")))
+                for w, e in zip(words, expanded)
+            )
+        )
+    ):
+        return False
+    if expanded[0] in ARG_EVALUATORS and (
+        globbed
+        or any(unknown_may_lead(w, env) for w in marked[len(marked) - len(words) + 1 :])
+        or (expanded[0] == "printf" and None in expanded)
+    ):
+        return False
+    cmd, args = expanded[0], [w if w is not None else "" for w in expanded[1:]]
+    if cmd not in READ_ONLY_TOOLS:
+        return False
+    if cmd == "git":
+        return git_read_only(args)
+    if cmd == "find":
+        return not any(a in FIND_WRITES for a in args)
+    # A short option may sit in a cluster (`-1f`, `-uoFILE`).
+    if cmd == "tail":
+        return not any(
+            a.startswith("--f") or (a.startswith("-") and not a.startswith("--") and any(c in a for c in "fF"))
+            for a in args
+        )
+    if cmd == "sort":
+        # GNU long options take any unambiguous prefix: `--o` is `--output`, `--co` `--compress-program`.
+        return not any(
+            a.startswith(("--o", "--co")) or (a.startswith("-") and not a.startswith("--") and any(c in a for c in "o"))
+            for a in args
+        )
+    if cmd == "printf":
+        return printf_read_only(args)
+    if cmd in ("test", "["):
+        return not any(a in ("-v", "-R") for a in args)  # `test -v 'a[$X]'` evaluates a subscript.
+    if cmd == "file":
+        return not any(a.startswith("--c") or (not a.startswith("--") and a.startswith("-") and "C" in a) for a in args)
+    if cmd == "rg":
+        return not any(
+            a.startswith(("--pre", "--search-zip", "--hostname-bin", "--hyperlink"))
+            or (a.startswith("-") and not a.startswith("--") and any(c in a for c in "z"))
+            for a in args
+        )
+    if cmd == "sed":
+        return sed_read_only(args)
+    return True
+
+
+def read_only_command(command):
+    """True when a Bash command only reads, by a strict parse: no substitution, heredoc, subshell or
+    background job, no redirection but to /dev/null or a file descriptor, and every simple command one of
+    READ_ONLY_TOOLS without its writing options."""
+    # ANSI-C and locale quoting (`$'…'`, `$"…"`), a line continuation and a carriage return (a blank to shlex, a
+    # word's character to the shell) are read otherwise by shlex than by bash.
+    # bash lexes the `-` after `>&` (blanks between them too) as a token of its own, so a quote glued to it
+    # (`>&-''`, `>& -''`) is an empty argument more; zsh reads `-''` as `-`. A NUL byte ends zsh's word where Python's goes on.
+    if (
+        any(s in command for s in ("`", "$(", "<(", ">(", "<<", "$'", '$"', "\\\n", "\r", "\0"))
+        or re.search(r">&[ \t]*-(?![\s;&|()<>]|$)", command)
+        or unsafe_expansions(command)
+    ):
+        return False
+    try:
+        lex = shlex.shlex(unquoted_newlines_to_semicolons(command), posix=True, punctuation_chars="();<>|&")
+        lex.whitespace_split = True
+        # bash starts a comment only at a word's start (`a#` is a word); a `#` stays in the word here, so a
+        # real comment's words are judged too.
+        lex.commenters = ""
+        tokens = list(lex)
+    except ValueError:
+        return False
+    words, i, env, trusted = [], 0, {"HOME": os.path.expanduser("~")}, trusted_names(command)
+    redirected, sep, blocks = False, ";", False
+    while i <= len(tokens):
+        t = tokens[i] if i < len(tokens) else ";"
+        i += 1
+        if t in (";", "&&", "||", "|"):
+            # A redirection without a command (`< file`) runs zsh's READNULLCMD (`more`, then `less` and LESSOPEN).
+            # An assignment behind `&&`/`||`, in a pipeline (a subshell), with a redirection (zsh skips it when
+            # the redirection fails) or after any block keyword (quoted ones too: no count of the nesting is
+            # trusted) may never run: the variable is then empty, and an unquoted empty `$X` vanishes and shifts
+            # the words after it. An assignment before `&&` always runs.
+            blocks = blocks or any(w in BLOCK_WORDS for w in words)
+            maybe = sep != ";" or t == "|" or blocks or redirected
+            if (redirected and not [w for w in words if w not in SHELL_KEYWORDS]) or not read_only_simple(
+                words, env, set() if maybe else trusted
+            ):
+                return False
+            # An empty statement (`&& ⏎`) keeps the separator before it.
+            words, redirected, sep = [], False, t if words else sep
+        elif t and set(t) <= set("();<>|&"):
+            nxt = tokens[i] if i < len(tokens) else ""
+            if (
+                t == "<"
+                or (t in (">", ">>", "&>", "&>>") and nxt == "/dev/null")
+                or (t == ">&" and re.fullmatch(r"[0-9]+|-", nxt))
+            ):
+                # The descriptor before the operator (FD_MARK) is no argument.
+                if words and words[-1] == FD_MARK:
+                    words.pop()
+                i += 1
+                redirected = True
+            else:
+                return False
+        else:
+            words.append(t)
+    return True
+
+
+def names_plugins_only(inp, hit):
+    """True when a Bash call's only guarded hit is ~/.claude/plugins: no guard word, and none of the other
+    guarded paths (this plugin, its data, the settings) named."""
+    tool, ti = inp.get("tool_name") or "", inp.get("tool_input") or {}
+    command = str(ti.get("command") or "")
+    plugins = os.path.join(os.path.expanduser("~"), ".claude", "plugins")
+    dirs = {os.path.abspath(plugins), os.path.realpath(plugins)}
+    return (
+        tool == "Bash"
+        and hit in dirs
+        and not GUARD_WORDS.search(command)
+        and not any(names_path(command, p) for p in guarded_paths(project_of(inp)) if p not in dirs)
+    )
+
+
 def guard_hit(inp):
     """The guarded path or word a tool call names, if any. Bash commands are matched as text, so a path
-    spelled `~/.claude/plugins` or `$HOME/.claude/plugins` counts too; reading tools and the plugin's own
-    commands (own_command) stay free, and a plain call of an installed plugin script (installed_script) is
+    spelled `~/.claude/plugins` or `$HOME/.claude/plugins` counts too; reading tools, a structured result
+    and the plugin's own commands (own_command) stay free, as does a Bash command that only reads other
+    plugins' files (read_only_command); a plain call of an installed plugin script (installed_script) is
     matched on its arguments alone."""
     tool, ti = inp.get("tool_name") or "", inp.get("tool_input") or {}
-    if tool in ("Read", "Glob", "Grep", "LS"):
+    if tool in ("Read", "Glob", "Grep", "LS", "StructuredOutput"):
         return None
     if tool == "Bash" and own_command(str(ti.get("command") or "")):
         return None
@@ -2180,6 +2600,8 @@ def guard_hit(inp):
         return None
     for p in guarded_paths(project_of(inp)):
         if names_path(text, p):
+            if args is None and names_plugins_only(inp, p) and read_only_command(str(ti.get("command") or "")):
+                return None
             return p
     m = GUARD_WORDS.search(text) if tool == "Bash" else None
     return m.group(0) if m else None
@@ -2205,14 +2627,7 @@ def guard_reason(inp, hit):
     own = own_call_attempt(command) if tool == "Bash" else None
     if own:
         return OWN_COMMAND_ALONE.format(own)
-    plugins = os.path.join(os.path.expanduser("~"), ".claude", "plugins")
-    dirs = {os.path.abspath(plugins), os.path.realpath(plugins)}
-    if (
-        tool == "Bash"
-        and hit in dirs
-        and not GUARD_WORDS.search(command)
-        and not any(names_path(command, p) for p in guarded_paths(project_of(inp)) if p not in dirs)
-    ):
+    if names_plugins_only(inp, hit):
         return PLUGINS_READ_HINT.format(hit)
     return GUARD_DENIED.format(hit)
 
@@ -2435,14 +2850,15 @@ READONLY_CMDS = {
     "test",
     "[",
 }
+# git subcommands that only read. Some run a program the repository's config names (git_read_only).
 READONLY_GIT = {
     "status",
-    "log",
     "diff",
     "show",
+    "blame",
+    "log",
     "rev-parse",
     "ls-files",
-    "blame",
     "branch",
     "remote",
     "describe",
@@ -2565,8 +2981,6 @@ def bash_parts(command):
 
 
 FIND_WRITES = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
-GIT_BRANCH_WRITES = {"-d", "-D", "-m", "-M", "-c", "-C", "-f", "-u", "-t", "--delete", "--move", "--copy", "--force"}
-GIT_BRANCH_WRITES_PREFIX = ("--set-upstream", "--unset-upstream", "--edit-description", "--track", "--no-track")
 
 
 def writes_a_file(part):
@@ -2578,6 +2992,136 @@ def writes_a_file(part):
     return False
 
 
+def printf_read_only(args):
+    """`printf` with a format that only copies its arguments: `%s`, `%b`, `%%`. `-v X` assigns; zsh evaluates the
+    argument of a numeric conversion, and a `*` width, as arithmetic, which can assign (`%d 'HOME=1'`)."""
+    if not args or args[0].startswith("-"):
+        return False
+    return all(
+        conv in "sb%" and re.fullmatch(r"[-+ #0]*\d*(?:\.\d*)?", spec) for spec, conv in PRINTF_SPEC.findall(args[0])
+    )
+
+
+# `git branch` options that only list; any other may write (`-uX`, the abbreviations `--unset-up`, `--edit`).
+GIT_BRANCH_LIST = {
+    "-a",
+    "-r",
+    "-v",
+    "-vv",
+    "-l",
+    "-i",
+    "--all",
+    "--remotes",
+    "--verbose",
+    "--list",
+    "--ignore-case",
+    "--show-current",
+    "--color",
+    "--no-color",
+    "--column",
+    "--no-column",
+    "--no-abbrev",
+}
+GIT_BRANCH_LIST_VALUED = (
+    "--contains=",
+    "--no-contains=",
+    "--merged=",
+    "--no-merged=",
+    "--points-at=",
+    "--format=",
+    "--sort=",
+    "--abbrev=",
+    "--color=",
+    "--column=",
+)
+
+
+GIT_LOG_FLAGS = {
+    "--oneline",
+    "--graph",
+    "--decorate",
+    "--no-decorate",
+    "--all",
+    "--reverse",
+    "--first-parent",
+    "--no-merges",
+    "--merges",
+    "--abbrev-commit",
+    "--name-only",
+    "--name-status",
+    "--date-order",
+    "--topo-order",
+    "--color",
+    "--no-color",
+    "-n",
+}
+GIT_LOG_VALUED = (
+    "--format=",
+    "--pretty=",
+    "--since=",
+    "--until=",
+    "--after=",
+    "--before=",
+    "--author=",
+    "--committer=",
+    "--grep=",
+    "--max-count=",
+    "--skip=",
+    "--date=",
+    "--decorate=",
+)
+
+
+# diff, show and blame run the config's textconv and diff.external, status its core.fsmonitor and refreshes the index.
+GIT_CONFIG_RUNNERS = {"status", "diff", "show", "blame"}
+
+
+def inside_plugins(path):
+    """Whether `path` is the installed plugins directory or lies under it, judged by file identity: macOS reaches that
+    directory through the /System/Volumes/Data firmlink, which realpath keeps, and through any case of its letters."""
+    try:
+        mark = os.stat(os.path.join(os.path.expanduser("~"), ".claude", "plugins"))
+    except OSError:
+        return False
+    real = os.path.realpath(path)
+    while True:
+        try:
+            st = os.stat(real)
+            if (st.st_dev, st.st_ino) == (mark.st_dev, mark.st_ino):
+                return True
+        except OSError:
+            pass
+        parent = os.path.dirname(real)
+        if parent == real:
+            return False
+        real = parent
+
+
+def git_read_only(args):
+    """git run on a repository outside the installed plugins, named by one absolute `-C`. git runs what the
+    repository's config names (gpg.program for a plain `log` with log.showSignature, core.fsmonitor for ls-files),
+    and a plugin may ship a bare repository with its config: a repository there stays refused. One of the session's
+    own repositories it could run git on without naming the plugins, so the guard adds nothing by refusing it."""
+    if args[:1] != ["-C"] or len(args) < 3:
+        return False
+    target, args = args[1], args[2:]
+    if not os.path.isabs(target) or ".." in target.split("/") or inside_plugins(target):
+        return False
+    if args[:1] == ["--no-pager"]:
+        args = args[1:]
+    # Any other option before the subcommand (`-c…`, `--config-env`, `--exec-path`) may run a program.
+    if not args or args[0].startswith("-") or args[0] in GIT_CONFIG_RUNNERS:
+        return False
+    if any(a.startswith(("--ext-diff", "--textconv", "--ou")) for a in args):
+        return False  # `--output=<file>` writes, abbreviated to `--ou…` too.
+    flags = {a for a in args if a.startswith("-")}
+    if args[0] == "config":
+        # Since git 2.46 a word may be a subcommand (`config edit` runs the editor): a key holds a dot.
+        keys = [a for a in args[1:] if not a.startswith("-")]
+        return len(keys) == 1 and "." in keys[0] and flags <= {"--get", "--get-all", "--global", "--local"}
+    return readonly_git(args)
+
+
 def readonly_git(args):
     """git subcommands that only read; branch, remote, worktree and reflog only in their listing forms."""
     flags = [w for w in args if w.startswith("-")]
@@ -2586,15 +3130,36 @@ def readonly_git(args):
         return False
     sub, more = rest[0], rest[1:]
     if sub == "branch":
-        if any(f in GIT_BRANCH_WRITES or f.startswith(GIT_BRANCH_WRITES_PREFIX) for f in flags):
+        if not all(f in GIT_BRANCH_LIST or f.startswith(GIT_BRANCH_LIST_VALUED) for f in flags):
             return False
         return not more or any(f in ("-l", "--list") for f in flags)
     if sub == "remote":
-        return not more or more[0] in ("show", "get-url")
+        # `remote show <name>` contacts the remote (a transport, `core.sshCommand`); `-v` and get-url only read.
+        return set(flags) <= {"-v", "--verbose"} and (not more or more[0] == "get-url")
+    if sub in ("log", "reflog") and not all(
+        f in GIT_LOG_FLAGS or re.fullmatch(r"-\d+", f) or (f.startswith(GIT_LOG_VALUED) and "%G" not in f)
+        for f in flags
+    ):
+        # `--format=%G?` checks signatures with gpg.program; patches (`-p`, `reflog show -p` too) run textconv.
+        return False
+    if sub == "shortlog":
+        return set(flags) <= {"-s", "-n", "-e", "-sn", "-ns", "-sne", "--summary", "--numbered", "--email"}
+    if sub == "describe":
+        # `--dirty` and `--broken` refresh the index; long options take any unambiguous prefix.
+        return all(
+            f in ("--tags", "--always", "--long", "--all", "--contains", "--exact-match")
+            or f.startswith(("--abbrev=", "--match=", "--exclude="))
+            for f in flags
+        )
+    if sub == "cat-file":
+        # `--textconv` and `--filters` run the config's programs, abbreviated too (`--te`).
+        return bool(flags) and set(flags) <= {"-t", "-s", "-e", "-p"}
     if sub == "worktree":
         return bool(more) and more[0] == "list"
     if sub == "reflog":
-        return not more or more[0] not in ("expire", "delete", "drop")
+        # `reflog write` (git 2.56) and the others write; a bare reflog, or one opening on an option, shows.
+        after = args[args.index("reflog") + 1 :]
+        return not after or after[0].startswith("-") or after[0] in ("show", "list", "exists")
     return True
 
 
