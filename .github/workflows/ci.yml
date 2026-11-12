@@ -70,6 +70,8 @@ jobs:
           echo "$PNPM_HOME/bin" >> "$GITHUB_PATH"
           PATH="$PNPM_HOME/bin:$PATH" pnpm add -g --allow-build=@anthropic-ai/claude-code @anthropic-ai/claude-code
           "$PNPM_HOME/bin/claude" --version
+          # The scripts take it over the version mise.toml pins for the hooks.
+          echo "CLAUDE=$PNPM_HOME/bin/claude" >> "$GITHUB_ENV"
       - run: just typecheck
       - run: just validate
 

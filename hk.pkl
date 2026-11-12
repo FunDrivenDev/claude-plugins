@@ -31,7 +31,7 @@ hooks {
             ["audit"] {
                 check = "just audit"
             }
-            // Prototype: the PR's `checks` status, posted once GitHub has the commit.
+            // The PR's `checks` status (local-first-ci D53), posted once GitHub has the commit.
             ["status"] {
                 depends = List("check", "audit")
                 check = "just post-status"

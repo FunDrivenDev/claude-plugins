@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Prototype (local-first-ci D53): once the pre-push checks passed, post a `checks`
+# local-first-ci D53: once the pre-push checks passed, post a `checks`
 # commit status on the pushed commit, so the PR shows the laptop's verdict. GitHub
 # has the commit only after the push, which waits on this hook, so a detached job
 # waits for it, then posts; the push never waits. Its log:
-# ~/.local/state/post-status/<repo>-<sha>.log. Limit of the prototype: it posts on
+# ~/.local/state/post-status/<repo>-<sha>.log. Limit: it posts on
 # HEAD, the commit a push of the current branch sends.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 sha=$(git rev-parse HEAD)
-# A prototype never refuses a push: without gh, or logged out, it posts nothing.
+# It never refuses a push: without gh, or logged out, it posts nothing.
 if ! command -v gh >/dev/null || ! repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null); then
   echo "post-status: skipped, gh is missing or cannot read the repo"
   exit 0

@@ -1,7 +1,10 @@
 # Every tool the repo needs, each pinned to an exact version; mise.lock records
-# what they resolve to. Renovate bumps them (renovate.json).
+# what they resolve to. Renovate bumps them (FunDrivenDev/renovate-config).
+# Claude Code too: the hooks check the mods against this version (local-first-ci
+# D70); ci.yml checks them against the latest release.
 [tools]
 actionlint = "1.7.12"
+"aqua:anthropics/claude-code" = "2.1.322"
 biome = "2.5.15"
 gitleaks = "8.30.1"
 hk = "2.5.0"

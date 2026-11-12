@@ -36,11 +36,11 @@ bump plugin level:
 ci-verdict *results:
     scripts/ci-verdict.sh {{ results }}
 
-# Check the marketplace and every plugin with Claude Code's own validator, and run the mods' tests (needs the claude CLI).
+# Check the marketplace and every plugin with Claude Code's own validator, and run the mods' tests, with the Claude Code version mise.toml pins.
 validate:
     scripts/validate.sh
 
-# Type-check each mod's TypeScript (tsc) against the types of the claude CLI on PATH, which it lays first.
+# Type-check each mod's TypeScript (tsc) against the types of the Claude Code version mise.toml pins, which it lays first.
 typecheck:
     scripts/typecheck.sh
 
@@ -51,6 +51,6 @@ check: lint test versions typecheck validate
 audit scope="all":
     scripts/audit.sh {{ quote(scope) }}
 
-# Post the `checks` status on HEAD once GitHub has it, in the background; the pre-push hook's last step (prototype).
+# Post the `checks` status on HEAD once GitHub has it, in the background; the pre-push hook's last step.
 post-status:
     scripts/post-status.sh
