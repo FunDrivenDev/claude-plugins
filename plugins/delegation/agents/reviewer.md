@@ -3,7 +3,7 @@ name: reviewer
 description: Read-only review of a diff, a branch, a PR or files for defects (correctness, a broken contract, a missed case, a breach of the repo's standards or of the spec in the brief), without the briefing session's reasoning. Returns verified findings only, each at file:line. Brief it with the base to diff against, the worktree, and the spec when there is one. Use when the findings matter, not the reading behind them.
 tools: Read, Grep, Glob, Bash
 model: opus
-effort: high
+effort: medium
 omitClaudeMd: true
 color: red
 ---

@@ -2,8 +2,8 @@
 name: skeptic
 description: Read-only adversary of a plan, a design, a decision or a claim. Tries to break it and returns the strongest objections that hold, each backed by evidence, or says that none hold. Brief it with the plan itself (or its path), the goal it serves, the constraints, and what was already weighed. Use before committing to a plan whose failure would be costly.
 tools: Read, Grep, Glob, Bash, WebSearch, WebFetch
-model: fable
-effort: high
+model: opus
+effort: medium
 omitClaudeMd: true
 color: purple
 ---
