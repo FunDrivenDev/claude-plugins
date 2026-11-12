@@ -3,7 +3,7 @@ name: investigator
 description: Read-only diagnosis of a bug, a red test or check, a failed run or an odd behaviour, or a survey of a system's state. Reproduces it, reads code, logs and history, runs read-only commands, and returns the root cause tied to an observation at file:line. Brief it with the symptom, the command that shows it, the paths or worktree, and what is already ruled out. Use when only the cause matters, not the path to it.
 tools: Read, Grep, Glob, Bash
 model: opus
-effort: high
+effort: medium
 omitClaudeMd: true
 color: orange
 ---

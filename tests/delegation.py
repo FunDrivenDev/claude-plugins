@@ -410,10 +410,10 @@ class Agents(unittest.TestCase):
 
     AGENTS = SCRIPT.parent.parent / "agents"
     ROLES = (
-        ("investigator", "opus", "high"),
+        ("investigator", "opus", "medium"),
         ("researcher", "sonnet", "medium"),
-        ("reviewer", "opus", "high"),
-        ("skeptic", "fable", "high"),
+        ("reviewer", "opus", "medium"),
+        ("skeptic", "fable", "medium"),
     )
     WRITE_TOOLS = frozenset({"Edit", "Write", "NotebookEdit", "Agent", "Task", "Workflow"})
     # Each role's exact allow-list: a tool added, removed or renamed in an agent file needs this table changed on purpose.
