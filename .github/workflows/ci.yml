@@ -1,4 +1,5 @@
-# The checks of the pre-push hook, on GitHub: on each push to main and weekly, so a
+# The checks of the pre-push hook but `just versions` (it compares a branch with
+# origin/main), on GitHub: on each push to main and weekly, so a
 # Claude Code release that breaks a mod shows up with no commit of ours (the
 # validator, the mods' tests and the type-check run on the latest claude); by hand;
 # and on Renovate's pull requests, which no laptop checks. A human's pull request
