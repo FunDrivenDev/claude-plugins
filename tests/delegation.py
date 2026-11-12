@@ -413,7 +413,7 @@ class Agents(unittest.TestCase):
         ("investigator", "opus", "medium"),
         ("researcher", "sonnet", "medium"),
         ("reviewer", "opus", "medium"),
-        ("skeptic", "fable", "medium"),
+        ("skeptic", "opus", "medium"),
     )
     WRITE_TOOLS = frozenset({"Edit", "Write", "NotebookEdit", "Agent", "Task", "Workflow"})
     # Each role's exact allow-list: a tool added, removed or renamed in an agent file needs this table changed on purpose.
