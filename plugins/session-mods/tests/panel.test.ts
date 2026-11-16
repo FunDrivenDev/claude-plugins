@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from 'claude-code/testing'
+import { describe, expect, mock, test, type TestBody } from 'claude-code/testing'
 
 import { ago, cleanTitle, clockTime, handoverPhase, phaseLine, describeCall, fileMeta, handoverStatus, headline, lastSentence, previousPrompts, promptText } from '../hooks/panel'
 import { HANDOVER_STATE } from '../hooks/handover'
@@ -579,7 +579,9 @@ test('the Help tab explains each item beside an example of it, in place of the r
 describe('Situation', () => {
   const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
   const fail = { value: { exitCode: 1, stdout: '', stderr: 'unreachable', isStdoutTruncated: false, isStderrTruncated: false } }
-  const settle = () => new Promise(resolve => setTimeout(resolve, 30))
+  const settle = async () => {
+    for (let i = 0; i < 200; i++) await Promise.resolve()
+  }
   const NOTES =
     '\x1e/n/plans/26-11-16-spj-merge-plan.md\t1000\n---\nstatus: doing\ntopic: spj\n---\n\n| Wave | PR | Status | Note |\n|---|---|---|---|\n| 1 | [claude-plugins#90](https://github.com/FunDrivenDev/claude-plugins/pull/90) | 🔧 | worker running |\n' +
     '\x1e/n/plans/26-11-16-spj-open-questions.md\t1000\n---\nstatus: todo\ntopic: spj\n---\n\n## Q1 — Which name?\n' +
@@ -592,7 +594,7 @@ describe('Situation', () => {
       { window_id: 'window:w', label: 'review · claude-plugins#90', focused_block_id: 'block:w', layers: [{ blocks: [{ block_id: 'block:w' }] }] },
     ],
   })
-  const start = (on: Parameters<Parameters<typeof test>[1]>[1], env: Record<string, string>, run: (argv: string[]) => unknown) => {
+  const start = (on: Parameters<TestBody>[1], env: Record<string, string>, run: (argv: readonly string[]) => unknown) => {
     mock.clock(on, { now: 1_000 })
     on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
     on('session.model', () => ({ value: 'opus' }))
