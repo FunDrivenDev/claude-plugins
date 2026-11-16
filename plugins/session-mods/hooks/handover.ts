@@ -34,6 +34,8 @@ export const unknownHandover = (why: string): Handover => ({
   isWindingDown: false,
   error: null,
   resume: null,
+  afk: null,
+  relays: null,
 })
 
 const num = (n: unknown): number | null => (typeof n === 'number' && Number.isFinite(n) ? n : null)
@@ -46,6 +48,15 @@ const fileOf = (v: unknown): HandoverFile | null => {
   if (!f || !text(f.path)) return null
   const at = num(f.modified_at)
   return { path: f.path as string, title: text(f.title), lines: num(f.lines), modifiedAt: at === null ? null : at * 1000 }
+}
+
+/** The AFK run the state gives, its deadline in epoch ms; null when AFK mode is off. */
+const afkOf = (v: unknown): Handover['afk'] => {
+  const a = record(v)
+  const goal = text(a?.goal)
+  if (!goal) return null
+  const until = num(a?.until)
+  return { goal, until: until === null ? null : until * 1000 }
 }
 
 const thresholdsOf = (v: unknown): HandoverThresholds | null => {
@@ -97,5 +108,7 @@ export async function handoverOf(run: StateRun, sid: string): Promise<Handover> 
     isWindingDown: st.wound_down === true,
     error: text(st.error),
     resume: text(st.resume),
+    afk: afkOf(st.afk),
+    relays: typeof st.relays === 'boolean' ? st.relays : null,
   }
 }

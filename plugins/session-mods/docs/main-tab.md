@@ -1,6 +1,6 @@
 # Main tab
 
-The topic at a glance: Handover, then Situation when the `situation` option is on. [Back to the README](../README.md)
+The topic at a glance: Handover (AFK mode included), then Situation when the `situation` option is on. [Back to the README](../README.md)
 
 ## Handover
 
@@ -18,6 +18,16 @@ Once the handover is written and the session has stopped, two buttons start the 
 - `✏️ Edit the prompt first` leaves it there to edit and send yourself.
 
 When the handover does not load within its 3-minute wait, the message stays in the prompt box, with a toast. Without a resume message, only `✏️ Edit the prompt first` shows, and it runs `/clear` alone.
+
+### AFK mode
+
+Last in Handover, the `handover` plugin's AFK mode: a run toward a goal while you are away, handing over to fresh sessions until the goal is met or blocked ([AFK mode](../../handover/docs/afk.md)).
+
+- Off, `🌙 Go AFK` opens a field for the goal, which may end on a deadline as `/handover:afk` takes it (`until 8`, `until tomorrow 9:00`, `for 10h`). Enter runs `/handover:afk <goal>`: the session gets the AFK rules from the plugin and starts on the goal. `cancel` closes the field.
+- On, the line reads `🌙 AFK on · until Tue 17 Nov 08:00` (`AFK on` without a deadline), the goal beneath it, and `☀️ Turn AFK off` runs `/handover:afk off`.
+- Until the state follows a press, `Turning AFK on…` or `Turning AFK off…` stands in its place, two minutes at most.
+
+The pane reads AFK mode from the handover plugin's `state` answer (its `afk` and `relays`, handover 0.35.0 and later) and writes none of its files. Where the session cannot relay (no terminal the plugin types into, such as tmux, and no `toolbox session run`), a dim line says so in place of the button; with an older handover plugin, it names the version needed.
 
 ## Situation
 

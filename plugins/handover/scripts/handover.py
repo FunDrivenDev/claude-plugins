@@ -3390,8 +3390,8 @@ def cmd_status(args):
 
 
 def cmd_state(args):
-    """The session's handover state for the session-mods pane (D18), computed by session.py: the pane runs this
-    command and renders its answer, without reading the plugin's files."""
+    """The session's handover state for the session-mods pane (D18), computed by session.py, and whether the session
+    can relay (`relays`): the pane runs this command and renders its answer, without reading the plugin's files."""
     sid = args.session
     try:
         resolved = thresholds(config())
@@ -3403,6 +3403,8 @@ def cmd_state(args):
     offset = st.get("reply_offset")
     went_on = isinstance(offset, int) and answered_since(st.get("transcript") or "", offset)
     out = S.view(st, os.path.exists(live_path(sid)), resolved, went_on)
+    # Whether this session can relay, as `afk` requires: the pane offers AFK mode only then.
+    out["relays"] = terminal().relays
     print(json.dumps(out) if args.json else json.dumps(out, indent=1))
     return 0
 

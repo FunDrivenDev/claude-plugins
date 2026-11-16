@@ -8,8 +8,8 @@ import { ACTION, barRuns, cacheColor, contextOf, effortColor, effortLabel, EFFOR
 import { changesOf, treeRows } from './files'
 import { HANDOVER_STATE, handoverOf } from './handover'
 import { ARTIFACTS, DOC_CONTEXT, HANDOVER_DIR, PLANS_DIR, WRITTEN_SINCE, artifactOf, type DocContext, docContextOf, docGroups, docOf, docPaths, tilde, writtenSpots } from './documents'
-import { ago, cleanTitle, clockTime, describeCall, fileMeta, handoverPhase, handoverStatus, headline, HELP_EXAMPLE, intentOf, isPastTrigger, isRunning, kilo, lastSentence, NEXT_ACTIONS, oneLine, phaseLine, PHASES, previousPrompts, promptOf, promptText, SIGN, SIGN_COLOR, TRIGGER_NOW, type HandoverPhase } from './panel'
 import { frontMatterOf, fromNotes, isTopic, NOTE_HEAD, notesOf, notesPathsIn, PR_JQ, prLiveOf, rexSessionLabelled, rexSessionOf, STALE_MS, staleOf, TOPIC_NOTES, WORKER_LOOK, workerOf, type RexSession } from './situation'
+import { afkGoal, afkLine, afkState, AFK, ago, cleanTitle, clockTime, describeCall, fileMeta, handoverPhase, handoverStatus, headline, HELP_EXAMPLE, intentOf, isPastTrigger, isRunning, kilo, lastSentence, NEXT_ACTIONS, oneLine, phaseLine, PHASES, previousPrompts, promptOf, promptText, SIGN, SIGN_COLOR, TRIGGER_NOW, type HandoverPhase } from './panel'
 import { PR_COLOR, RANK, findRefs, linearOfResult, prState, refKey, refsOfGh, repoOfRemote, titleOfSlug } from './tracker'
 import type { GithubRef, LinearRef } from './tracker'
 
@@ -781,6 +781,10 @@ export const register: Register = (on, options) => {
     let triggered = false
     /** Start next session was pressed: one launch per handover. */
     let launched: string | null = null
+    /** Go AFK was pressed: the goal field shows until it is sent or cancelled. */
+    let afkEditing = false
+    /** AFK mode was asked on or off, and when: the button waits for the handover state to follow, 2 minutes at most. */
+    let afkAsked: { on: boolean; at: number } | null = null
 
     on('tool.call', async ($, e, next) => {
       const agentId = e.agentId
@@ -835,7 +839,7 @@ export const register: Register = (on, options) => {
     })
 
     on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-      const { Box, Text, Button, Link } = $.ui.resolve(e)
+      const { Box, Text, Button, Link, Input } = $.ui.resolve(e)
       const [now, all, done, open, isStepsOpen, repos, stored, shown, t, ho, repoList, written, conf, usage, shownTab, title] = await Promise.all([
         $.clock.now(),
         read($, agents),
@@ -1019,6 +1023,89 @@ export const register: Register = (on, options) => {
         )
       }
 
+      /** AFK mode: on with its goal and a button to turn it off, off with a button that opens the goal field, or why it cannot be. */
+      const afkRow = (pillShape: (a: { key: string; emoji: string; color: string }, label: RenderElement) => RenderElement) => {
+        const afk = afkState(ho!)
+        if (afkAsked && (afkAsked.on === (afk.kind === 'on') || now - afkAsked.at > 120_000)) afkAsked = null
+        const ask = async (isOn: boolean, args: string) => {
+          afkAsked = { on: isOn, at: now }
+          afkEditing = false
+          $.ui.invalidate('ui.render')
+          await $.command.run({ command: 'handover:afk', args })
+        }
+        if (afk.kind === 'unavailable')
+          return (
+            <Box key="afk" marginTop={1}>
+              <Text dimColor wrap="wrap">
+                {afk.why}.
+              </Text>
+            </Box>
+          )
+        if (afkAsked)
+          return (
+            <Box key="afk" marginTop={1}>
+              <Text color={AFK.on.color}>{afkAsked.on ? 'Turning AFK on…' : 'Turning AFK off…'}</Text>
+            </Box>
+          )
+        if (afk.kind === 'on')
+          return (
+            <Box key="afk" flexDirection="column" marginTop={1}>
+              <Text color={AFK.on.color} wrap="wrap">
+                {AFK.on.emoji} {afkLine(afk.until)}
+              </Text>
+              <Text dimColor italic wrap="wrap">
+                {afk.goal}
+              </Text>
+              <Box flexDirection="row">
+                {pillShape(AFK.off, <Button key={AFK.off.key} label={AFK.off.label} plain hover={{ color: AFK.off.color }} onPress={() => ask(false, 'off')} />)}
+              </Box>
+            </Box>
+          )
+        if (afkEditing)
+          return (
+            <Box key="afk" flexDirection="column" marginTop={1}>
+              <Input
+                key={AFK.input}
+                label="AFK goal "
+                placeholder={AFK.placeholder}
+                submitLabel="go AFK"
+                autoFocus
+                onSubmit={value => {
+                  const goal = afkGoal(value)
+                  if (goal) void ask(true, goal)
+                }}
+              />
+              <Button
+                key="afk:cancel"
+                label="cancel"
+                plain
+                dimColor
+                onPress={() => {
+                  afkEditing = false
+                  $.ui.invalidate('ui.render')
+                }}
+              />
+            </Box>
+          )
+        return (
+          <Box key="afk" flexDirection="row" marginTop={1}>
+            {pillShape(
+              AFK.on,
+              <Button
+                key={AFK.on.key}
+                label={AFK.on.label}
+                plain
+                hover={{ color: AFK.on.color }}
+                onPress={() => {
+                  afkEditing = true
+                  $.ui.invalidate('ui.render')
+                }}
+              />,
+            )}
+          </Box>
+        )
+      }
+
       const handoverRows = (() => {
         if (!ho) return [<Text dimColor>Not read yet.</Text>]
         if (ho.unknown) return [<Text dimColor wrap="wrap">Handover state unknown: {ho.unknown}.</Text>]
@@ -1089,6 +1176,7 @@ export const register: Register = (on, options) => {
                 </Box>,
               ]
             : []),
+          afkRow(pillShape),
         ]
       })()
 
@@ -1509,6 +1597,16 @@ export const register: Register = (on, options) => {
               'trigger',
               framed(TRIGGER_NOW.color, <Text>{TRIGGER_NOW.emoji} {TRIGGER_NOW.label}</Text>),
               'Starts the wind-down at once (/handover:trigger) instead of waiting for the trigger.',
+            )}
+            {helpRow(
+              'afk:on',
+              framed(AFK.on.color, <Text>{AFK.on.emoji} {AFK.on.label}</Text>),
+              'Opens a field for the goal (optionally followed by until 8, for 10h): Enter runs /handover:afk with it, and the session works toward it, handing over to fresh sessions, until it is met or blocked. Shown only where the session can relay.',
+            )}
+            {helpRow(
+              'afk:off',
+              <Text color={AFK.on.color}>{AFK.on.emoji} AFK on · until Tue 17 Nov 08:00</Text>,
+              'AFK mode is on, with its goal beneath; Turn AFK off runs /handover:afk off.',
             )}
             {(Object.keys(PHASES) as HandoverPhase[]).map(key =>
               helpRow(`phase:${key}`, <Text color={PHASES[key].color}>{phaseLine(key, now)}</Text>, PHASES[key].does),
