@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Hook, Register, RenderElement, ToolCallInput, ToolCallResult, UiCopyArgs } from 'claude-code'
 
-import type { Agent, Config, Doc, Entry, Handover, HandoverFile, Info, Picker, Prompt, Quota, Repo, RepoChanges, Step, Tab, TrackedIssue, TrackedPr, Ttl } from '../types'
+import type { Agent, Config, Doc, Entry, Handover, HandoverFile, Info, Picker, Prompt, Quota, Repo, RepoChanges, Situation, Step, Tab, TrackedIssue, TrackedPr, Ttl } from '../types'
 
 import { duration, HERDR_BUNDLE, herdrScheme, prettyModel, recolor, type Scheme } from './appearance'
 import { ACTION, barRuns, cacheColor, contextOf, effortColor, effortLabel, EFFORTS, minutesLeft, modelColor, modelId, MODELS, quotaOf, RESERVE, span, TONE, ttlMs, whole, WINDOW, type Limit } from './bar'
@@ -9,6 +9,7 @@ import { changesOf, treeRows } from './files'
 import { HANDOVER_STATE, handoverOf } from './handover'
 import { ARTIFACTS, DOC_CONTEXT, HANDOVER_DIR, PLANS_DIR, WRITTEN_SINCE, artifactOf, type DocContext, docContextOf, docGroups, docOf, docPaths, tilde, writtenSpots } from './documents'
 import { ago, cleanTitle, clockTime, describeCall, fileMeta, handoverPhase, handoverStatus, headline, HELP_EXAMPLE, intentOf, isPastTrigger, isRunning, kilo, lastSentence, NEXT_ACTIONS, oneLine, phaseLine, PHASES, previousPrompts, promptOf, promptText, SIGN, SIGN_COLOR, TRIGGER_NOW, type HandoverPhase } from './panel'
+import { frontMatterOf, fromNotes, isTopic, NOTE_HEAD, notesOf, notesPathsIn, PR_JQ, prLiveOf, rexSessionLabelled, rexSessionOf, STALE_MS, TOPIC_NOTES, WORKER_LOOK, workerOf, type RexSession } from './situation'
 import { PR_COLOR, RANK, findRefs, linearOfResult, prState, refKey, refsOfGh, repoOfRemote, titleOfSlug } from './tracker'
 import type { GithubRef, LinearRef } from './tracker'
 
@@ -397,6 +398,106 @@ const handoverOptions = (settings: Record<string, unknown>): Record<string, unkn
   return configs?.['handover@fundrivendev']?.options ?? {}
 }
 
+const EMPTY_SITUATION: Situation = {
+  topic: null,
+  from: null,
+  mergePlan: null,
+  questions: [],
+  proposed: [],
+  register: null,
+  workers: null,
+  workersError: null,
+  prs: {},
+  prsError: null,
+  readAt: null,
+}
+const situation = atom({ plugin: 'session-mods', key: 'situation' } as const, EMPTY_SITUATION)
+const lastNote = atom({ plugin: 'session-mods', key: 'lastNote' } as const, null as string | null)
+
+/** The topic's notes, or null when none names it. */
+async function topicNotes($: EngineInterface, topic: string) {
+  const out = await $.process.run(['sh', '-c', TOPIC_NOTES, 'sh', topic])
+  return out.exitCode === 0 ? notesOf(out.stdout) : null
+}
+
+/** The Rex session `id`'s windows, or null when Rex does not answer. */
+async function rexSession($: EngineInterface, id: string): Promise<RexSession | null> {
+  const out = await $.process.run(['rex', 'window', 'ls', '-s', id, '--json'])
+  return out.exitCode === 0 ? rexSessionOf(out.stdout) : null
+}
+
+/**
+ * Reads the Situation section anew: the topic (the Rex session's label when a note names it, else the `topic:` of
+ * the last notes document the session read or wrote), its notes, and the Rex session's other tabs.
+ */
+async function refreshSituation($: EngineInterface) {
+  const rexId = await $.env.get('REX_SESSION')
+  const ownBlock = await $.env.get('REX_BLOCK')
+  const own = rexId ? await rexSession($, rexId) : null
+  let topic: string | null = null
+  let from: Situation['from'] = null
+  let notes = isTopic(own?.label) ? await topicNotes($, own.label) : null
+  if (notes && own?.label) [topic, from] = [own.label, 'rex']
+  if (!topic) {
+    const path = await read($, lastNote)
+    if (path) {
+      const head = await $.process.run(['sh', '-c', NOTE_HEAD, 'sh', path])
+      const named = head.exitCode === 0 ? frontMatterOf(head.stdout).topic : undefined
+      if (isTopic(named)) [topic, from, notes] = [named, 'notes', await topicNotes($, named)]
+    }
+  }
+  if (!topic) {
+    const at = await $.clock.now()
+    await update($, situation, s => ({ ...EMPTY_SITUATION, prs: s.prs, readAt: at }))
+    return
+  }
+  let rex = from === 'rex' ? own : null
+  let workersError: string | null = null
+  if (!rex && rexId !== undefined) {
+    const all = await $.process.run(['rex', 'ls', '--json'])
+    const id = all.exitCode === 0 ? rexSessionLabelled(all.stdout, topic) : null
+    if (all.exitCode !== 0) workersError = 'rex unreachable'
+    else if (id) rex = await rexSession($, id)
+  }
+  if (rexId === undefined && !rex) workersError = 'not in a Rex session'
+  const shown = rex
+  const workers = shown
+    ? await Promise.all(
+        shown.windows
+          .filter(w => !(ownBlock && w.blocks.includes(ownBlock)))
+          .map(async w => {
+            const screen = w.block ? await $.process.run(['rex', 'capture', '-s', shown.session_id, '-b', w.block, '--trim']) : null
+            return workerOf(w.label || w.id, screen?.exitCode === 0 ? screen.stdout.split('\n').slice(-80).join('\n') : '')
+          }),
+      )
+    : null
+  const found = fromNotes(notes ?? [])
+  const at = await $.clock.now()
+  await update($, situation, s => ({ ...s, ...found, topic, from, workers, workersError, readAt: at }))
+}
+
+/** Reads each merge-plan pull request's state and checks from GitHub. */
+async function refreshSituationPrs($: EngineInterface) {
+  const urls = [...new Set((await read($, situation)).mergePlan?.rows.flatMap(r => r.prs.map(p => p.url)) ?? [])]
+  if (!urls.length) return
+  const got = await Promise.all(urls.map(async url => [url, prLiveOf((await $.process.run(['gh', 'pr', 'view', url, '--json', 'state,isDraft,statusCheckRollup', '--jq', PR_JQ])).stdout)] as const))
+  const read_ = got.filter((g): g is readonly [string, NonNullable<(typeof g)[1]>] => g[1] !== null)
+  await update($, situation, s => ({
+    ...s,
+    prs: { ...s.prs, ...Object.fromEntries(read_) },
+    prsError: read_.length === 0 ? 'gh unreachable' : null,
+  }))
+}
+
+/** Notes the last notes document a call read or wrote; a new one is read at once while the session has no topic. */
+async function noteNotes($: EngineInterface, tool: string, input: Record<string, unknown>) {
+  const named = ['Read', 'Edit', 'MultiEdit', 'Write'].includes(tool) ? input.file_path : tool === 'Bash' ? input.command : null
+  const path = typeof named === 'string' ? notesPathsIn(named).at(-1) : undefined
+  if (!path || path === (await read($, lastNote))) return
+  await update($, lastNote, () => path)
+  if ((await read($, situation)).from !== 'rex') void refreshSituation($).then(() => refreshSituationPrs($)).catch(() => undefined)
+}
+
 /** The values the pane reads from Claude Code's settings and the environment, as set. */
 async function readConfig($: EngineInterface) {
   const settings = (await $.settings.read().catch(() => ({}))) as Record<string, unknown>
@@ -512,6 +613,7 @@ export async function startPanel($: StartArgs[0], e: StartArgs[1]): Promise<void
     if (ticks % 5 === 0) void readHandover($).then(() => titleFromHandover($))
     if (ticks % 30 === 0) void readConfig($)
     if (ticks % 60 === 0) void refreshPr($)
+    if (ticks % 30 === 0) void refreshSituation($).then(() => (ticks % 60 === 0 ? refreshSituationPrs($) : undefined)).catch(() => undefined)
     $.ui.invalidate('ui.render')
   })
   const remote = await $.process.run(['git', '-C', e.cwd, 'remote', 'get-url', 'origin'])
@@ -531,6 +633,7 @@ export async function startPanel($: StartArgs[0], e: StartArgs[1]): Promise<void
     if (typed.length) await update($, prompts, () => typed.map(text => ({ text, at: null })))
   }
   await rescanTracker($)
+  void refreshSituation($).then(() => refreshSituationPrs($)).catch(() => undefined)
 }
 
 /** The pane's `turn.step` hook, which `register` wraps in the bar's work. */
@@ -678,6 +781,7 @@ export const register: Register = (on, options) => {
       }
       await scanCall($, tool, input, ran)
       await scanDocs($, tool, input, ran)
+      if (!agentId) await noteNotes($, tool, input)
       return ran
     })
 
@@ -731,6 +835,7 @@ export const register: Register = (on, options) => {
         read($, topic),
       ])
       const typed = stored.map(promptOf)
+      const sit = await read($, situation)
       const lastPrompt = typed.at(-1)
       const running = all.filter(a => a.endedAt === null)
       const finished = all.filter(a => a.endedAt !== null)
@@ -1048,9 +1153,117 @@ export const register: Register = (on, options) => {
         )
       }
 
+      /** A block of the Situation section: its heading, then its rows or one dim line when it has none. */
+      const sitBlock = (key: string, heading: RenderElement, rows: RenderElement[], empty: string) => (
+        <Box key={`sit:${key}`} flexDirection="column" marginTop={1}>
+          {heading}
+          {rows.length ? rows : <Text dimColor>{empty}</Text>}
+        </Box>
+      )
+      const sitHeading = (label: string, hint?: RenderElement | string | null) => (
+        <Box flexDirection="row">
+          <Text bold>{label}</Text>
+          {hint && (typeof hint === 'string' ? <Text dimColor wrap="truncate-end"> {hint}</Text> : hint)}
+        </Box>
+      )
+
+      /** The live state of the session's topic: its merge plan, its workers, its open questions and the decisions awaiting Raphaël. */
+      const situationSection = () => {
+        if (!sit.topic)
+          return (
+            <Box key="sit" flexDirection="column">
+              {section('Situation')}
+              <Text dimColor wrap="wrap">
+                {sit.readAt === null ? 'Not read yet.' : 'No topic: the Rex session is not labelled by a topic, and no notes document read or written names one.'}
+              </Text>
+            </Box>
+          )
+        const plan = sit.mergePlan
+        const age = plan?.modifiedAt != null ? now - plan.modifiedAt : null
+        const planHint = plan && (
+          <Box flexDirection="row" flexShrink={1}>
+            <Text dimColor> · </Text>
+            {link('sit:plan', `file://${plan.path}`, 'file')}
+            {age !== null && <Text color={age > STALE_MS ? '#e5c890' : undefined} dimColor={age <= STALE_MS}> · changed {ago(age)}</Text>}
+            {sit.prsError && <Text color="#e78284"> · {sit.prsError}</Text>}
+          </Box>
+        )
+        const planRows = (plan?.rows ?? []).map((r, i) => (
+          <Box key={`sit:row:${i}`} flexDirection="row" columnGap={1}>
+            <Text dimColor>{r.wave.padEnd(2)}</Text>
+            <Text>{r.status}</Text>
+            <Box flexDirection="row" columnGap={1} flexShrink={0}>
+              {r.prs.map(pr => {
+                const live = sit.prs[pr.url]
+                return (
+                  <Box key={`sit:pr:${i}:${pr.url}`} flexDirection="row">
+                    {link(`sit:pr:${i}:${pr.url}`, pr.url, pr.label, live ? PR_COLOR[live.state] : undefined)}
+                    {live?.isRed && <Text color="#e78284">!</Text>}
+                  </Box>
+                )
+              })}
+            </Box>
+            <Text dimColor wrap="truncate-end">{r.note}</Text>
+          </Box>
+        ))
+        const workerRows = (sit.workers ?? []).map((w, i) => (
+          <Box key={`sit:worker:${i}`} flexDirection="row">
+            <Text color={WORKER_LOOK[w.state].color}>{WORKER_LOOK[w.state].glyph} </Text>
+            <Text>{w.label}</Text>
+            <Text dimColor wrap="truncate-end"> · {WORKER_LOOK[w.state].word}{w.last ? ` · ${w.last}` : ''}</Text>
+          </Box>
+        ))
+        const workersEmpty = sit.workersError ?? (sit.workers === null ? `no Rex session labelled ${sit.topic}` : 'no other tab in the topic\'s Rex session')
+        return (
+          <Box key="sit" flexDirection="column">
+            <Box flexDirection="row">
+              {section('Situation')}
+              <Text dimColor wrap="truncate-end">
+                {' '}
+                · {sit.topic} · {sit.from === 'rex' ? 'Rex session' : 'notes'}
+              </Text>
+            </Box>
+            {sitBlock('plan', sitHeading('Merge plan', planHint), planRows, plan ? 'The merge plan holds no row.' : 'No merge plan.')}
+            {sitBlock('workers', sitHeading('Workers'), workerRows, workersEmpty)}
+            {sitBlock(
+              'questions',
+              sitHeading('Open questions'),
+              sit.questions.map((q, i) => (
+                <Text key={`sit:q:${i}`} wrap="truncate-end">
+                  <Text color="#e5c890">{q.id}</Text> {q.title}
+                </Text>
+              )),
+              'No open question.',
+            )}
+            {sitBlock(
+              'proposed',
+              sitHeading('Awaiting you', sit.register && sit.proposed.length ? link('sit:register', `file://${sit.register}`, ' register') : null),
+              sit.proposed.map((d, i) => (
+                <Text key={`sit:d:${i}`} wrap="truncate-end">
+                  <Text color="#ca9ee6">{d.id}</Text> {d.text}
+                </Text>
+              )),
+              'No proposed decision.',
+            )}
+          </Box>
+        )
+      }
+
       /** Each tab's body, drawn only for the tab shown: the ticker redraws the pane every second. */
       const mainBody = () => (
         <Box key="tab:main:body" flexDirection="column">
+          {section('Handover')}
+          <Box flexDirection="column" marginTop={1} marginBottom={1}>
+            {ho?.isOn && !ho.unknown && <Box marginBottom={1}>{handoverFile('loaded', ho.loaded)}</Box>}
+            {handoverRows}
+          </Box>
+
+          {situationSection()}
+        </Box>
+      )
+
+      const miscBody = () => (
+        <Box key="tab:misc:body" flexDirection="column">
           {issueSection()}
           {gitSection(repoBlocks())}
 
@@ -1075,12 +1288,6 @@ export const register: Register = (on, options) => {
             ))}
           </Box>
 
-          {section('Handover')}
-          <Box flexDirection="column" marginTop={1} marginBottom={1}>
-            {ho?.isOn && !ho.unknown && <Box marginBottom={1}>{handoverFile('loaded', ho.loaded)}</Box>}
-            {handoverRows}
-          </Box>
-
           <Box flexDirection="row">
             {section('Last prompt ')}
             {lastPrompt?.at != null && <Text dimColor>{clockTime(lastPrompt.at)} </Text>}
@@ -1093,12 +1300,10 @@ export const register: Register = (on, options) => {
               onPress={() => update($, view, () => 'prompts')}
             />
           </Box>
-          <Text wrap="wrap">{lastPrompt ? oneLine(lastPrompt.text, 360) : '—'}</Text>
-        </Box>
-      )
+          <Box marginBottom={1}>
+            <Text wrap="wrap">{lastPrompt ? oneLine(lastPrompt.text, 360) : '—'}</Text>
+          </Box>
 
-      const miscBody = () => (
-        <Box key="tab:misc:body" flexDirection="column">
           <Box flexDirection="row">
             {section('Steps ')}
             {folded > 0 || isStepsOpen ? (
@@ -1257,6 +1462,86 @@ export const register: Register = (on, options) => {
 
           {section('Main')}
           <Box flexDirection="column">
+            {helpRow('handover', section('Handover'), 'What the handover plugin does in this session: the handover it loaded, where it stands, and the one it wrote.')}
+            {helpRow(
+              'loaded',
+              <Text>
+                <Text dimColor>loaded </Text>
+                <Text underline>Ship the panel</Text>
+                <Text dimColor> (142 lines · 2026-10-07 09:32)</Text>
+              </Text>,
+              'The handover this session started from, linked; "none" for a fresh start.',
+            )}
+            {helpRow(
+              'status',
+              <Text color="#e5c890">✋ triggers at 150k · now 141k</Text>,
+              'Where the handover plugin winds the session down; yellow once close, "suggested" once a handover is worth doing at the next boundary.',
+            )}
+            {helpRow(
+              'trigger',
+              framed(TRIGGER_NOW.color, <Text>{TRIGGER_NOW.emoji} {TRIGGER_NOW.label}</Text>),
+              'Starts the wind-down at once (/handover:trigger) instead of waiting for the trigger.',
+            )}
+            {(Object.keys(PHASES) as HandoverPhase[]).map(key =>
+              helpRow(`phase:${key}`, <Text color={PHASES[key].color}>{phaseLine(key, now)}</Text>, PHASES[key].does),
+            )}
+            {helpRow(
+              'written',
+              <Text>
+                <Text dimColor>written </Text>
+                <Text underline>Next steps</Text>
+                <Text dimColor> (84 lines · 1m ago)</Text>
+              </Text>,
+              'The handover just written, linked.',
+            )}
+            {NEXT_ACTIONS.map(a =>
+              helpRow(
+                a.key,
+                framed(a.color, <Text>{a.emoji} {a.label}</Text>),
+                a.isSent
+                  ? 'Runs /clear, waits for the handover to load, then sends its resume prompt: the next session starts on its own.'
+                  : 'The same, but leaves the prompt in the input for you to change before sending; alone when the reply gave no prompt.',
+              ),
+            )}
+            {helpRow('situation', section('Situation'), "The live state of the session's topic, in every session of it and after a handover: the Rex session's label when a note names it as its topic, else the topic of the last notes document the session read or wrote. Read again every 30 s.")}
+            {helpRow(
+              'sit:plan',
+              <Box flexDirection="column">
+                <Text bold>Merge plan</Text>
+                <Text>
+                  <Text dimColor>2  </Text>🔧 <Text color={PR_COLOR.draft} underline>claude-plugins#90</Text>
+                  <Text color="#e78284">!</Text>
+                  <Text dimColor> worker running</Text>
+                </Text>
+              </Box>,
+              "The topic's merge plan (its *-merge-plan.md), one row per line: wave, status, pull requests in their live state's colour with ! on a red check (GitHub, every minute), note. Its age turns yellow past an hour.",
+            )}
+            {helpRow(
+              'sit:workers',
+              <Text>
+                <Text color={WORKER_LOOK.running.color}>{WORKER_LOOK.running.glyph} </Text>
+                review · claude-plugins#90<Text dimColor> · running · Reading the diff</Text>
+              </Text>,
+              "The other tabs of the topic's Rex session: ● running, ◆ waiting for you, ○ idle, ✓ done or ✗ blocked on its AFK line, › a shell; then the last thing it said.",
+            )}
+            {helpRow(
+              'sit:questions',
+              <Text>
+                <Text color="#e5c890">Q1</Text> Lock mode in mise.toml?
+              </Text>,
+              "The topic's open-questions plans still todo or doing, one line per question not yet decided.",
+            )}
+            {helpRow(
+              'sit:proposed',
+              <Text>
+                <Text color="#ca9ee6">D02</Text> Pin the lock in CI
+              </Text>,
+              "Awaiting you: the topic's decision register's entries still proposed, with a link to the register.",
+            )}
+          </Box>
+
+          {section('Misc')}
+          <Box flexDirection="column">
             {helpRow(
               'issue',
               <Box flexDirection="row">
@@ -1336,47 +1621,6 @@ export const register: Register = (on, options) => {
               </Box>,
               "Any other Markdown file the agent wrote outside this project's repository, temporary and hidden folders, under its folder's name.",
             )}
-            {helpRow('handover', section('Handover'), 'What the handover plugin does in this session: the handover it loaded, where it stands, and the one it wrote.')}
-            {helpRow(
-              'loaded',
-              <Text>
-                <Text dimColor>loaded </Text>
-                <Text underline>Ship the panel</Text>
-                <Text dimColor> (142 lines · 2026-10-07 09:32)</Text>
-              </Text>,
-              'The handover this session started from, linked; "none" for a fresh start.',
-            )}
-            {helpRow(
-              'status',
-              <Text color="#e5c890">✋ triggers at 150k · now 141k</Text>,
-              'Where the handover plugin winds the session down; yellow once close, "suggested" once a handover is worth doing at the next boundary.',
-            )}
-            {helpRow(
-              'trigger',
-              framed(TRIGGER_NOW.color, <Text>{TRIGGER_NOW.emoji} {TRIGGER_NOW.label}</Text>),
-              'Starts the wind-down at once (/handover:trigger) instead of waiting for the trigger.',
-            )}
-            {(Object.keys(PHASES) as HandoverPhase[]).map(key =>
-              helpRow(`phase:${key}`, <Text color={PHASES[key].color}>{phaseLine(key, now)}</Text>, PHASES[key].does),
-            )}
-            {helpRow(
-              'written',
-              <Text>
-                <Text dimColor>written </Text>
-                <Text underline>Next steps</Text>
-                <Text dimColor> (84 lines · 1m ago)</Text>
-              </Text>,
-              'The handover just written, linked.',
-            )}
-            {NEXT_ACTIONS.map(a =>
-              helpRow(
-                a.key,
-                framed(a.color, <Text>{a.emoji} {a.label}</Text>),
-                a.isSent
-                  ? 'Runs /clear, waits for the handover to load, then sends its resume prompt: the next session starts on its own.'
-                  : 'The same, but leaves the prompt in the input for you to change before sending; alone when the reply gave no prompt.',
-              ),
-            )}
             {helpRow(
               'prompts',
               <Text>
@@ -1387,10 +1631,6 @@ export const register: Register = (on, options) => {
               </Text>,
               'Your last typed prompt and when you sent it; press the count beside it to read every prompt of the session, each numbered with its time.',
             )}
-          </Box>
-
-          {section('Misc')}
-          <Box flexDirection="column">
             {helpRow(
               'steps',
               <Box flexDirection="column">

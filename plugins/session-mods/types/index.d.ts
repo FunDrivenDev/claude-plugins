@@ -103,6 +103,37 @@ export type Handover = {
   resume: string | null
 }
 
+/** A pull request a merge plan names, linked. */
+export type SituationPr = { label: string; url: string; repo: string; number: number }
+export type MergeRow = { wave: string; prs: SituationPr[]; status: string; note: string }
+/** The topic's merge plan file: its table, its `Refreshed:` line and its last change (epoch ms). */
+export type MergePlan = { path: string; modifiedAt: number | null; refreshed: string | null; rows: MergeRow[] }
+export type Question = { id: string; title: string }
+export type Proposed = { id: string; text: string }
+/** A tab of the topic's Rex session, as its screen's foot shows it. */
+export type Worker = { label: string; state: 'running' | 'waiting' | 'idle' | 'done' | 'blocked' | 'shell'; last: string | null }
+/** A pull request's live state, read from GitHub. */
+export type PrLive = { state: 'draft' | 'open' | 'closed' | 'merged'; isRed: boolean }
+
+/** The Situation section: the live state of the session's topic, read from the notes, Rex and GitHub. */
+export type Situation = {
+  topic: string | null
+  /** How the session learned its topic: its Rex session's label, or a notes document it read or wrote. */
+  from: 'rex' | 'notes' | null
+  mergePlan: MergePlan | null
+  questions: Question[]
+  proposed: Proposed[]
+  /** The topic's decision register, linked from the Awaiting you block. */
+  register: string | null
+  /** null while no Rex session carries the topic. */
+  workers: Worker[] | null
+  workersError: string | null
+  prs: Record<string, PrLive>
+  prsError: string | null
+  /** When the notes were last read (epoch ms); null before the first read. */
+  readAt: number | null
+}
+
 /** The pane's tabs: the session at a glance, the rest (steps, sub-agents, git), the values it reads from configuration, and what each item means. */
 /** A typed prompt and when it was submitted (epoch ms); `at` null for one read back from the transcript. */
 export type Prompt = { text: string; at: number | null }
@@ -170,6 +201,9 @@ declare module 'claude-code' {
       config: Config
       tab: Tab
       topic: string | null
+      situation: Situation
+      /** The last notes document the session read or wrote, as named. */
+      lastNote: string | null
       /** The session whose title is set (by the agent or from its handover), and the one already reminded to set it. */
       titled: { set: string | null; reminded: string | null }
       info: Info
