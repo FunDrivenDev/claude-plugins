@@ -482,18 +482,24 @@ async function refreshSituation($: EngineInterface) {
 
 /** Reads each merge-plan pull request's state and checks from GitHub. */
 async function refreshSituationPrs($: EngineInterface) {
-  const urls = [...new Set((await read($, situation)).mergePlan?.rows.flatMap(r => r.prs.map(p => p.url)) ?? [])]
+  const urlsOf = (sit: Situation) => [...new Set(sit.mergePlan?.rows.flatMap(r => r.prs.map(p => p.url)) ?? [])]
+  const urls = urlsOf(await read($, situation))
   if (!urls.length) {
     await update($, situation, s => ({ ...s, prs: {}, prsError: null }))
     return
   }
   const got = await Promise.all(urls.map(async url => [url, prLiveOf((await $.process.run(['gh', 'pr', 'view', url, '--json', 'state,isDraft,statusCheckRollup', '--jq', PR_JQ])).stdout)] as const))
   const read_ = got.filter((g): g is readonly [string, NonNullable<(typeof g)[1]>] => g[1] !== null)
-  await update($, situation, s => ({
-    ...s,
-    prs: Object.fromEntries(read_),
-    prsError: read_.length === 0 ? 'gh unreachable' : null,
-  }))
+  // A plan changed while gh answered: its own read, started since, writes its states.
+  await update($, situation, s =>
+    urlsOf(s).join(' ') !== urls.join(' ')
+      ? s
+      : {
+          ...s,
+          prs: Object.fromEntries(read_),
+          prsError: read_.length === 0 ? 'gh unreachable' : null,
+        },
+  )
 }
 
 /** Notes the last notes document a call read or wrote; a new one is read at once while the session has no topic. */
