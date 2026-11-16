@@ -1214,7 +1214,11 @@ export const register: Register = (on, options) => {
           <Box key={`sit:row:${i}`} flexDirection="row" columnGap={1}>
             <Text dimColor>{r.wave.padEnd(2)}</Text>
             <Text>{r.status}</Text>
-            {stale && <Text color="#e5c890" wrap="truncate-end">{stale}</Text>}
+            {stale && (
+              <Box flexShrink={0}>
+                <Text color="#e5c890">{stale}</Text>
+              </Box>
+            )}
             <Box flexDirection="row" columnGap={1} flexShrink={0}>
               {r.prs.map(pr => {
                 const live = sit.prs[pr.url]

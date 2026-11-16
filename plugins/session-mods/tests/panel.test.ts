@@ -677,16 +677,19 @@ describe('Situation', () => {
   test("a merge-plan row whose status gh contradicts shows stale and why, in yellow", ON, async ($, on) => {
     start(on, { REX_SESSION: 'session:1', REX_BLOCK: 'block:me' }, argv => {
       if (argv[0] === 'rex' && argv[1] === 'window') return ok(REX)
-      if (argv[0] === 'sh' && argv[2]?.includes('decisions-register')) return argv[4] === 'spj' ? ok(NOTES) : fail
+      if (argv[0] === 'sh' && argv[2]?.includes('decisions-register')) return argv[4] === 'spj' ? ok(NOTES.replace('|---|---|---|---|\n', '|---|---|---|---|\n| 1 | [claude-plugins#89](https://github.com/FunDrivenDev/claude-plugins/pull/89) | ✅ | base merged |\n')) : fail
       if (argv[0] === 'gh' && argv[1] === 'pr') return ok('{"state":"MERGED","isDraft":false,"red":0}')
       return undefined
     })
     await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
     await settle()
     const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
-    const stale = await ui.find({ type: 'Text', text: /^stale: merged$/ })
-    expect(stale).toBeDefined()
-    expect(JSON.stringify(stale)).toContain('#e5c890')
+    // The ✅ row agrees with gh and stays fresh; the 🔧 row, its PR merged, alone shows stale.
+    expect(await ui.find({ text: /base merged/ })).toBeDefined()
+    const stale = await ui.findAll({ type: 'Text', text: /^stale: / })
+    expect(stale).toHaveLength(1)
+    expect(JSON.stringify(stale[0])).toContain('stale: merged')
+    expect(JSON.stringify(stale[0])).toContain('#e5c890')
     expect(await ui.find({ text: /worker running/ })).toBeDefined()
     await ui.unmount()
   })
