@@ -189,3 +189,27 @@ export const WORKER_LOOK: Record<Worker['state'], { glyph: string; color: string
 
 /** A merge plan older than this shows its age in yellow. */
 export const STALE_MS = 60 * 60_000
+
+/**
+ * Why a merge-plan row's status disagrees with GitHub's live state of its pull requests (`stale: merged`), else null.
+ * Never stale: a ❓ row, a row without pull requests, a row with one gh could not read. A ⚠️ row whose checks are
+ * green is not stale either: gh's answer does not say whether it conflicts with its base.
+ */
+export const staleOf = (row: MergeRow, prs: Record<string, PrLive>): string | null => {
+  const s = row.status
+  if (s.includes('❓') || !row.prs.length) return null
+  const live = row.prs.map(p => prs[p.url])
+  if (live.some(l => !l)) return null
+  const states = live.map(l => l!.state)
+  const done = (st: PrLive['state']) => st === 'merged' || st === 'closed'
+  if (s.includes('✅')) {
+    if (states.some(st => st === 'open' || st === 'draft')) return 'stale: open'
+    if (states.includes('closed')) return 'stale: closed'
+  }
+  if (/[🔧⏳👤⚠]/u.test(s) && states.every(done)) return states.includes('merged') ? 'stale: merged' : 'stale: closed'
+  if (s.includes('🗑')) {
+    if (states.includes('merged')) return 'stale: merged'
+    if (states.every(st => st === 'closed')) return 'stale: closed'
+  }
+  return null
+}
