@@ -9,7 +9,7 @@ import { changesOf, treeRows } from './files'
 import { HANDOVER_STATE, handoverOf } from './handover'
 import { ARTIFACTS, DOC_CONTEXT, HANDOVER_DIR, PLANS_DIR, WRITTEN_SINCE, artifactOf, type DocContext, docContextOf, docGroups, docOf, docPaths, tilde, writtenSpots } from './documents'
 import { ago, cleanTitle, clockTime, describeCall, fileMeta, handoverPhase, handoverStatus, headline, HELP_EXAMPLE, intentOf, isPastTrigger, isRunning, kilo, lastSentence, NEXT_ACTIONS, oneLine, phaseLine, PHASES, previousPrompts, promptOf, promptText, SIGN, SIGN_COLOR, TRIGGER_NOW, type HandoverPhase } from './panel'
-import { frontMatterOf, fromNotes, isTopic, NOTE_HEAD, notesOf, notesPathsIn, PR_JQ, prLiveOf, rexSessionLabelled, rexSessionOf, STALE_MS, TOPIC_NOTES, WORKER_LOOK, workerOf, type RexSession } from './situation'
+import { frontMatterOf, fromNotes, isTopic, NOTE_HEAD, notesOf, notesPathsIn, PR_JQ, prLiveOf, rexSessionLabelled, rexSessionOf, STALE_MS, staleOf, TOPIC_NOTES, WORKER_LOOK, workerOf, type RexSession } from './situation'
 import { PR_COLOR, RANK, findRefs, linearOfResult, prState, refKey, refsOfGh, repoOfRemote, titleOfSlug } from './tracker'
 import type { GithubRef, LinearRef } from './tracker'
 
@@ -1208,10 +1208,13 @@ export const register: Register = (on, options) => {
             {sit.prsError && <Text color="#e78284"> · {sit.prsError}</Text>}
           </Box>
         )
-        const planRows = (plan?.rows ?? []).map((r, i) => (
+        const planRows = (plan?.rows ?? []).map((r, i) => {
+          const stale = staleOf(r, sit.prs)
+          return (
           <Box key={`sit:row:${i}`} flexDirection="row" columnGap={1}>
             <Text dimColor>{r.wave.padEnd(2)}</Text>
             <Text>{r.status}</Text>
+            {stale && <Text color="#e5c890" wrap="truncate-end">{stale}</Text>}
             <Box flexDirection="row" columnGap={1} flexShrink={0}>
               {r.prs.map(pr => {
                 const live = sit.prs[pr.url]
@@ -1225,7 +1228,8 @@ export const register: Register = (on, options) => {
             </Box>
             <Text dimColor wrap="truncate-end">{r.note}</Text>
           </Box>
-        ))
+          )
+        })
         const workerRows = (sit.workers ?? []).map((w, i) => (
           <Box key={`sit:worker:${i}`} flexDirection="row">
             <Text color={WORKER_LOOK[w.state].color}>{WORKER_LOOK[w.state].glyph} </Text>
@@ -1534,8 +1538,11 @@ export const register: Register = (on, options) => {
                     <Text color="#e78284">!</Text>
                     <Text dimColor> worker running</Text>
                   </Text>
+                  <Text>
+                    <Text dimColor>3  </Text>⏳ <Text color="#e5c890">stale: merged</Text> <Text color={PR_COLOR.merged} underline>claude-plugins#91</Text>
+                  </Text>
                 </Box>,
-                "The topic's merge plan (its *-merge-plan.md), one row per line: wave, status, pull requests in their live state's colour with ! on a red check (GitHub, every minute), note. Its age turns yellow past an hour.",
+                "The topic's merge plan (its *-merge-plan.md), one row per line: wave, status, pull requests in their live state's colour with ! on a red check (GitHub, every minute), note. Its age turns yellow past an hour. A yellow stale: open, merged or closed follows a status GitHub contradicts (✅ on an open or closed PR; 🔧 ⏳ 👤 ⚠️ once all are merged or closed; 🗑️ once merged or closed): the file needs a refresh.",
               ),
               helpRow(
                 'sit:workers',

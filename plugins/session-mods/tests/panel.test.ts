@@ -659,6 +659,7 @@ describe('Situation', () => {
     expect(JSON.stringify(await ui.find({ type: 'Text', text: /^claude-plugins#90$/ }))).toContain('#babbf1')
     expect(await ui.find({ text: /^!$/ })).toBeDefined()
     expect(await ui.find({ text: /worker running/ })).toBeDefined()
+    expect(await ui.find({ text: /^stale: / })).toBeUndefined()
     expect(await ui.find({ text: /review · claude-plugins#90/ })).toBeDefined()
     expect(await ui.find({ text: /running · Reading the diff\./ })).toBeDefined()
     expect(await ui.find({ text: /^work$/ })).toBeUndefined()
@@ -670,6 +671,23 @@ describe('Situation', () => {
     expect(await ui.find({ text: /^Situation$/ })).toBeUndefined()
     await ui.press({ key: 'tab:config' })
     expect(await ui.find({ text: /^on$/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test("a merge-plan row whose status gh contradicts shows stale and why, in yellow", ON, async ($, on) => {
+    start(on, { REX_SESSION: 'session:1', REX_BLOCK: 'block:me' }, argv => {
+      if (argv[0] === 'rex' && argv[1] === 'window') return ok(REX)
+      if (argv[0] === 'sh' && argv[2]?.includes('decisions-register')) return argv[4] === 'spj' ? ok(NOTES) : fail
+      if (argv[0] === 'gh' && argv[1] === 'pr') return ok('{"state":"MERGED","isDraft":false,"red":0}')
+      return undefined
+    })
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    await settle()
+    const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+    const stale = await ui.find({ type: 'Text', text: /^stale: merged$/ })
+    expect(stale).toBeDefined()
+    expect(JSON.stringify(stale)).toContain('#e5c890')
+    expect(await ui.find({ text: /worker running/ })).toBeDefined()
     await ui.unmount()
   })
 
