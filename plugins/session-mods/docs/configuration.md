@@ -10,10 +10,11 @@ It is a mod: a plugin of function hooks, drawn by the engine (no shell script, n
 
 ## Settings
 
-The bar's one option, `cacheTtl`, is described in [Bar](bar.md#configuration). The pane has no option of its own. It reads Claude Code's `plansDirectory` and the handover plugin's `handover_dir` and token thresholds. The **Config** tab lists each one as in effect, with what it does, and its default for the first two.
+The bar's one option, `cacheTtl`, is described in [Bar](bar.md#configuration). The pane has no option of its own and writes no state file. It reads Claude Code's `plansDirectory` and the handover plugin's `handover_dir` and token thresholds. The **Config** tab lists each one as in effect, with what it does, and its default for the first two.
 
 ## Limits
 
 - Steps and sub-agents are recorded from the moment the plugin loads; the first prompt is read back from the transcript.
 - The handover thresholds are those this session runs with, as the handover plugin recorded them at session start (handover 0.20.0 and later), the point where its line turns yellow included. The pane gets them, with the rest of the Handover row, from the installed handover plugin's `handover.py state --session <session_id> --json` (handover 0.29.0 and later; with an older one the row says the state is unknown). The pane has no default of its own: when the thresholds are unknown, the Handover row and the Config tab say why. A `suggest_tokens` or `trigger_tokens` resolving differently now shows beneath it in the Config tab, as applying from the next session.
 - `handover_dir` comes from the handover plugin's options in `settings.json`, `pluginConfigs["handover@fundrivendev"].options`.
+- Situation reads the notes in `~/Notes/claude` (`plans/` and `decisions-register/`, by their `topic:` front matter), a fixed folder with no option. Its workers need the `rex` CLI and a session started in Rex (`REX_SESSION`); its pull requests' states need `gh` signed in. Each missing source shows on its block, the others still render.

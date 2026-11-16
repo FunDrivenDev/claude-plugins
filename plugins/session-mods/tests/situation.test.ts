@@ -1,0 +1,185 @@
+import { expect, test } from 'claude-code/testing'
+
+import {
+  frontMatterOf,
+  fromNotes,
+  isTopic,
+  mergePlanOf,
+  notesOf,
+  notesPathsIn,
+  prLiveOf,
+  proposedOf,
+  questionsOf,
+  rexSessionLabelled,
+  rexSessionOf,
+  workerOf,
+} from '../hooks/situation'
+
+const PLAN = `---
+status: doing
+kind: plan
+topic: mise-lockfiles
+---
+
+# Merge plan: mise-lockfiles
+
+Refreshed: 2026-11-16 (after the renovate-config worker).
+
+| Wave | PR | Status | Note |
+|---|---|---|---|
+| 1 | [guest-environment#253](https://github.com/Guest-Suite/guest-environment/pull/253), [#131](https://github.com/Guest-Suite/competitive-analysis/pull/131) | 👤 | checks green: ready and merge (a) |
+| 2 | [pdf-renderer#5](https://github.com/Guest-Suite/pdf-renderer/pull/5) | ⚠️ 👤 | Q1, [mise-lockfiles:D02](/r.md) lock mode |
+
+(a) One line per PR.
+`
+
+const QUESTIONS = `---
+status: todo
+topic: mise-lockfiles
+---
+
+# Open questions: mise-lockfiles
+
+## Q1 — pdf-renderer: lock mode in \`mise.toml\`?
+
+Held PR: pdf-renderer#5.
+
+## Q2 — Drop the sidecars?
+
+**Decided** (Raphaël, 2026-11-16): keep them.
+`
+
+const REGISTER = `---
+status: doing
+kind: decision-register
+topic: mise-lockfiles
+---
+
+- **D01** \`decided\` — Every mise config has its lockfiles versioned.
+  Why: x.
+- **D02** \`proposed\` — pdf-renderer sets \`locked = true\` in \`mise.toml\`.
+  Why: y.
+`
+
+test('a topic slug is the only thing put in a pattern', () => {
+  expect(isTopic('session-panel-journal')).toBe(true)
+  expect(isTopic('BIM-4544')).toBe(true)
+  expect(isTopic('a b')).toBe(false)
+  expect(isTopic('x"; rm -rf ~')).toBe(false)
+  expect(isTopic(null)).toBe(false)
+  expect(isTopic('')).toBe(false)
+})
+
+test('the notes a topic names split by file, with their last change', () => {
+  const out = `\x1e/n/plans/a-merge-plan.md\t1700000000\n${PLAN}\x1e/n/decisions-register/r.md\t\n${REGISTER}`
+  const notes = notesOf(out)
+  expect(notes.map(n => [n.path, n.modifiedAt])).toEqual([
+    ['/n/plans/a-merge-plan.md', 1_700_000_000_000],
+    ['/n/decisions-register/r.md', null],
+  ])
+  expect(notes[0]!.text).toBe(PLAN)
+  expect(notesOf('')).toEqual([])
+})
+
+test('front matter reads its keys, quotes dropped; none without a leading block', () => {
+  expect(frontMatterOf('---\ntopic: "x-y"\nstatus: todo\n---\n# T')).toEqual({ topic: 'x-y', status: 'todo' })
+  expect(frontMatterOf('# no front matter\ntopic: x')).toEqual({})
+})
+
+test('a call names notes documents by ~, $HOME or an absolute path', () => {
+  expect(notesPathsIn('cat ~/Notes/claude/plans/a.md "$HOME/Notes/claude/b.md" /Users/me/Notes/claude/reports/c.md')).toEqual([
+    '~/Notes/claude/plans/a.md',
+    '$HOME/Notes/claude/b.md',
+    '/Users/me/Notes/claude/reports/c.md',
+  ])
+  expect(notesPathsIn('/Users/me/Code/repo/README.md')).toEqual([])
+})
+
+test('a merge plan reads its rows, pull requests linked, and its Refreshed line', () => {
+  const plan = mergePlanOf(PLAN)!
+  expect(plan.refreshed).toBe('2026-11-16 (after the renovate-config worker).')
+  expect(plan.rows).toEqual([
+    {
+      wave: '1',
+      status: '👤',
+      note: 'checks green: ready and merge (a)',
+      prs: [
+        { label: 'guest-environment#253', url: 'https://github.com/Guest-Suite/guest-environment/pull/253', repo: 'Guest-Suite/guest-environment', number: 253 },
+        { label: '#131', url: 'https://github.com/Guest-Suite/competitive-analysis/pull/131', repo: 'Guest-Suite/competitive-analysis', number: 131 },
+      ],
+    },
+    {
+      wave: '2',
+      status: '⚠️ 👤',
+      note: 'Q1, mise-lockfiles:D02 lock mode',
+      prs: [{ label: 'pdf-renderer#5', url: 'https://github.com/Guest-Suite/pdf-renderer/pull/5', repo: 'Guest-Suite/pdf-renderer', number: 5 }],
+    },
+  ])
+  expect(mergePlanOf('# Merge plan\n\nNo table yet.')).toBeNull()
+})
+
+test('open questions leave out those already decided; proposed decisions leave out the decided ones', () => {
+  expect(questionsOf(QUESTIONS)).toEqual([{ id: 'Q1', title: 'pdf-renderer: lock mode in `mise.toml`?' }])
+  expect(proposedOf(REGISTER)).toEqual([{ id: 'D02', text: 'pdf-renderer sets `locked = true` in `mise.toml`.' }])
+})
+
+test('the notes give the latest open merge plan, the open questions of open plans, and the register', () => {
+  const note = (path: string, text: string) => ({ path, modifiedAt: 5, text })
+  const done = PLAN.replace('status: doing', 'status: done').replace('guest-environment#253', 'old#1')
+  const found = fromNotes([
+    note('/n/plans/26-11-16-x-merge-plan.md', PLAN),
+    note('/n/plans/26-11-17-x-merge-plan.md', done),
+    note('/n/plans/26-11-16-x-open-questions.md', QUESTIONS),
+    note('/n/plans/26-11-15-x-open-questions.md', QUESTIONS.replace('status: todo', 'status: done')),
+    note('/n/decisions-register/26-11-16-x.md', REGISTER),
+  ])
+  expect(found.mergePlan?.path).toBe('/n/plans/26-11-16-x-merge-plan.md')
+  expect(found.mergePlan?.modifiedAt).toBe(5)
+  expect(found.questions).toEqual([{ id: 'Q1', title: 'pdf-renderer: lock mode in `mise.toml`?' }])
+  expect(found.proposed.map(d => d.id)).toEqual(['D02'])
+  expect(found.register).toBe('/n/decisions-register/26-11-16-x.md')
+  expect(fromNotes([])).toEqual({ mergePlan: null, questions: [], proposed: [], register: null })
+})
+
+test('Rex answers its sessions, windows and their blocks; anything else reads as none', () => {
+  const ls = JSON.stringify({
+    session_id: 'session:1',
+    label: 'session-panel-journal',
+    windows: [
+      { window_id: 'window:a', label: 'watch', focused_block_id: 'block:a', layers: [{ blocks: [{ block_id: 'block:a' }] }] },
+      { window_id: 'window:b', label: 'work', focused_block_id: 'block:b', layers: [{ blocks: [{ block_id: 'block:b' }, { block_id: 'block:c' }] }] },
+    ],
+  })
+  expect(rexSessionOf(ls)).toEqual({
+    session_id: 'session:1',
+    label: 'session-panel-journal',
+    windows: [
+      { id: 'window:a', label: 'watch', block: 'block:a', blocks: ['block:a'] },
+      { id: 'window:b', label: 'work', block: 'block:b', blocks: ['block:b', 'block:c'] },
+    ],
+  })
+  expect(rexSessionOf('error: no server')).toBeNull()
+  expect(rexSessionLabelled(JSON.stringify({ sessions: [{ session_id: 's:1', label: 'a' }, { session_id: 's:2', label: 'b' }] }), 'b')).toBe('s:2')
+  expect(rexSessionLabelled('{}', 'b')).toBeNull()
+  expect(rexSessionLabelled('nope', 'b')).toBeNull()
+})
+
+test("a tab's foot tells a running, waiting, idle, done or blocked Claude session from a shell", () => {
+  const claude = (body: string, foot: string) => `⏺ Reading the diff.\n${body}\n❯ \n────\n  ${foot}\n  ⌛ running 2m`
+  expect(workerOf('review', claude('', '⏵⏵ bypass permissions on · esc to interrupt'))).toEqual({ label: 'review', state: 'running', last: 'Reading the diff.' })
+  expect(workerOf('fix', claude(' Do you want to proceed?\n ❯ 1. Yes', 'Esc to cancel')).state).toBe('waiting')
+  expect(workerOf('fix', claude('⏺ All set.', '? for shortcuts'))).toEqual({ label: 'fix', state: 'idle', last: 'All set.' })
+  expect(workerOf('w', claude('⏺ AFK done: https://github.com/o/r/pull/9, merged', '? for shortcuts'))).toEqual({ label: 'w', state: 'done', last: 'AFK done: https://github.com/o/r/pull/9, merged' })
+  expect(workerOf('w', claude('⏺ AFK blocked: which name?', '? for shortcuts')).state).toBe('blocked')
+  expect(workerOf('logs', '$ tail -f x.log\nline 1\nline 2\n')).toEqual({ label: 'logs', state: 'shell', last: 'line 2' })
+  expect(workerOf('empty', '')).toEqual({ label: 'empty', state: 'shell', last: null })
+})
+
+test("a pull request's live state and red checks, from gh's cut answer", () => {
+  expect(prLiveOf('{"state":"OPEN","isDraft":true,"red":0}')).toEqual({ state: 'draft', isRed: false })
+  expect(prLiveOf('{"state":"OPEN","isDraft":false,"red":2}')).toEqual({ state: 'open', isRed: true })
+  expect(prLiveOf('{"state":"MERGED","isDraft":false,"red":0}')).toEqual({ state: 'merged', isRed: false })
+  expect(prLiveOf('{"state":"CLOSED"}')).toEqual({ state: 'closed', isRed: false })
+  expect(prLiveOf('')).toBeNull()
+  expect(prLiveOf('{"message":"Not Found"}')).toBeNull()
+})

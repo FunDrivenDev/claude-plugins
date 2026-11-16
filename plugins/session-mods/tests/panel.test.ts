@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from 'claude-code/testing'
+import { describe, expect, mock, test, type TestBody } from 'claude-code/testing'
 
 import { ago, cleanTitle, clockTime, handoverPhase, phaseLine, describeCall, fileMeta, handoverStatus, headline, lastSentence, previousPrompts, promptText } from '../hooks/panel'
 import { HANDOVER_STATE } from '../hooks/handover'
@@ -74,12 +74,13 @@ test('the pane shows the first prompt and moves a finished sub-agent to the done
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'session-mods', surface, ...PANE })
+    expect(await ui.find({ text: /and another prompt/ })).toBeUndefined()
+    await ui.press({ key: 'tab:misc' })
     expect(await ui.find({ text: /and another prompt/ })).toBeDefined()
     expect(await ui.find({ text: /Build a calm side panel/ })).toBeUndefined()
     expect((await ui.find({ key: 'prompts' }))?.props.label).toBe('(1 previous prompt)')
     expect(await ui.find({ text: /no repository yet/ })).toBeDefined()
     expect(await ui.find({ text: /no issue/ })).toBeDefined()
-    await ui.press({ key: 'tab:misc' })
     expect(await ui.find({ text: /1 running · 0 done/ })).toBeDefined()
     expect((await ui.find({ key: 'agent:a1' }))?.props.label).toContain('Find hooks')
     await ui.press({ key: 'tab:main' })
@@ -93,7 +94,6 @@ test('the pane shows the first prompt and moves a finished sub-agent to the done
   expect(await ui.find({ text: /0 running · 1 done/ })).toBeDefined()
   await ui.press({ key: 'agent:a1' })
   expect(await ui.find({ text: /Found them/ })).toBeDefined()
-  await ui.press({ key: 'tab:main' })
   await ui.press({ key: 'prompts' })
   expect(await ui.find({ text: /Build a calm side panel/ })).toBeDefined()
   expect(await ui.find({ text: /and another prompt/ })).toBeDefined()
@@ -193,6 +193,7 @@ test('the corner shows the prompted pull request in its GitHub colour, linked', 
 
   await $.prompt.submit(typed('push it to FunDrivenDev/claude-plugins#7'))
   const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'tab:misc' })
   expect(await ui.find({ text: /⎇ claude-plugins/ })).toBeDefined()
   expect(await ui.find({ text: /#7 Publish/ })).toBeDefined()
   expect(await ui.find({ text: /draft/ })).toBeDefined()
@@ -225,6 +226,7 @@ test('a bare #N numbering a list yields to the pull request the session works on
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
 
   const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'tab:misc' })
   expect(await ui.find({ text: /#21 PR 21/ })).toBeDefined()
   expect(await ui.find({ text: /#1 PR 1/ })).toBeUndefined()
   await ui.unmount()
@@ -256,6 +258,7 @@ test('a new session lists only the commits made since it began, in its linked wo
   expect(logs[0]).toContain('--since=@1700000000')
 
   const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'tab:misc' })
   expect(await ui.find({ text: /▣ repo/ })).toBeDefined()
   await ui.unmount()
 })
@@ -278,6 +281,7 @@ test('the documents the session writes list under their kind, linked, by name, a
   })
 
   const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'tab:misc' })
   expect(await ui.find({ text: /None written yet\./ })).toBeDefined()
   await ui.unmount()
 
@@ -288,6 +292,7 @@ test('the documents the session writes list under their kind, linked, by name, a
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'session-mods', surface, ...PANE })
+    await ui.press({ key: 'tab:misc' })
     expect(await ui.find({ text: /None written yet/ })).toBeUndefined()
     expect(await ui.find({ text: /^Documents$/ })).toBeDefined()
     expect(await ui.find({ text: /^Artifacts$/ })).toBeDefined()
@@ -563,9 +568,126 @@ test('the Help tab explains each item beside an example of it, in place of the r
   expect(await ui.find({ text: /Hand over now/ })).toBeDefined()
   expect(await ui.find({ text: /● pushed, ○ local only/ })).toBeDefined()
   expect(await ui.find({ text: /Last prompt/ })).toBeDefined()
-  for (const title of [/^Documents$/, /^Handover$/]) expect(await ui.find({ text: title })).toBeDefined()
+  for (const title of [/^Documents$/, /^Handover$/, /^Situation$/]) expect(await ui.find({ text: title })).toBeDefined()
+  expect(await ui.find({ text: /other tabs of the topic's Rex session/ })).toBeDefined()
   expect(await ui.find({ key: 'prompts' })).toBeUndefined()
-  await ui.press({ key: 'tab:main' })
+  await ui.press({ key: 'tab:misc' })
   expect((await ui.find({ key: 'prompts' }))?.props.label).toBe('(no previous prompt)')
   await ui.unmount()
+})
+
+describe('Situation', () => {
+  const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+  const fail = { value: { exitCode: 1, stdout: '', stderr: 'unreachable', isStdoutTruncated: false, isStderrTruncated: false } }
+  const settle = async () => {
+    for (let i = 0; i < 200; i++) await Promise.resolve()
+  }
+  const NOTES =
+    '\x1e/n/plans/26-11-16-spj-merge-plan.md\t1000\n---\nstatus: doing\ntopic: spj\n---\n\n| Wave | PR | Status | Note |\n|---|---|---|---|\n| 1 | [claude-plugins#90](https://github.com/FunDrivenDev/claude-plugins/pull/90) | 🔧 | worker running |\n' +
+    '\x1e/n/plans/26-11-16-spj-open-questions.md\t1000\n---\nstatus: todo\ntopic: spj\n---\n\n## Q1 — Which name?\n' +
+    '\x1e/n/decisions-register/26-11-16-spj.md\t1000\n---\nkind: decision-register\ntopic: spj\n---\n\n- **D01** `proposed` — Name it Situation.\n'
+  const REX = JSON.stringify({
+    session_id: 'session:1',
+    label: 'spj',
+    windows: [
+      { window_id: 'window:me', label: 'work', focused_block_id: 'block:me', layers: [{ blocks: [{ block_id: 'block:me' }] }] },
+      { window_id: 'window:w', label: 'review · claude-plugins#90', focused_block_id: 'block:w', layers: [{ blocks: [{ block_id: 'block:w' }] }] },
+    ],
+  })
+  const start = (on: Parameters<TestBody>[1], env: Record<string, string>, run: (argv: readonly string[]) => unknown) => {
+    mock.clock(on, { now: 1_000 })
+    on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
+    on('session.model', () => ({ value: 'opus' }))
+    on('session.start', ($, e) => ({ cwd: e.cwd }))
+    on('command.register', () => ({ value: { command: 'session-panel' } }))
+    on('session.messages', () => ({ value: [] }))
+    on('session.id', () => ({ value: 's1' }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('env.get', ($, e) => ({ value: env[(e as { name: string }).name] }))
+    on('settings.read', () => ({ value: {} }))
+    on('tool.call', () => ({ result: {} as never }))
+    on('process.run', ($, e) => (run(e.argv) ?? ok('')) as never)
+  }
+
+  test('Main shows Handover then the Situation of the Rex session\'s topic, filled; the rest sits on Misc', async ($, on) => {
+    start(on, { REX_SESSION: 'session:1', REX_BLOCK: 'block:me' }, argv => {
+      if (argv[0] === 'rex' && argv[1] === 'window') return ok(REX)
+      if (argv[0] === 'rex' && argv[1] === 'capture') return argv.includes('block:w') ? ok('⏺ Reading the diff.\n❯ \n  esc to interrupt\n') : fail
+      if (argv[0] === 'sh' && argv[2]?.includes('decisions-register')) return argv[4] === 'spj' ? ok(NOTES) : fail
+      if (argv[0] === 'gh' && argv[1] === 'pr') return ok('{"state":"OPEN","isDraft":true,"red":1}')
+      return undefined
+    })
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    await settle()
+    const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+    expect(await ui.find({ text: /^Handover$/ })).toBeDefined()
+    expect(await ui.find({ text: /^Situation$/ })).toBeDefined()
+    expect(await ui.find({ text: /spj · Rex session/ })).toBeDefined()
+    const pr = await ui.find({ type: 'Link', text: /claude-plugins#90/ })
+    expect(pr?.props.href).toBe('https://github.com/FunDrivenDev/claude-plugins/pull/90')
+    expect(JSON.stringify(await ui.find({ type: 'Text', text: /^claude-plugins#90$/ }))).toContain('#babbf1')
+    expect(await ui.find({ text: /^!$/ })).toBeDefined()
+    expect(await ui.find({ text: /worker running/ })).toBeDefined()
+    expect(await ui.find({ text: /review · claude-plugins#90/ })).toBeDefined()
+    expect(await ui.find({ text: /running · Reading the diff\./ })).toBeDefined()
+    expect(await ui.find({ text: /^work$/ })).toBeUndefined()
+    expect(await ui.find({ text: /Which name\?/ })).toBeDefined()
+    expect(await ui.find({ text: /Name it Situation\./ })).toBeDefined()
+    for (const gone of [/no issue/, /no repository yet/, /^Documents$/, /^Last prompt/, /^Steps/]) expect(await ui.find({ text: gone })).toBeUndefined()
+    await ui.press({ key: 'tab:misc' })
+    for (const moved of [/no issue/, /no repository yet/, /^Documents$/, /^Last prompt/, /^Steps/, /^Git diff$/]) expect(await ui.find({ text: moved })).toBeDefined()
+    expect(await ui.find({ text: /^Situation$/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('without a topic the section says so', async ($, on) => {
+    start(on, {}, () => undefined)
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    await settle()
+    const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+    expect(await ui.find({ text: /^No topic: / })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('a Rex label no note names gives no topic, until the session reads a note that names one; Rex and gh down show as such', async ($, on) => {
+    start(on, { REX_SESSION: 'session:1', REX_BLOCK: 'block:me' }, argv => {
+      if (argv[0] === 'rex' && argv[1] === 'window') return ok(REX.replace('"label":"spj"', '"label":"Dispatch"'))
+      if (argv[0] === 'rex' && argv[1] === 'ls') return fail
+      if (argv[0] === 'sh' && argv[2]?.includes('decisions-register')) return argv[4] === 'spj' ? ok(NOTES.split('\x1e').slice(0, 2).join('\x1e')) : fail
+      if (argv[0] === 'sh' && argv[2]?.includes('head -20 "$1"')) return ok('---\ntopic: spj\n---\n')
+      if (argv[0] === 'gh') return fail
+      return undefined
+    })
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    await settle()
+    let ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+    expect(await ui.find({ text: /^No topic: / })).toBeDefined()
+    await ui.unmount()
+
+    await $.tool.call({ tool: 'Read', file_path: '/Users/me/Notes/claude/plans/26-11-16-spj-brief.md' } as never)
+    await settle()
+    ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+    expect(await ui.find({ text: /spj · notes/ })).toBeDefined()
+    expect(await ui.find({ text: /gh unreachable/ })).toBeDefined()
+    expect(await ui.find({ text: /^rex unreachable$/ })).toBeDefined()
+    expect(await ui.find({ text: /^No open question\.$/ })).toBeDefined()
+    expect(await ui.find({ text: /^No proposed decision\.$/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('outside Rex, a topic from the notes has no workers and no merge plan to show', async ($, on) => {
+    start(on, {}, argv => {
+      if (argv[0] === 'sh' && argv[2]?.includes('decisions-register')) return ok('\x1e/n/plans/26-11-16-spj-brief.md\t1000\n---\ntopic: spj\n---\n')
+      if (argv[0] === 'sh' && argv[2]?.includes('head -20 "$1"')) return ok('---\ntopic: spj\n---\n')
+      return undefined
+    })
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    await $.tool.call({ tool: 'Bash', command: 'cat ~/Notes/claude/plans/26-11-16-spj-brief.md' } as never)
+    await settle()
+    const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+    expect(await ui.find({ text: /spj · notes/ })).toBeDefined()
+    expect(await ui.find({ text: /^No merge plan\.$/ })).toBeDefined()
+    expect(await ui.find({ text: /^not in a Rex session$/ })).toBeDefined()
+    await ui.unmount()
+  })
 })

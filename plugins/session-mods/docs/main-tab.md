@@ -1,34 +1,6 @@
 # Main tab
 
-The session at a glance: Issue, Git, Documents, Handover and Last prompt, in that order. [Back to the README](../README.md)
-
-## Issue
-
-Names on its line the tracker issue the session is about, with its platform's icon (GitHub `◉`, Linear `◐`) and its title, linked, or `no issue`.
-
-The issue is the one your prompt names, else the one the session opened (`gh issue create`, a Linear tool's `create`), else one it worked on. A Linear issue opens in the desktop app (`linear://`) where it is installed, else on linear.app; a bare `KEY-N` in a prompt counts once a Linear tool shows it, so an It's a Plan key is never taken for a Linear one.
-
-## Git
-
-Lists, a blank line apart, each repository the session worked on (its starting folder, and any it edited in) in the order it first touched them, or `no repository yet` outside any:
-
-- `⎇ name`, then its pull request as `#N title`, linked, in GitHub's colours (lavender draft, a lighter tone than GitHub's grey so it reads, green open, red closed, purple merged) with its state, or `no pull request yet`.
-- Beneath, the linked worktree the session last edited in (`▣ name`), or `main checkout`.
-
-A pull request worked on in a repository not checked out here gets a block of its own, without the worktree line. Each repository's pull request is chosen as the issue is: the one your prompt names, else the one the session opened, else one it worked on.
-
-A bare `#N` in a prompt (a numbered list's `#1, #2`) counts below any reference the session worked on. The pane reads the whole transcript again when it loads, so a plugin loaded mid-session finds the references made before it. GitHub items are read with `gh api`, the pull request's state again every minute.
-
-## Documents
-
-What the session wrote that lasts, grouped by kind:
-
-1. the artifacts it published (linked to claude.ai);
-2. the handovers (in the handover plugin's `handover_dir`, `~/Notes/claude/agent-handovers` by default);
-3. the plans (in Claude Code's `plansDirectory`, `~/.claude/plans` by default);
-4. any other Markdown file the agent wrote outside the project's repository, temporary and hidden folders, under its folder's name.
-
-A file counts once an editing tool wrote it, a shell command named it by an absolute or `~` path and it changed since the session began, or the handover plugin wrote it; sub-agents' included. Each shows its name without `.md`, linked in the terminal; on desktop, press it to open it. `None written yet.` until then.
+The topic at a glance: Handover, then Situation. [Back to the README](../README.md)
 
 ## Handover
 
@@ -47,8 +19,40 @@ Once the handover is written and the session has stopped, two buttons start the 
 
 When the handover does not load within its 3-minute wait, the message stays in the prompt box, with a toast. Without a resume message, only `✏️ Edit the prompt first` shows, and it runs `/clear` alone.
 
-## Last prompt
+## Situation
 
-The last prompt you typed, without the tags the engine wraps around it; slash commands are left out. Greyed beside its title, the time you sent it (`14:32`, 24-hour) and the count of earlier prompts (`(6 previous prompts)`).
+The live state of the session's topic, the same in every session of it and after a handover, read again every 30 seconds without a prompt. Its title line names the topic and where it came from (`· session-panel-journal · Rex session`).
 
-Press the count to see every prompt of the session, each numbered with its time (`#2 · 14:32`; no time for one read back after a resume), then `← Overview` to come back.
+```
+Situation · session-panel-journal · Rex session
+
+Merge plan · file · changed 12 min ago
+1  ✅ claude-plugins#89 base merged
+2  🔧 claude-plugins#90! worker running
+
+Workers
+● review · running · Reading the diff
+✓ fix · done · AFK done: claude-plugins#90
+
+Open questions
+Q1 Lock mode in mise.toml?
+
+Awaiting you register
+D02 Pin the lock in CI
+```
+
+The topic is a notes `topic:` slug (the front matter of the plans and registers in `~/Notes/claude`):
+
+1. the Rex session's label, when a plan or a register names it as its topic (a dispatched or watched session is labelled by its topic);
+2. else the `topic:` of the last notes document the session read or wrote (a brief, a plan, a register, a handover), read again as soon as it changes.
+
+A handover chain keeps it: the next session runs in the same Rex tab, or reads the handover and the brief. Without a topic, the section says so in one dim line.
+
+Four blocks follow, each with one dim line when it has nothing to show:
+
+- **Merge plan**: the topic's latest `*-merge-plan.md` in `~/Notes/claude/plans`, one row per line of its `| Wave | PR | Status | Note |` table: wave, status, each pull request linked in its live state's colour (as in [Git](misc-tab.md#git)) with `!` on a red check, then the note. The heading links the file and gives its age, yellow past an hour. Pull requests are read with `gh` every minute; `gh unreachable` replaces their colours when none answers.
+- **Workers**: the other tabs of the Rex session labelled by the topic (this one, or another found with `rex ls`), each with its state read from its screen (`rex capture`): `●` running, `◆` waiting for you, `○` idle, `✓` done or `✗` blocked on its `AFK` line, `›` a shell; then the last thing it said. Without Rex it reads `not in a Rex session` or `rex unreachable`.
+- **Open questions**: the `## Qn — title` headings of the topic's `*-open-questions.md` plans still `todo` or `doing`, without those a `**Decided**` line answers.
+- **Awaiting you**: the entries of the topic's decision register (`~/Notes/claude/decisions-register`) still `proposed`, linked to the register.
+
+The panel computes it all live from the notes, `gh` and `rex`: no skill or worker writes a state file for it.
