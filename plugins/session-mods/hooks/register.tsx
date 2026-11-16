@@ -1099,6 +1099,11 @@ export const register: Register = (on, options) => {
                 onPress={() => {
                   afkEditing = true
                   $.ui.invalidate('ui.render')
+                  // A press leaves the keys in the prompt: the goal typed next would go out as a plain prompt.
+                  void $.ui
+                    .open({ id: PANE, title: TITLE, focus: true, columns: DOCK_COLUMNS })
+                    .then(() => $.ui.focus({ requestId: PANE, key: AFK.input }))
+                    .catch(() => undefined)
                 }}
               />,
             )}
