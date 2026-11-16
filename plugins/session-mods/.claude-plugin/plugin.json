@@ -1,6 +1,6 @@
 {
   "name": "session-mods",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Two session mods: a calm side pane (first prompt, sub-agents with their history, the session's reasoning steps) and a bar beneath the prompt (running time, prompt-cache countdown, context usage, quotas, and the model and effort selectors)",
   "author": {
     "name": "FunDrivenDev",
@@ -28,6 +28,12 @@
         "5m"
       ],
       "default": "1h"
+    },
+    "situation": {
+      "type": "boolean",
+      "title": "Situation section",
+      "description": "Show the Situation section on Main: the live state of the session's topic, read from notes in ~/Notes/claude, the terminal session's tabs and GitHub. Off by default.",
+      "default": false
     }
   }
 }

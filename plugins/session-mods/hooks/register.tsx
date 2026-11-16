@@ -433,7 +433,11 @@ async function rexSession($: EngineInterface, id: string): Promise<RexSession | 
 /** The latest refreshSituation call: an older one that finishes after it drops its result. */
 let situationRun = 0
 
+/** The `situation` option: off (its default), the section is neither drawn nor read. Set by `register`. */
+let situationOn = false
+
 async function refreshSituation($: EngineInterface) {
+  if (!situationOn) return
   const run = ++situationRun
   const rexId = await $.env.get('REX_SESSION')
   const ownBlock = await $.env.get('REX_BLOCK')
@@ -460,10 +464,10 @@ async function refreshSituation($: EngineInterface) {
   if (!rex && rexId !== undefined) {
     const all = await $.process.run(['rex', 'ls', '--json'])
     const id = all.exitCode === 0 ? rexSessionLabelled(all.stdout, topic) : null
-    if (all.exitCode !== 0) workersError = 'rex unreachable'
+    if (all.exitCode !== 0) workersError = 'terminal sessions unreachable'
     else if (id) rex = await rexSession($, id)
   }
-  if (rexId === undefined && !rex) workersError = 'not in a Rex session'
+  if (rexId === undefined && !rex) workersError = 'not in a terminal session'
   const shown = rex
   const workers = shown
     ? await Promise.all(
@@ -482,6 +486,7 @@ async function refreshSituation($: EngineInterface) {
 
 /** Reads each merge-plan pull request's state and checks from GitHub. */
 async function refreshSituationPrs($: EngineInterface) {
+  if (!situationOn) return
   const urlsOf = (sit: Situation) => [...new Set(sit.mergePlan?.rows.flatMap(r => r.prs.map(p => p.url)) ?? [])]
   const urls = urlsOf(await read($, situation))
   if (!urls.length) {
@@ -504,6 +509,7 @@ async function refreshSituationPrs($: EngineInterface) {
 
 /** Notes the last notes document a call read or wrote; a new one is read at once while the session has no topic. */
 async function noteNotes($: EngineInterface, tool: string, input: Record<string, unknown>) {
+  if (!situationOn) return
   const named = ['Read', 'Edit', 'MultiEdit', 'Write'].includes(tool) ? input.file_path : tool === 'Bash' ? input.command : null
   const path = typeof named === 'string' ? notesPathsIn(named).at(-1) : undefined
   if (!path || path === (await read($, lastNote))) return
@@ -713,6 +719,7 @@ export async function* stepPanel($: StepArgs[0], e: StepArgs[1], next: StepArgs[
 }
 
 export const register: Register = (on, options) => {
+  situationOn = options.situation === true
   {
 
     on('command.run', { command: 'session-panel' }, async $ => {
@@ -1187,7 +1194,7 @@ export const register: Register = (on, options) => {
             <Box key="sit" flexDirection="column">
               {section('Situation')}
               <Text dimColor wrap="wrap">
-                {sit.readAt === null ? 'Not read yet.' : 'No topic: the Rex session is not labelled by a topic, and no notes document read or written names one.'}
+                {sit.readAt === null ? 'Not read yet.' : "No topic: the terminal session's label names none, and no notes document read or written names one."}
               </Text>
             </Box>
           )
@@ -1226,14 +1233,14 @@ export const register: Register = (on, options) => {
             <Text dimColor wrap="truncate-end"> · {WORKER_LOOK[w.state].word}{w.last ? ` · ${w.last}` : ''}</Text>
           </Box>
         ))
-        const workersEmpty = sit.workersError ?? (sit.workers === null ? `no Rex session labelled ${sit.topic}` : 'no other tab in the topic\'s Rex session')
+        const workersEmpty = sit.workersError ?? (sit.workers === null ? `no terminal session labelled ${sit.topic}` : "no other tab in the topic's terminal session")
         return (
           <Box key="sit" flexDirection="column">
             <Box flexDirection="row">
               {section('Situation')}
               <Text dimColor wrap="truncate-end">
                 {' '}
-                · {sit.topic} · {sit.from === 'rex' ? 'Rex session' : 'notes'}
+                · {sit.topic} · {sit.from === 'rex' ? 'terminal session' : 'notes'}
               </Text>
             </Box>
             {sitBlock('plan', sitHeading('Merge plan', planHint), planRows, plan ? 'The merge plan holds no row.' : 'No merge plan.')}
@@ -1271,7 +1278,7 @@ export const register: Register = (on, options) => {
             {handoverRows}
           </Box>
 
-          {situationSection()}
+          {situationOn && situationSection()}
         </Box>
       )
 
@@ -1516,41 +1523,43 @@ export const register: Register = (on, options) => {
                   : 'The same, but leaves the prompt in the input for you to change before sending; alone when the reply gave no prompt.',
               ),
             )}
-            {helpRow('situation', section('Situation'), "The live state of the session's topic, in every session of it and after a handover: the Rex session's label when a note names it as its topic, else the topic of the last notes document the session read or wrote. Read again every 30 s.")}
-            {helpRow(
-              'sit:plan',
-              <Box flexDirection="column">
-                <Text bold>Merge plan</Text>
+            {situationOn && [
+              helpRow('situation', section('Situation'), "The live state of the session's topic, in every session of it and after a handover: the terminal session's label when a note names it as its topic, else the topic of the last notes document the session read or wrote. Read again every 30 s."),
+              helpRow(
+                'sit:plan',
+                <Box flexDirection="column">
+                  <Text bold>Merge plan</Text>
+                  <Text>
+                    <Text dimColor>2  </Text>🔧 <Text color={PR_COLOR.draft} underline>claude-plugins#90</Text>
+                    <Text color="#e78284">!</Text>
+                    <Text dimColor> worker running</Text>
+                  </Text>
+                </Box>,
+                "The topic's merge plan (its *-merge-plan.md), one row per line: wave, status, pull requests in their live state's colour with ! on a red check (GitHub, every minute), note. Its age turns yellow past an hour.",
+              ),
+              helpRow(
+                'sit:workers',
                 <Text>
-                  <Text dimColor>2  </Text>🔧 <Text color={PR_COLOR.draft} underline>claude-plugins#90</Text>
-                  <Text color="#e78284">!</Text>
-                  <Text dimColor> worker running</Text>
-                </Text>
-              </Box>,
-              "The topic's merge plan (its *-merge-plan.md), one row per line: wave, status, pull requests in their live state's colour with ! on a red check (GitHub, every minute), note. Its age turns yellow past an hour.",
-            )}
-            {helpRow(
-              'sit:workers',
-              <Text>
-                <Text color={WORKER_LOOK.running.color}>{WORKER_LOOK.running.glyph} </Text>
-                review · claude-plugins#90<Text dimColor> · running · Reading the diff</Text>
-              </Text>,
-              "The other tabs of the topic's Rex session: ● running, ◆ waiting for you, ○ idle, ✓ done or ✗ blocked on its AFK line, › a shell; then the last thing it said.",
-            )}
-            {helpRow(
-              'sit:questions',
-              <Text>
-                <Text color="#e5c890">Q1</Text> Lock mode in mise.toml?
-              </Text>,
-              "The topic's open-questions plans still todo or doing, one line per question not yet decided.",
-            )}
-            {helpRow(
-              'sit:proposed',
-              <Text>
-                <Text color="#ca9ee6">D02</Text> Pin the lock in CI
-              </Text>,
-              "Awaiting you: the topic's decision register's entries still proposed, with a link to the register.",
-            )}
+                  <Text color={WORKER_LOOK.running.color}>{WORKER_LOOK.running.glyph} </Text>
+                  review · claude-plugins#90<Text dimColor> · running · Reading the diff</Text>
+                </Text>,
+                "The other tabs of the topic's terminal session: ● running, ◆ waiting for you, ○ idle, ✓ done or ✗ blocked on its AFK line, › a shell; then the last thing it said.",
+              ),
+              helpRow(
+                'sit:questions',
+                <Text>
+                  <Text color="#e5c890">Q1</Text> Lock mode in mise.toml?
+                </Text>,
+                "The topic's open-questions plans still todo or doing, one line per question not yet decided.",
+              ),
+              helpRow(
+                'sit:proposed',
+                <Text>
+                  <Text color="#ca9ee6">D02</Text> Pin the lock in CI
+                </Text>,
+                "Awaiting you: the topic's decision register's entries still proposed, with a link to the register.",
+              ),
+            ]}
           </Box>
 
           {section('Misc')}
@@ -1756,6 +1765,10 @@ export const register: Register = (on, options) => {
           {thresholdRow('suggest', 'suggest_tokens', ho?.thresholds?.suggest, ho?.pending?.suggest, 'Context size from which a handover is suggested at the next boundary.')}
           {thresholdRow('warn', 'thresholds.warn_at_tokens', ho?.thresholds?.warnAt, undefined, 'Context size at which the Handover line turns yellow, computed by the handover plugin.')}
           {thresholdRow('trigger', 'trigger_tokens', ho?.thresholds?.trigger, ho?.pending?.trigger, 'Context size at which the session winds down and hands over; 0 turns it off.')}
+
+          {section('session-mods plugin')}
+          {whereSet('Its options: pluginConfigs["session-mods@fundrivendev"].options in settings.json, or /config.')}
+          {configRow('situation', 'situation', situationOn ? 'on' : null, 'off', "Shows the Situation section on Main, read from the topic's notes, its terminal session's tabs and GitHub.")}
         </Box>
       )
 

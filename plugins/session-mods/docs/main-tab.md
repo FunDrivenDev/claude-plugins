@@ -1,6 +1,6 @@
 # Main tab
 
-The topic at a glance: Handover, then Situation. [Back to the README](../README.md)
+The topic at a glance: Handover, then Situation when the `situation` option is on. [Back to the README](../README.md)
 
 ## Handover
 
@@ -21,10 +21,12 @@ When the handover does not load within its 3-minute wait, the message stays in t
 
 ## Situation
 
-The live state of the session's topic, the same in every session of it and after a handover, read again every 30 seconds without a prompt. Its title line names the topic and where it came from (`· session-panel-journal · Rex session`).
+An opt-in section, off by default: set the `situation` option to turn it on ([Configuration](configuration.md#situation)). Off, Main shows Handover alone, and the Help tab leaves Situation out.
+
+The live state of the session's topic, the same in every session of it and after a handover, read again every 30 seconds without a prompt. Its title line names the topic and where it came from (`· session-panel-journal · terminal session`).
 
 ```
-Situation · session-panel-journal · Rex session
+Situation · session-panel-journal · terminal session
 
 Merge plan · file · changed 12 min ago
 1  ✅ claude-plugins#89 base merged
@@ -43,16 +45,16 @@ D02 Pin the lock in CI
 
 The topic is a notes `topic:` slug (the front matter of the plans and registers in `~/Notes/claude`):
 
-1. the Rex session's label, when a plan or a register names it as its topic (a dispatched or watched session is labelled by its topic);
+1. the terminal session's label, when a plan or a register names it as its topic (a dispatched or watched session is labelled by its topic);
 2. else the `topic:` of the last notes document the session read or wrote (a brief, a plan, a register, a handover), read again as soon as it changes.
 
-A handover chain keeps it: the next session runs in the same Rex tab, or reads the handover and the brief. Without a topic, the section says so in one dim line.
+A handover chain keeps it: the next session runs in the same terminal tab, or reads the handover and the brief. Without a topic, the section says so in one dim line.
 
 Four blocks follow, each with one dim line when it has nothing to show:
 
 - **Merge plan**: the topic's latest `*-merge-plan.md` in `~/Notes/claude/plans`, one row per line of its `| Wave | PR | Status | Note |` table: wave, status, each pull request linked in its live state's colour (as in [Git](misc-tab.md#git)) with `!` on a red check, then the note. The heading links the file and gives its age, yellow past an hour. Pull requests are read with `gh` every minute; `gh unreachable` replaces their colours when none answers.
-- **Workers**: the other tabs of the Rex session labelled by the topic (this one, or another found with `rex ls`), each with its state read from its screen (`rex capture`): `●` running, `◆` waiting for you, `○` idle, `✓` done or `✗` blocked on its `AFK` line, `›` a shell; then the last thing it said. Without Rex it reads `not in a Rex session` or `rex unreachable`.
+- **Workers**: the other tabs of the terminal session labelled by the topic (this one, or another the terminal lists), each with its state read from its screen: `●` running, `◆` waiting for you, `○` idle, `✓` done or `✗` blocked on its `AFK` line, `›` a shell; then the last thing it said. Outside a terminal whose sessions the pane can read, it reads `not in a terminal session`, and `terminal sessions unreachable` when the terminal does not answer.
 - **Open questions**: the `## Qn — title` headings of the topic's `*-open-questions.md` plans still `todo` or `doing`, without those a `**Decided**` line answers.
 - **Awaiting you**: the entries of the topic's decision register (`~/Notes/claude/decisions-register`) still `proposed`, linked to the register.
 
-The panel computes it all live from the notes, `gh` and `rex`: no skill or worker writes a state file for it.
+The panel computes it all live from the notes, `gh` and the terminal: no skill or worker writes a state file for it.
