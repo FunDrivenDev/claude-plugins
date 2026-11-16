@@ -19,6 +19,9 @@ zizmor = "1.32.0"
 
 [settings]
 lockfile = true
+# Every mise run, `mise exec` in the Justfile and scripts included, installs
+# only what mise.lock pins: a tool missing from it fails instead of installing.
+locked = true
 lockfile_platforms = ["macos-arm64", "linux-x64"]
 # npm: tools (typescript) install through pnpm, never npm.
 npm.package_manager = "pnpm"
