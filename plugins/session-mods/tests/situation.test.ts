@@ -12,8 +12,10 @@ import {
   questionsOf,
   rexSessionLabelled,
   rexSessionOf,
+  staleOf,
   workerOf,
 } from '../hooks/situation'
+import type { MergeRow, PrLive } from '../types'
 
 const PLAN = `---
 status: doing
@@ -182,4 +184,41 @@ test("a pull request's live state and red checks, from gh's cut answer", () => {
   expect(prLiveOf('{"state":"CLOSED"}')).toEqual({ state: 'closed', isRed: false })
   expect(prLiveOf('')).toBeNull()
   expect(prLiveOf('{"message":"Not Found"}')).toBeNull()
+})
+
+test("a merge-plan row is stale when its status emoji disagrees with gh's live state", () => {
+  const A = 'https://github.com/o/r/pull/1'
+  const B = 'https://github.com/o/r/pull/2'
+  const row = (status: string, ...urls: string[]): MergeRow => ({ wave: '1', status, note: '', prs: urls.map((url, i) => ({ label: `r#${i + 1}`, url, repo: 'o/r', number: i + 1 })) })
+  const gh = (a: PrLive['state'], b?: PrLive['state'], isRed = false): Record<string, PrLive> => ({ [A]: { state: a, isRed }, ...(b ? { [B]: { state: b, isRed } } : {}) })
+
+  // ✅: stale while a PR is open (draft too) or closed unmerged.
+  expect(staleOf(row('✅', A, B), gh('merged', 'merged'))).toBeNull()
+  expect(staleOf(row('✅', A, B), gh('merged', 'open'))).toBe('stale: open')
+  expect(staleOf(row('✅', A), gh('draft'))).toBe('stale: open')
+  expect(staleOf(row('✅', A, B), gh('merged', 'closed'))).toBe('stale: closed')
+
+  // 🔧, ⏳, 👤, ⚠️: stale once every PR is merged or closed.
+  for (const status of ['🔧', '⏳', '👤', '⚠️', '🔧 👤', '🔧 ⚠️']) {
+    expect(staleOf(row(status, A, B), gh('merged', 'open'))).toBeNull()
+    expect(staleOf(row(status, A, B), gh('draft', 'draft'))).toBeNull()
+    expect(staleOf(row(status, A, B), gh('merged', 'merged'))).toBe('stale: merged')
+    expect(staleOf(row(status, A, B), gh('merged', 'closed'))).toBe('stale: merged')
+    expect(staleOf(row(status, A), gh('closed'))).toBe('stale: closed')
+  }
+
+  // ⚠️ with green checks: gh's answer does not tell a conflict, so the row stays fresh.
+  expect(staleOf(row('⚠️', A), gh('open', undefined, false))).toBeNull()
+  expect(staleOf(row('⚠', A), gh('open', undefined, true))).toBeNull()
+
+  // 🗑️: stale once its PR merged (it was to close), or closed (the row goes then).
+  expect(staleOf(row('🗑️', A), gh('open'))).toBeNull()
+  expect(staleOf(row('🗑️', A), gh('merged'))).toBe('stale: merged')
+  expect(staleOf(row('🗑️', A), gh('closed'))).toBe('stale: closed')
+
+  // ❓, no PR, or a PR gh could not read: never stale.
+  expect(staleOf(row('❓', A), gh('merged'))).toBeNull()
+  expect(staleOf(row('✅'), {})).toBeNull()
+  expect(staleOf(row('✅', A, B), gh('open'))).toBeNull()
+  expect(staleOf(row('🔧', A), {})).toBeNull()
 })
