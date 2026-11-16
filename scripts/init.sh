@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 mise trust --quiet .
-mise install --quiet
+mise install --locked --quiet
 echo "✓ tools from mise.toml installed"
 
 # The git hooks live in hk.pkl; a clone set up before them still points git at .githooks.
