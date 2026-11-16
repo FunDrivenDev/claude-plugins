@@ -36,6 +36,8 @@ test('the handover plugin\'s state renders as it gives it', async () => {
     isWindingDown: true,
     error: 'the writer timed out',
     resume: 'Resume the pane: open the PR.',
+    afk: null,
+    relays: null,
   })
   expect(asked).toEqual(['s1'])
 })
@@ -72,4 +74,15 @@ test('without an answer, the handover section is unknown, never a crash', async 
     expect(ho.unknown).toMatch(why)
     expect([ho.isOn, ho.written, ho.thresholds, ho.isWriting]).toEqual([true, null, null, false])
   }
+})
+
+test('an AFK run comes with its goal and its deadline in ms, and whether the session can relay', async () => {
+  const ho = await handoverOf(runner(0, JSON.stringify({ ...STATE, afk: { goal: 'ship it', until: 1_800_000_000 }, relays: true })), 's1')
+  expect([ho.afk, ho.relays]).toEqual([{ goal: 'ship it', until: 1_800_000_000_000 }, true])
+  const open = await handoverOf(runner(0, JSON.stringify({ ...STATE, afk: { goal: 'ship it', until: null }, relays: false })), 's1')
+  expect([open.afk, open.relays]).toEqual([{ goal: 'ship it', until: null }, false])
+  // A plugin older than 0.35.0 says neither.
+  const old = await handoverOf(runner(0, JSON.stringify(STATE)), 's1')
+  expect([old.afk, old.relays]).toEqual([null, null])
+  expect((await handoverOf(runner(3, ''), 's1')).relays).toBeNull()
 })

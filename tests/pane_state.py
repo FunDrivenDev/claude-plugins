@@ -58,8 +58,17 @@ class View(unittest.TestCase):
                 "thresholds_error": None,
                 "pending": None,
                 "resume": None,
+                "afk": None,
             },
         )
+
+    def test_afk_run(self):
+        run = {"goal": "ship the pane", "until": 1_800_000_000, "run": "r", "since": NOW}
+        self.assertEqual(self.view({"afk": run})["afk"], {"goal": "ship the pane", "until": 1_800_000_000})
+        self.assertEqual(self.view({"afk": {**run, "until": None}})["afk"], {"goal": "ship the pane", "until": None})
+        # An ended run is AFK mode off.
+        self.assertIsNone(self.view({"afk": {**run, "ended": "off"}})["afk"])
+        self.assertIsNone(self.view({"afk": {"until": 3}})["afk"])
 
     def test_off(self):
         self.assertFalse(self.view({}, on=False)["on"])
@@ -292,6 +301,22 @@ class Command(unittest.TestCase):
         gone = run({"handover@fundrivendev": [{"installPath": os.path.join(HOME, "gone")}]})
         self.assertEqual(gone.returncode, 2)
         self.assertIn("can't open file", gone.stderr)
+
+    def test_relays_follows_the_terminal(self):
+        sid = "pane-relays"
+        with S.locked(sid) as st:
+            S.started(st, RECORDED, "0.29.0")
+        # This test runs with no terminal to type into and no relay loop.
+        self.assertFalse(json.loads(self.run_state(sid).stdout)["relays"])
+        relay_file = os.path.join(HOME, "relay-file")
+        out = subprocess.run(
+            [sys.executable, os.path.join(SCRIPTS, "handover.py"), "state", "--session", sid, "--json"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "HANDOVER_RELAY_FILE": relay_file},
+        )
+        self.assertTrue(json.loads(out.stdout)["relays"], out.stderr)
 
     def test_an_unknown_session_is_off(self):
         out = self.run_state("never-seen", "--data-dir", tempfile.mkdtemp())

@@ -18,7 +18,7 @@ The pane opens at session start when the terminal is at least 144 columns wide; 
 It gathers the session's handover, its topic's live state, and its issue, pull requests, documents and git changes in one place.
 
 - **Title and tabs**: the session's topic as a title (also sent to `/rename`), and four tabs: Main (Handover, and Situation when turned on), Misc (the rest), Config and Help.
-- **Handover**: the `handover` plugin's status, the handover loaded and written, and buttons to hand over now or start the next session.
+- **Handover**: the `handover` plugin's status, the handover loaded and written, buttons to hand over now or start the next session, and AFK mode, turned on with a goal or off from the pane where the session can relay.
 - **Situation** (opt-in, off by default): the topic's merge plan with its pull requests' live state, its workers in the terminal session's other tabs, its open questions and the decisions awaiting you, read live from the notes and `gh`.
 - **Issue and Git**: the tracker issue the session is about, then each repository it touched with its pull request and worktree.
 - **Documents**: the artifacts, handovers, plans and notes the session wrote, linked.

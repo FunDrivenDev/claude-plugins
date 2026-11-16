@@ -344,7 +344,8 @@ def view(st, on, resolved, went_on=False):
     """The session's handover state for the session-mods pane: `on` (its hooks run in the session), the phase, the
     pid-checked writer, its error as the status line cuts it, the written and loaded handovers, the thresholds and
     the resume message. `resolved` holds the thresholds the options give now, None when they do not resolve;
-    `went_on`, whether anything came in after the closing reply: its resume message may then be stale."""
+    `went_on`, whether anything came in after the closing reply: its resume message may then be stale. `afk`, the
+    AFK run in progress (its goal, its deadline in epoch seconds or None), None when AFK mode is off."""
     error = st.get("error")
     message = error.get("message") if isinstance(error, dict) else None
     th, why, pending = recorded_thresholds(st, resolved)
@@ -360,4 +361,13 @@ def view(st, on, resolved, went_on=False):
         "thresholds_error": why,
         "pending": pending,
         "resume": None if went_on else st.get("resume"),
+        "afk": afk_view(st.get("afk")),
     }
+
+
+def afk_view(afk):
+    """The AFK run in progress as the pane shows it; None when none is, or it has ended."""
+    if not isinstance(afk, dict) or afk.get("ended") or not isinstance(afk.get("goal"), str):
+        return None
+    until = afk.get("until")
+    return {"goal": afk["goal"], "until": until if isinstance(until, (int, float)) else None}

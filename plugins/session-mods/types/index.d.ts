@@ -101,6 +101,10 @@ export type Handover = {
   error: string | null
   /** The message the closing reply gives the next session to start on, once the handover is written. */
   resume: string | null
+  /** The AFK run in progress, its goal and its deadline (epoch ms, null without one); null when AFK mode is off. */
+  afk: { goal: string; until: number | null } | null
+  /** Whether the session can relay, as AFK mode needs; null when the handover plugin does not say (older than 0.35.0). */
+  relays: boolean | null
 }
 
 /** A pull request a merge plan names, linked. */

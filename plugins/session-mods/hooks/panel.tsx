@@ -175,6 +175,42 @@ export const phaseLine = (phase: HandoverPhase, now: number): string => {
   return `${p.frames[Math.floor(now / 1000) % p.frames.length]} ${p.label}`
 }
 
+/** AFK mode, the handover plugin's: its run toward a goal while you are away, turned on and off through `/handover:afk`. */
+export const AFK = {
+  on: { key: 'afk:on', emoji: '🌙', label: 'Go AFK', color: '#ca9ee6' },
+  off: { key: 'afk:off', emoji: '☀️', label: 'Turn AFK off', color: '#ca9ee6' },
+  input: 'afk:goal',
+  placeholder: 'the goal, then optionally until 8, until tomorrow 9:00, for 10h',
+} as const
+
+/** Where AFK mode stands for the pane: on with its run, off and available, or unavailable with why. */
+export type AfkState = { kind: 'on'; goal: string; until: number | null } | { kind: 'off' } | { kind: 'unavailable'; why: string }
+
+export const afkState = (h: Handover): AfkState => {
+  if (h.afk) return { kind: 'on', ...h.afk }
+  if (h.relays === null) return { kind: 'unavailable', why: 'AFK mode from the pane needs handover 0.35.0 or later' }
+  if (!h.relays)
+    return { kind: 'unavailable', why: 'AFK mode needs a relay: a terminal the handover plugin types into (tmux, for one), or toolbox session run' }
+  return { kind: 'off' }
+}
+
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/** An AFK run's line, as the handover plugin words its deadline: `AFK on · until Tue 17 Nov 08:00`, in local time; `AFK on` without a deadline. */
+export const afkLine = (until: number | null): string => {
+  if (until === null) return 'AFK on'
+  const d = new Date(until)
+  const day = `${WEEKDAYS[d.getDay()]} ${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()]}`
+  return `AFK on · until ${day} ${clockTime(until)}`
+}
+
+/** What `/handover:afk` takes from the goal field: the text on one line, null when empty or `off` (not a goal). */
+export const afkGoal = (value: string): string | null => {
+  const goal = value.replace(/\s+/g, ' ').trim()
+  return goal && goal.toLowerCase() !== 'off' ? goal : null
+}
+
 /** Width of the Help tab's example column. */
 export const HELP_EXAMPLE = 34
 

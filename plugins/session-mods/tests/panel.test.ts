@@ -1,7 +1,7 @@
 import { describe, expect, mock, test, type TestBody } from 'claude-code/testing'
 
-import { ago, cleanTitle, clockTime, handoverPhase, phaseLine, describeCall, fileMeta, handoverStatus, headline, lastSentence, previousPrompts, promptText } from '../hooks/panel'
-import { HANDOVER_STATE } from '../hooks/handover'
+import { afkGoal, afkLine, afkState, ago, cleanTitle, clockTime, handoverPhase, phaseLine, describeCall, fileMeta, handoverStatus, headline, lastSentence, previousPrompts, promptText } from '../hooks/panel'
+import { HANDOVER_STATE, unknownHandover } from '../hooks/handover'
 
 const PANE = {
   component: 'Pane',
@@ -33,7 +33,7 @@ describe('helpers', () => {
     expect(clockTime(new Date(2026, 9, 8, 9, 5).getTime())).toBe('09:05')
     expect(fileMeta(null, null)).toBeNull()
     const thresholds = { suggest: 150_000, warnAt: 167_500, trigger: 185_000 }
-    const ho = { isOn: true, unknown: null, loaded: null, written: null, thresholds, thresholdsError: null, pending: null, isWriting: false, isWindingDown: false, error: null, resume: null }
+    const ho = { isOn: true, unknown: null, loaded: null, written: null, thresholds, thresholdsError: null, pending: null, isWriting: false, isWindingDown: false, error: null, resume: null, afk: null, relays: null }
     expect(handoverStatus(ho, 92_000).text).toBe('triggers at 185k · now 92k')
     expect(handoverStatus(ho, 167_000).color).toBe('#a5adce')
     expect(handoverStatus(ho, 167_500).color).toBe('#e5c890')
@@ -478,6 +478,99 @@ test('a handover plugin older than its state command leaves the section unknown'
   expect(await ui.find({ text: /^none$/ })).toBeUndefined()
   expect(await ui.find({ key: 'handover:trigger' })).toBeUndefined()
   await ui.unmount()
+})
+
+describe('AFK', () => {
+  test('helpers: the state, the goal sent and the deadline line', async () => {
+    const ho = { ...unknownHandover('x'), unknown: null }
+    expect(afkState({ ...ho, relays: true })).toEqual({ kind: 'off' })
+    expect(afkState({ ...ho, relays: false, afk: { goal: 'g', until: null } })).toEqual({ kind: 'on', goal: 'g', until: null })
+    expect(afkState({ ...ho, relays: false }).kind).toBe('unavailable')
+    expect(afkState({ ...ho, relays: null })).toEqual({ kind: 'unavailable', why: 'AFK mode from the pane needs handover 0.35.0 or later' })
+    expect(afkGoal('  ship the pane\n until 8 ')).toBe('ship the pane until 8')
+    expect([afkGoal('   '), afkGoal('OFF')]).toEqual([null, null])
+    expect(afkLine(null)).toBe('AFK on')
+    expect(afkLine(new Date(2026, 10, 17, 8, 0).getTime())).toBe('AFK on · until Tue 17 Nov 08:00')
+  })
+
+  /** The pane over a handover state answering `state`, the commands it runs recorded in `sent`. */
+  const mountWith = async ($: Parameters<TestBody>[0], on: Parameters<TestBody>[1], state: Record<string, unknown>, sent: string[]) => {
+    mock.clock(on, { now: 1_000 })
+    on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 50_000 } as never, rateLimits: [] } }))
+    on('process.run', ($, e) => {
+      const answer = e.argv.includes(HANDOVER_STATE) ? { exitCode: 0, stdout: JSON.stringify({ on: true, ...state }) } : { exitCode: 1, stdout: '' }
+      return { value: { stderr: '', ...answer } } as never
+    })
+    on('session.id', () => ({ value: 's1' }) as never)
+    on('session.start', ($, e) => ({ cwd: e.cwd }))
+    on('session.model', () => ({ value: 'opus' }))
+    on('command.register', () => ({ value: undefined }) as never)
+    on('session.messages', () => ({ value: [] }))
+    on('ui.open', () => ({ value: undefined }) as never)
+    on('env.get', () => ({ value: undefined }))
+    on('settings.read', () => ({ value: {} }))
+    on('command.run', ($, e) => {
+      sent.push(`/${e.command}${e.args ? ` ${e.args}` : ''}`)
+      return { text: '' } as never
+    })
+    await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+    return $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+  }
+
+  test('off, Go AFK opens the goal field, and Enter turns AFK on through /handover:afk', async ($, on) => {
+    const sent: string[] = []
+    const ui = await mountWith($, on, { relays: true }, sent)
+    expect(await ui.find({ key: 'afk:goal' })).toBeUndefined()
+    await ui.press({ key: 'afk:on' })
+    // An empty goal sends nothing.
+    await ui.input({ key: 'afk:goal', text: '  ' })
+    expect(sent).toEqual([])
+    await ui.input({ key: 'afk:goal', text: 'ship the pane until 8' })
+    expect(sent).toEqual(['/handover:afk ship the pane until 8'])
+    expect(await ui.find({ key: 'afk:goal' })).toBeUndefined()
+    expect(await ui.find({ text: /^Turning AFK on…$/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('the goal field cancels back to Go AFK', async ($, on) => {
+    const sent: string[] = []
+    const ui = await mountWith($, on, { relays: true }, sent)
+    await ui.press({ key: 'afk:on' })
+    await ui.press({ key: 'afk:cancel' })
+    expect(await ui.find({ key: 'afk:goal' })).toBeUndefined()
+    expect(await ui.find({ key: 'afk:on' })).toBeDefined()
+    expect(sent).toEqual([])
+    await ui.unmount()
+  })
+
+  test('on, the run shows its goal and deadline, and Turn AFK off runs /handover:afk off', async ($, on) => {
+    const sent: string[] = []
+    const until = new Date(2026, 10, 17, 8, 0).getTime() / 1000
+    const ui = await mountWith($, on, { relays: true, afk: { goal: 'ship the pane', until } }, sent)
+    expect(await ui.find({ text: /AFK on · until Tue 17 Nov 08:00$/ })).toBeDefined()
+    expect(await ui.find({ text: /^ship the pane$/ })).toBeDefined()
+    expect(await ui.find({ key: 'afk:on' })).toBeUndefined()
+    await ui.press({ key: 'afk:off' })
+    expect(sent).toEqual(['/handover:afk off'])
+    expect(await ui.find({ text: /^Turning AFK off…$/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('without a relay, or with a handover plugin that does not say, the pane says why and offers no button', async ($, on) => {
+    const sent: string[] = []
+    const ui = await mountWith($, on, { relays: false }, sent)
+    expect(await ui.find({ text: /^AFK mode needs a relay: .*toolbox session run\.$/ })).toBeDefined()
+    expect(await ui.find({ key: 'afk:on' })).toBeUndefined()
+    expect(await ui.find({ text: /Rex/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('a handover plugin older than 0.35.0 leaves AFK unavailable', async ($, on) => {
+    const ui = await mountWith($, on, {}, [])
+    expect(await ui.find({ text: /^AFK mode from the pane needs handover 0\.35\.0 or later\.$/ })).toBeDefined()
+    expect(await ui.find({ key: 'afk:on' })).toBeUndefined()
+    await ui.unmount()
+  })
 })
 
 const RESUME = 'Resume the session-panel work: open the PR.'
