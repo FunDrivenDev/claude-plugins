@@ -28,6 +28,12 @@
         "5m"
       ],
       "default": "1h"
+    },
+    "situation": {
+      "type": "boolean",
+      "title": "Situation section",
+      "description": "Show the Situation section on Main: the live state of the session's topic, read from notes in ~/Notes/claude, the terminal session's tabs and GitHub. Off by default.",
+      "default": false
     }
   }
 }

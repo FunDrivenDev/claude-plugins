@@ -568,11 +568,21 @@ test('the Help tab explains each item beside an example of it, in place of the r
   expect(await ui.find({ text: /Hand over now/ })).toBeDefined()
   expect(await ui.find({ text: /● pushed, ○ local only/ })).toBeDefined()
   expect(await ui.find({ text: /Last prompt/ })).toBeDefined()
-  for (const title of [/^Documents$/, /^Handover$/, /^Situation$/]) expect(await ui.find({ text: title })).toBeDefined()
-  expect(await ui.find({ text: /other tabs of the topic's Rex session/ })).toBeDefined()
+  for (const title of [/^Documents$/, /^Handover$/]) expect(await ui.find({ text: title })).toBeDefined()
+  for (const gone of [/^Situation$/, /^Merge plan$/, /other tabs of the topic/]) expect(await ui.find({ text: gone })).toBeUndefined()
   expect(await ui.find({ key: 'prompts' })).toBeUndefined()
   await ui.press({ key: 'tab:misc' })
   expect((await ui.find({ key: 'prompts' }))?.props.label).toBe('(no previous prompt)')
+  await ui.unmount()
+})
+
+test('with the situation option on, the Help tab explains Situation too', { options: { situation: true } }, async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
+  const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'tab:help' })
+  expect(await ui.find({ text: /^Situation$/ })).toBeDefined()
+  expect(await ui.find({ text: /other tabs of the topic's terminal session/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -609,7 +619,28 @@ describe('Situation', () => {
     on('process.run', ($, e) => (run(e.argv) ?? ok('')) as never)
   }
 
-  test('Main shows Handover then the Situation of the Rex session\'s topic, filled; the rest sits on Misc', async ($, on) => {
+  const ON = { options: { situation: true } }
+
+  test('off by default, Main shows Handover alone, nothing is read for Situation, and Config lists the option off', async ($, on) => {
+    const ran: string[] = []
+    start(on, { REX_SESSION: 'session:1', REX_BLOCK: 'block:me' }, argv => {
+      ran.push(argv.join(' '))
+      return undefined
+    })
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    await $.tool.call({ tool: 'Read', file_path: '/Users/me/Notes/claude/plans/26-11-16-spj-brief.md' } as never)
+    await settle()
+    expect(ran.filter(c => /^(rex|gh) /.test(c) || c.includes('decisions-register') || c.includes('head -20 "$1"'))).toEqual([])
+    const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+    expect(await ui.find({ text: /^Handover$/ })).toBeDefined()
+    for (const gone of [/^Situation$/, /^No topic: /, /^Not read yet\.$/]) expect(await ui.find({ text: gone })).toBeUndefined()
+    await ui.press({ key: 'tab:config' })
+    expect(await ui.find({ text: /^situation$/ })).toBeDefined()
+    expect(await ui.find({ text: /^off \(default\)$/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('Main shows Handover then the Situation of the terminal session\'s topic, filled; the rest sits on Misc', ON, async ($, on) => {
     start(on, { REX_SESSION: 'session:1', REX_BLOCK: 'block:me' }, argv => {
       if (argv[0] === 'rex' && argv[1] === 'window') return ok(REX)
       if (argv[0] === 'rex' && argv[1] === 'capture') return argv.includes('block:w') ? ok('⏺ Reading the diff.\n❯ \n  esc to interrupt\n') : fail
@@ -622,7 +653,7 @@ describe('Situation', () => {
     const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
     expect(await ui.find({ text: /^Handover$/ })).toBeDefined()
     expect(await ui.find({ text: /^Situation$/ })).toBeDefined()
-    expect(await ui.find({ text: /spj · Rex session/ })).toBeDefined()
+    expect(await ui.find({ text: /spj · terminal session/ })).toBeDefined()
     const pr = await ui.find({ type: 'Link', text: /claude-plugins#90/ })
     expect(pr?.props.href).toBe('https://github.com/FunDrivenDev/claude-plugins/pull/90')
     expect(JSON.stringify(await ui.find({ type: 'Text', text: /^claude-plugins#90$/ }))).toContain('#babbf1')
@@ -637,10 +668,12 @@ describe('Situation', () => {
     await ui.press({ key: 'tab:misc' })
     for (const moved of [/no issue/, /no repository yet/, /^Documents$/, /^Last prompt/, /^Steps/, /^Git diff$/]) expect(await ui.find({ text: moved })).toBeDefined()
     expect(await ui.find({ text: /^Situation$/ })).toBeUndefined()
+    await ui.press({ key: 'tab:config' })
+    expect(await ui.find({ text: /^on$/ })).toBeDefined()
     await ui.unmount()
   })
 
-  test('without a topic the section says so', async ($, on) => {
+  test('without a topic the section says so', ON, async ($, on) => {
     start(on, {}, () => undefined)
     await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
     await settle()
@@ -649,7 +682,7 @@ describe('Situation', () => {
     await ui.unmount()
   })
 
-  test('a Rex label no note names gives no topic, until the session reads a note that names one; Rex and gh down show as such', async ($, on) => {
+  test('a terminal session label no note names gives no topic, until the session reads a note that names one; its CLI and gh down show as such', ON, async ($, on) => {
     start(on, { REX_SESSION: 'session:1', REX_BLOCK: 'block:me' }, argv => {
       if (argv[0] === 'rex' && argv[1] === 'window') return ok(REX.replace('"label":"spj"', '"label":"Dispatch"'))
       if (argv[0] === 'rex' && argv[1] === 'ls') return fail
@@ -669,13 +702,13 @@ describe('Situation', () => {
     ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
     expect(await ui.find({ text: /spj · notes/ })).toBeDefined()
     expect(await ui.find({ text: /gh unreachable/ })).toBeDefined()
-    expect(await ui.find({ text: /^rex unreachable$/ })).toBeDefined()
+    expect(await ui.find({ text: /^terminal sessions unreachable$/ })).toBeDefined()
     expect(await ui.find({ text: /^No open question\.$/ })).toBeDefined()
     expect(await ui.find({ text: /^No proposed decision\.$/ })).toBeDefined()
     await ui.unmount()
   })
 
-  test('outside Rex, a topic from the notes has no workers and no merge plan to show', async ($, on) => {
+  test('outside a terminal session, a topic from the notes has no workers and no merge plan to show', ON, async ($, on) => {
     start(on, {}, argv => {
       if (argv[0] === 'sh' && argv[2]?.includes('decisions-register')) return ok('\x1e/n/plans/26-11-16-spj-brief.md\t1000\n---\ntopic: spj\n---\n')
       if (argv[0] === 'sh' && argv[2]?.includes('head -20 "$1"')) return ok('---\ntopic: spj\n---\n')
@@ -687,7 +720,7 @@ describe('Situation', () => {
     const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
     expect(await ui.find({ text: /spj · notes/ })).toBeDefined()
     expect(await ui.find({ text: /^No merge plan\.$/ })).toBeDefined()
-    expect(await ui.find({ text: /^not in a Rex session$/ })).toBeDefined()
+    expect(await ui.find({ text: /^not in a terminal session$/ })).toBeDefined()
     await ui.unmount()
   })
 })
