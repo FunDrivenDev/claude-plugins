@@ -430,7 +430,11 @@ async function rexSession($: EngineInterface, id: string): Promise<RexSession | 
  * Reads the Situation section anew: the topic (the Rex session's label when a note names it, else the `topic:` of
  * the last notes document the session read or wrote), its notes, and the Rex session's other tabs.
  */
+/** The latest refreshSituation call: an older one that finishes after it drops its result. */
+let situationRun = 0
+
 async function refreshSituation($: EngineInterface) {
+  const run = ++situationRun
   const rexId = await $.env.get('REX_SESSION')
   const ownBlock = await $.env.get('REX_BLOCK')
   const own = rexId ? await rexSession($, rexId) : null
@@ -448,7 +452,7 @@ async function refreshSituation($: EngineInterface) {
   }
   if (!topic) {
     const at = await $.clock.now()
-    await update($, situation, s => ({ ...EMPTY_SITUATION, prs: s.prs, readAt: at }))
+    if (run === situationRun) await update($, situation, () => ({ ...EMPTY_SITUATION, readAt: at }))
     return
   }
   let rex = from === 'rex' ? own : null
@@ -473,18 +477,21 @@ async function refreshSituation($: EngineInterface) {
     : null
   const found = fromNotes(notes ?? [])
   const at = await $.clock.now()
-  await update($, situation, s => ({ ...s, ...found, topic, from, workers, workersError, readAt: at }))
+  if (run === situationRun) await update($, situation, s => ({ ...s, ...found, topic, from, workers, workersError, readAt: at }))
 }
 
 /** Reads each merge-plan pull request's state and checks from GitHub. */
 async function refreshSituationPrs($: EngineInterface) {
   const urls = [...new Set((await read($, situation)).mergePlan?.rows.flatMap(r => r.prs.map(p => p.url)) ?? [])]
-  if (!urls.length) return
+  if (!urls.length) {
+    await update($, situation, s => ({ ...s, prs: {}, prsError: null }))
+    return
+  }
   const got = await Promise.all(urls.map(async url => [url, prLiveOf((await $.process.run(['gh', 'pr', 'view', url, '--json', 'state,isDraft,statusCheckRollup', '--jq', PR_JQ])).stdout)] as const))
   const read_ = got.filter((g): g is readonly [string, NonNullable<(typeof g)[1]>] => g[1] !== null)
   await update($, situation, s => ({
     ...s,
-    prs: { ...s.prs, ...Object.fromEntries(read_) },
+    prs: Object.fromEntries(read_),
     prsError: read_.length === 0 ? 'gh unreachable' : null,
   }))
 }

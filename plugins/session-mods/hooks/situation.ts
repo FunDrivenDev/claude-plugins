@@ -13,16 +13,16 @@ export const isTopic = (s: string | null | undefined): s is string => typeof s =
  * Prints each plan and register whose front matter names topic `$1`: a `\x1e` line holding its path, a tab and its
  * last change (epoch seconds), then the file. Exits 1 when none does.
  */
-export const TOPIC_NOTES = `d="$HOME/Notes/claude"; found=1
+export const TOPIC_NOTES = `d="$HOME/Notes/claude"; found=1; t=$(printf '%s' "$1" | sed 's/[.]/[.]/g')
 for f in "$d"/plans/*.md "$d"/decisions-register/*.md; do
   [ -f "$f" ] || continue
-  head -20 "$f" | grep -qxE "topic: *[\\"']?$1[\\"']?" || continue
+  head -20 "$f" | grep -qxE "topic: *[\\"']?$t[\\"']? *" || continue
   printf '\\036%s\\t%s\\n' "$f" "$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f")"; cat "$f"; found=0
 done
 exit $found`
 
-/** Prints the head of notes document `$1`, its front matter: `~/` stands for `$HOME/`. */
-export const NOTE_HEAD = `case $1 in "~/"*) set -- "$HOME/\${1#??}";; esac; head -20 "$1"`
+/** Prints the head of notes document `$1`, its front matter: a leading `~/` or a literal `$HOME/` stands for `$HOME/`. */
+export const NOTE_HEAD = `case $1 in "~/"*) set -- "$HOME/\${1#??}";; '$HOME/'*) set -- "$HOME/\${1#??????}";; esac; head -20 "$1"`
 
 export type Note = { path: string; modifiedAt: number | null; text: string }
 
