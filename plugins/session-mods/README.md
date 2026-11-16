@@ -17,9 +17,9 @@ The pane opens at session start when the terminal is at least 144 columns wide; 
 
 It gathers the session's handover, its topic's live state, and its issue, pull requests, documents and git changes in one place.
 
-- **Title and tabs**: the session's topic as a title (also sent to `/rename`), and four tabs: Main (Handover and Situation), Misc (the rest), Config and Help.
+- **Title and tabs**: the session's topic as a title (also sent to `/rename`), and four tabs: Main (Handover, and Situation when turned on), Misc (the rest), Config and Help.
 - **Handover**: the `handover` plugin's status, the handover loaded and written, and buttons to hand over now or start the next session.
-- **Situation**: the topic's merge plan with its pull requests' live state, its workers in Rex, its open questions and the decisions awaiting you, read live from the notes, `gh` and `rex`.
+- **Situation** (opt-in, off by default): the topic's merge plan with its pull requests' live state, its workers in the terminal session's other tabs, its open questions and the decisions awaiting you, read live from the notes and `gh`.
 - **Issue and Git**: the tracker issue the session is about, then each repository it touched with its pull request and worktree.
 - **Documents**: the artifacts, handovers, plans and notes the session wrote, linked.
 - **Last prompt**: your last prompt, with the whole session's prompt history one click away.
@@ -37,13 +37,14 @@ How long the session has run, when the prompt cache expires, how full the contex
 | Option | Values | Default | What it sets |
 |---|---|---|---|
 | `cacheTtl` | `1h`, `5m` | `1h` | The prompt-cache lifetime the bar's countdown starts from; a model switch reports the real one. |
+| `situation` | `true`, `false` | `false` | Shows the Situation section on Main. Off, nothing is read for it. |
 
-The pane has no option of its own: it reads Claude Code's `plansDirectory`, the handover plugin's settings and, for Situation, the notes in `~/Notes/claude`. See [Configuration](docs/configuration.md).
+Besides `situation`, the pane reads Claude Code's `plansDirectory` and the handover plugin's settings. See [Configuration](docs/configuration.md), which also says how to turn Situation on.
 
 ## Documentation
 
 - [Top bar](docs/top-bar.md): the pane's title, tabs and colours
-- [Main tab](docs/main-tab.md): Handover and Situation
+- [Main tab](docs/main-tab.md): Handover, and the opt-in Situation
 - [Misc tab](docs/misc-tab.md): Issue, Git, Documents, Last prompt, Steps, Sub-agents, Git diff and Git History
 - [Bar](docs/bar.md): the bar beneath the prompt, item by item
 - [Configuration](docs/configuration.md): opening the pane, settings and limits
