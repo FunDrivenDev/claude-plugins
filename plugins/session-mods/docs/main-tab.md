@@ -23,7 +23,7 @@ When the handover does not load within its 3-minute wait, the message stays in t
 
 Last in Handover, the `handover` plugin's AFK mode: a run toward a goal while you are away, handing over to fresh sessions until the goal is met or blocked ([AFK mode](../../handover/docs/afk.md)).
 
-- Off, `🌙 Go AFK` opens a field for the goal, which may end on a deadline as `/handover:afk` takes it (`until 8`, `until tomorrow 9:00`, `for 10h`). Enter runs `/handover:afk <goal>`: the session gets the AFK rules from the plugin and starts on the goal. `cancel` closes the field.
+- Off, `🌙 Go AFK` opens a field for the goal and moves the keyboard into it; the goal may end on a deadline as `/handover:afk` takes it (`until 8`, `until tomorrow 9:00`, `for 10h`). Enter runs `/handover:afk <goal>`: the session gets the AFK rules from the plugin and starts on the goal. `cancel` closes the field.
 - On, the line reads `🌙 AFK on · until Tue 17 Nov 08:00` (`AFK on` without a deadline), the goal beneath it, and `☀️ Turn AFK off` runs `/handover:afk off`.
 - Until the state follows a press, `Turning AFK on…` or `Turning AFK off…` stands in its place, two minutes at most.
 
