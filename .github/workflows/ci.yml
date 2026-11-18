@@ -57,8 +57,6 @@ jobs:
     permissions:
       contents: read
     timeout-minutes: 10
-    env:
-      PNPM_HOME: ${{ github.workspace }}/../pnpm-home
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -67,10 +65,16 @@ jobs:
         with:
           version: 2026.10.3
           install_args: just node pnpm npm:typescript
+          # v2: the v1 caches hold a typescript whose pnpm links point outside them.
+          cache_key_prefix: mise-v2
       # The latest release on purpose: the run checks the mods against the Claude Code
       # people get today. Its build script fetches the native binary.
       - name: Install Claude Code (pnpm)
         # zizmor: ignore[adhoc-packages] the latest, unpinned on purpose (above)
+        # PNPM_HOME on this step alone: set on the job, it sent the pnpm links of
+        # mise's typescript out of the mise cache, and a cache hit left them dangling.
+        env:
+          PNPM_HOME: ${{ github.workspace }}/../pnpm-home
         run: |
           echo "$PNPM_HOME/bin" >> "$GITHUB_PATH"
           PATH="$PNPM_HOME/bin:$PATH" pnpm add -g --allow-build=@anthropic-ai/claude-code @anthropic-ai/claude-code
