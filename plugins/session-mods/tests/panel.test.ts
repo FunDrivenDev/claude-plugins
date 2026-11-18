@@ -126,15 +126,17 @@ test('an open sub-agent shows its latest entries only and collapses from its foo
     background: true,
     fork: false,
   })
-  for (let k = 0; k < 200; k++) await $.tool.call({ tool: 'Bash', command: `echo step-${k}`, agentId: 'a1' } as never)
+  // 30 calls log 60 entries, past the 40 an open card shows: a few hundred would outlast the 5 s test timeout on a loaded machine.
+  for (let k = 0; k < 30; k++) await $.tool.call({ tool: 'Bash', command: `echo step-${k}`, agentId: 'a1' } as never)
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'session-mods', surface, ...PANE })
     await ui.press({ key: 'tab:misc' })
     await ui.press({ key: 'agent:a1' })
-    expect(await ui.find({ text: /echo step-199/ })).toBeDefined()
-    expect(await ui.find({ text: /echo step-150/ })).toBeUndefined()
-    expect(await ui.find({ text: /… 360 earlier/ })).toBeDefined()
+    expect(await ui.find({ text: /echo step-29/ })).toBeDefined()
+    expect(await ui.find({ text: /echo step-10\b/ })).toBeDefined()
+    expect(await ui.find({ text: /echo step-9\b/ })).toBeUndefined()
+    expect(await ui.find({ text: /… 20 earlier/ })).toBeDefined()
     expect(await ui.find({ text: /P{3999}…/ })).toBeDefined()
     await ui.press({ key: 'agent:a1:close' })
     expect(await ui.find({ key: 'agent:a1:close' })).toBeUndefined()
