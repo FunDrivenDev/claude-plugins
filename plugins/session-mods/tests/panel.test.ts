@@ -109,28 +109,49 @@ test('the pane shows the first prompt and moves a finished sub-agent to the done
   await ui.unmount()
 })
 
+const spawnOf = (tool_use_id: string, description: string) => ({
+  tool_use_id,
+  prompt: 'Find the hooks',
+  description,
+  subagentType: 'Explore',
+  provider: { plugin: 'engine', tier: 'core' } as const,
+  parentModel: 'claude-opus-5-5',
+  background: false,
+  fork: false,
+})
+
+// With no agent.spawn hook of the test's, the spawn has nothing beneath to answer it and throws.
 test('a sub-agent whose spawn fails leaves no running entry', async ($, on) => {
   mock.clock(on, { now: 1_000 })
-  on('agent.spawn', () => {
-    throw new Error('spawn failed')
-  })
   on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
-  await $.agent
-    .spawn({
-      tool_use_id: 'tu1',
-      prompt: 'Find the hooks',
-      description: 'Find hooks',
-      subagentType: 'Explore',
-      provider: { plugin: 'engine', tier: 'core' },
-      parentModel: 'claude-opus-5-5',
-      background: false,
-      fork: false,
-    })
-    .catch(() => undefined)
+  await $.agent.spawn(spawnOf('tu1', 'Find hooks')).catch(() => undefined)
 
   const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
   await ui.press({ key: 'tab:misc' })
   expect(await ui.find({ text: /Find hooks/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a failed spawn of a workflow run leaves its started agents, each under its own id', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
+  const ids = ['a1', 'a2']
+  // Once the ids run out the hook throws, is skipped, and the spawn throws as above.
+  on('agent.spawn', () => {
+    const agentId = ids.shift()
+    if (!agentId) throw new Error('no more agents')
+    return { model: 'claude-sonnet-5-5', agentId }
+  })
+  await $.agent.spawn(spawnOf('W', 'First'))
+  await $.agent.spawn(spawnOf('W', 'Second'))
+  await $.agent.spawn(spawnOf('W', 'Third')).catch(() => undefined)
+
+  const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'tab:misc' })
+  expect(await ui.find({ text: /2 running · 0 done/ })).toBeDefined()
+  expect((await ui.find({ key: 'agent:a1' }))?.props.label).toContain('First')
+  expect((await ui.find({ key: 'agent:a2' }))?.props.label).toContain('Second')
+  expect(await ui.find({ text: /Third/ })).toBeUndefined()
   await ui.unmount()
 })
 

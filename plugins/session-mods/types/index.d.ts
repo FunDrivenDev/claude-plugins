@@ -3,6 +3,8 @@ export type Entry = { kind: 'think' | 'say' | 'tool' | 'result' | 'error'; text:
 export type Agent = {
   id: string | null
   toolUseId: string
+  /** Tells drafts apart while they have no id: a workflow run's agents share one toolUseId. Absent from entries recorded before it. */
+  spawnKey?: string
   description: string
   type: string
   prompt: string
