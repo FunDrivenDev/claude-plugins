@@ -153,9 +153,12 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      # Whether main's head passed required-checks, when it is past this run's commit.
+      checks: read
     timeout-minutes: 10
-    # One release at a time, none cancelled: a run behind main's head releases
-    # nothing, and the run on the head releases every merge since the last tags.
+    # One release at a time. A newer queued run cancels a pending one, so a run
+    # behind main's head releases the head when its required-checks is green
+    # already, and else leaves it to the head's own run (scripts/release.sh).
     concurrency:
       group: release
       cancel-in-progress: false
