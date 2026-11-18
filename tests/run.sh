@@ -113,8 +113,9 @@ for sh in "${shells[@]}"; do
   expect "lazy: a placeholder before the first segment value" "$out" "53% │ …"
   expect "lazy: a placeholder before the first git value" "$out" "⎇ …"
   settle
-  # The countdowns tick each minute from the payload's `now`: a synchronous run just before and one just after
-  # bracket the lazy one, which matches either, whatever minute boundary the three straddle.
+  # The countdowns are the payload's reset times minus the clock at render, in whole minutes, so two renders a
+  # moment apart can differ: a synchronous run just before and one just after bracket the lazy one, which
+  # matches either, whatever minute boundary the three straddle.
   before=$(run env <<<"$payload")
   out=$(lazy env)
   after=$(run env <<<"$payload")
@@ -123,7 +124,7 @@ for sh in "${shells[@]}"; do
   if [ "$out" = "$before" ] || [ "$out" = "$after" ]; then
     pass "lazy: the same line as a synchronous run"
   else
-    fail "lazy: the same line as a synchronous run" "wanted: $before"$'\n'"got:    $out"
+    fail "lazy: the same line as a synchronous run" "wanted: $before"$'\n'"or:     $after"$'\n'"got:    $out"
   fi
 
   settle
