@@ -216,6 +216,13 @@ export const HELP_EXAMPLE = 34
 
 /** Starts the handover's wind-down at once, as `/handover:trigger` does. */
 export const TRIGGER_NOW = { key: 'handover:trigger', emoji: '⚡', label: 'Hand over now', color: '#e5c890' } as const
+
+/** The keys of the Handover section's actions, side by side on one row: ⚡ while a handover can start; once one is written and the session stopped, 🚀 (with a resume message) and ✏️; then 🌙 while AFK mode can be turned on. */
+export const handoverActions = (s: { isTriggerable: boolean; isStopped: boolean; hasResume: boolean; isAfkOffered: boolean }): string[] => [
+  ...(s.isTriggerable ? [TRIGGER_NOW.key] : []),
+  ...(s.isStopped ? NEXT_ACTIONS.filter(a => s.hasResume || !a.isSent).map(a => a.key) : []),
+  ...(s.isAfkOffered ? [AFK.on.key] : []),
+]
 /** A title as given: its first line, without a label, quotes or a final period; null when empty. */
 export const cleanTitle = (text: string): string | null => {
   const line = text.split('\n').map(l => l.trim()).find(Boolean)
