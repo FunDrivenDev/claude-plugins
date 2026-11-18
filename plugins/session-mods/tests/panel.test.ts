@@ -1,6 +1,6 @@
 import { describe, expect, mock, test, type TestBody } from 'claude-code/testing'
 
-import { afkGoal, afkLine, afkState, ago, cleanTitle, clockTime, handoverPhase, phaseLine, describeCall, fileMeta, handoverStatus, headline, lastSentence, previousPrompts, promptText } from '../hooks/panel'
+import { afkGoal, afkLine, afkState, ago, cleanTitle, clockTime, handoverActions, handoverPhase, phaseLine, describeCall, fileMeta, handoverStatus, headline, lastSentence, previousPrompts, promptText } from '../hooks/panel'
 import { HANDOVER_STATE, unknownHandover } from '../hooks/handover'
 
 const PANE = {
@@ -553,6 +553,61 @@ describe('AFK', () => {
     await ui.press({ key: 'afk:off' })
     expect(sent).toEqual(['/handover:afk off'])
     expect(await ui.find({ text: /^Turning AFK off…$/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('helpers: the Handover actions that share a row, in order', async () => {
+    const none = { isTriggerable: false, isStopped: false, hasResume: false, isAfkOffered: false }
+    expect(handoverActions(none)).toEqual([])
+    expect(handoverActions({ ...none, isTriggerable: true, isAfkOffered: true })).toEqual(['handover:trigger', 'afk:on'])
+    expect(handoverActions({ ...none, isStopped: true, hasResume: true, isAfkOffered: true })).toEqual(['handover:run', 'handover:edit', 'afk:on'])
+    expect(handoverActions({ ...none, isStopped: true })).toEqual(['handover:edit'])
+  })
+
+  type Drawn = { type?: string; key?: string; props?: { key?: string }; children?: unknown[] }
+  const walk = (node: unknown): Drawn[] => {
+    if (!node || typeof node !== 'object') return []
+    const d = node as Drawn
+    return [d, ...(d.children ?? []).flatMap(walk)]
+  }
+  /** The keys of the buttons drawn inside the Box keyed `row`. */
+  const buttonsIn = async (ui: { find: (q: { key: string }) => Promise<unknown> }, row: string) =>
+    walk(await ui.find({ key: row }))
+      .filter(d => d.type === 'Button')
+      .map(d => d.key ?? d.props?.key)
+
+  test('Hand over now and Go AFK share one wrapping row', async ($, on) => {
+    const ui = await mountWith($, on, { relays: true }, [])
+    expect(await buttonsIn(ui, 'handover:row')).toEqual(['handover:trigger', 'afk:on'])
+    expect((await ui.find({ key: 'handover:row' }))?.props.flexWrap).toBe('wrap')
+    await ui.press({ key: 'afk:on' })
+    // The goal field takes Go AFK's place, its cancel on the same row.
+    expect(await buttonsIn(ui, 'handover:row')).toEqual(['handover:trigger'])
+    expect(await buttonsIn(ui, 'afk')).toEqual(['afk:cancel'])
+    await ui.unmount()
+  })
+
+  const written = { path: '/h/written.md', title: null, lines: null, modified_at: null }
+
+  test('once a handover is written, Start, Edit and Go AFK share the row, the resume message beneath it', async ($, on) => {
+    const ui = await mountWith($, on, { relays: true, written, resume: 'Resume the panel work.' }, [])
+    expect(await buttonsIn(ui, 'handover:row')).toEqual(['handover:run', 'handover:edit', 'afk:on'])
+    expect((await ui.find({ key: 'handover:run' }))?.props.autoFocus).toBe(true)
+    expect((await ui.find({ key: 'handover:actions' }))?.text).toMatch(/Resume the panel work\.$/)
+    await ui.unmount()
+  })
+
+  test('without a resume message, the written handover offers Edit and Go AFK alone', async ($, on) => {
+    const ui = await mountWith($, on, { relays: true, written, resume: null }, [])
+    expect(await buttonsIn(ui, 'handover:row')).toEqual(['handover:edit', 'afk:on'])
+    await ui.unmount()
+  })
+
+  test('on, Turn AFK off sits beside the AFK line', async ($, on) => {
+    const ui = await mountWith($, on, { relays: true, afk: { goal: 'ship the pane', until: null } }, [])
+    expect(await buttonsIn(ui, 'afk:line')).toEqual(['afk:off'])
+    expect((await ui.find({ key: 'afk:line' }))?.text).toMatch(/AFK on/)
+    expect(await buttonsIn(ui, 'handover:row')).toEqual(['handover:trigger'])
     await ui.unmount()
   })
 

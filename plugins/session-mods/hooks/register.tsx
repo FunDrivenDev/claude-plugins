@@ -9,7 +9,7 @@ import { changesOf, treeRows } from './files'
 import { HANDOVER_STATE, handoverOf } from './handover'
 import { ARTIFACTS, DOC_CONTEXT, HANDOVER_DIR, PLANS_DIR, WRITTEN_SINCE, artifactOf, type DocContext, docContextOf, docGroups, docOf, docPaths, tilde, writtenSpots } from './documents'
 import { frontMatterOf, fromNotes, isTopic, NOTE_HEAD, notesOf, notesPathsIn, PR_JQ, prLiveOf, rexSessionLabelled, rexSessionOf, STALE_MS, staleOf, TOPIC_NOTES, WORKER_LOOK, workerOf, type RexSession } from './situation'
-import { afkGoal, afkLine, afkState, AFK, ago, cleanTitle, clockTime, describeCall, fileMeta, handoverPhase, handoverStatus, headline, HELP_EXAMPLE, intentOf, isPastTrigger, isRunning, kilo, lastSentence, NEXT_ACTIONS, oneLine, phaseLine, PHASES, previousPrompts, promptOf, promptText, SIGN, SIGN_COLOR, TRIGGER_NOW, type HandoverPhase } from './panel'
+import { afkGoal, afkLine, afkState, AFK, ago, cleanTitle, clockTime, describeCall, fileMeta, handoverActions, handoverPhase, handoverStatus, headline, HELP_EXAMPLE, intentOf, isPastTrigger, isRunning, kilo, lastSentence, NEXT_ACTIONS, oneLine, phaseLine, PHASES, previousPrompts, promptOf, promptText, SIGN, SIGN_COLOR, TRIGGER_NOW, type HandoverPhase } from './panel'
 import { PR_COLOR, RANK, findRefs, linearOfResult, prState, refKey, refsOfGh, repoOfRemote, titleOfSlug } from './tracker'
 import type { GithubRef, LinearRef } from './tracker'
 
@@ -1023,8 +1023,32 @@ export const register: Register = (on, options) => {
         )
       }
 
-      /** AFK mode: on with its goal and a button to turn it off, off with a button that opens the goal field, or why it cannot be. */
-      const afkRow = (pillShape: (a: { key: string; emoji: string; color: string }, label: RenderElement) => RenderElement) => {
+      /** A button of the Handover section: its emoji, label and colour, and what a press does. */
+      type Action = {
+        key: string
+        emoji: string
+        label: string
+        color: string
+        autoFocus?: true
+        onPress: (press: { surface: UiCopyArgs['surface'] }) => unknown
+      }
+      /** One action as a pill: a round border in its colour around its emoji and label. */
+      const actionButton = (a: Action) => (
+        <Box key={`${a.key}:box`} borderStyle="round" borderColor={a.color} paddingX={1} flexShrink={0}>
+          <Text>{a.emoji} </Text>
+          <Button key={a.key} label={a.label} plain autoFocus={a.autoFocus} hover={{ color: a.color }} onPress={press => a.onPress(press)} />
+        </Box>
+      )
+      /** Related actions side by side on one row, after the line they act on when there is one, wrapping where the pane is too narrow. */
+      const actionRow = (key: string, actions: Action[], lead?: RenderElement) => (
+        <Box key={key} flexDirection="row" flexWrap="wrap" columnGap={1} alignItems="center">
+          {lead}
+          {actions.map(actionButton)}
+        </Box>
+      )
+
+      /** AFK mode: its button for the Handover row of actions, and its line (on with its goal, the goal field, a press under way, or why it cannot be). */
+      const afkParts = (): { action: Action | null; block: RenderElement | null } => {
         const afk = afkState(ho!)
         if (afkAsked && (afkAsked.on === (afk.kind === 'on') || now - afkAsked.at > 120_000)) afkAsked = null
         const ask = async (isOn: boolean, args: string) => {
@@ -1034,81 +1058,89 @@ export const register: Register = (on, options) => {
           await $.command.run({ command: 'handover:afk', args })
         }
         if (afk.kind === 'unavailable')
-          return (
-            <Box key="afk" marginTop={1}>
-              <Text dimColor wrap="wrap">
-                {afk.why}.
-              </Text>
-            </Box>
-          )
-        if (afkAsked)
-          return (
-            <Box key="afk" marginTop={1}>
-              <Text color={AFK.on.color}>{afkAsked.on ? 'Turning AFK on…' : 'Turning AFK off…'}</Text>
-            </Box>
-          )
-        if (afk.kind === 'on')
-          return (
-            <Box key="afk" flexDirection="column" marginTop={1}>
-              <Text color={AFK.on.color} wrap="wrap">
-                {AFK.on.emoji} {afkLine(afk.until)}
-              </Text>
-              <Text dimColor italic wrap="wrap">
-                {afk.goal}
-              </Text>
-              <Box flexDirection="row">
-                {pillShape(AFK.off, <Button key={AFK.off.key} label={AFK.off.label} plain hover={{ color: AFK.off.color }} onPress={() => ask(false, 'off')} />)}
+          return {
+            action: null,
+            block: (
+              <Box key="afk" marginTop={1}>
+                <Text dimColor wrap="wrap">
+                  {afk.why}.
+                </Text>
               </Box>
-            </Box>
-          )
+            ),
+          }
+        if (afkAsked)
+          return {
+            action: null,
+            block: (
+              <Box key="afk" marginTop={1}>
+                <Text color={AFK.on.color}>{afkAsked.on ? 'Turning AFK on…' : 'Turning AFK off…'}</Text>
+              </Box>
+            ),
+          }
+        if (afk.kind === 'on') {
+          const off: Action = { ...AFK.off, onPress: () => ask(false, 'off') }
+          return {
+            action: null,
+            block: (
+              <Box key="afk" flexDirection="column" marginTop={1}>
+                {actionRow(
+                  'afk:line',
+                  [off],
+                  <Text color={AFK.on.color} wrap="wrap">
+                    {AFK.on.emoji} {afkLine(afk.until)}
+                  </Text>,
+                )}
+                <Text dimColor italic wrap="wrap">
+                  {afk.goal}
+                </Text>
+              </Box>
+            ),
+          }
+        }
         if (afkEditing)
-          return (
-            <Box key="afk" flexDirection="column" marginTop={1}>
-              <Input
-                key={AFK.input}
-                label="AFK goal "
-                placeholder={AFK.placeholder}
-                submitLabel="go AFK"
-                autoFocus
-                onSubmit={value => {
-                  const goal = afkGoal(value)
-                  if (goal) void ask(true, goal)
-                }}
-              />
-              <Button
-                key="afk:cancel"
-                label="cancel"
-                plain
-                dimColor
-                onPress={() => {
-                  afkEditing = false
-                  $.ui.invalidate('ui.render')
-                }}
-              />
-            </Box>
-          )
-        return (
-          <Box key="afk" flexDirection="row" marginTop={1}>
-            {pillShape(
-              AFK.on,
-              <Button
-                key={AFK.on.key}
-                label={AFK.on.label}
-                plain
-                hover={{ color: AFK.on.color }}
-                onPress={() => {
-                  afkEditing = true
-                  $.ui.invalidate('ui.render')
-                  // A press leaves the keys in the prompt: the goal typed next would go out as a plain prompt.
-                  void $.ui
-                    .open({ id: PANE, title: TITLE, focus: true, columns: DOCK_COLUMNS })
-                    .then(() => $.ui.focus({ requestId: PANE, key: AFK.input }))
-                    .catch(() => undefined)
-                }}
-              />,
-            )}
-          </Box>
-        )
+          return {
+            action: null,
+            block: (
+              <Box key="afk" flexDirection="row" flexWrap="wrap" columnGap={1} marginTop={1}>
+                <Input
+                  key={AFK.input}
+                  label="AFK goal "
+                  placeholder={AFK.placeholder}
+                  submitLabel="go AFK"
+                  autoFocus
+                  onSubmit={value => {
+                    const goal = afkGoal(value)
+                    if (goal) void ask(true, goal)
+                  }}
+                />
+                <Button
+                  key="afk:cancel"
+                  label="cancel"
+                  plain
+                  dimColor
+                  onPress={() => {
+                    afkEditing = false
+                    $.ui.invalidate('ui.render')
+                  }}
+                />
+              </Box>
+            ),
+          }
+        return {
+          action: {
+            ...AFK.on,
+            onPress: () => {
+              afkEditing = true
+              $.ui.invalidate('ui.render')
+              // A press leaves the keys in the prompt: the goal typed next would go out as a plain prompt.
+              void $.ui
+                .open({ id: PANE, title: TITLE, focus: true, columns: DOCK_COLUMNS })
+                .then(() => $.ui.focus({ requestId: PANE, key: AFK.input }))
+                .catch(() => undefined)
+            },
+          },
+          block: null,
+        }
       }
 
       const handoverRows = (() => {
@@ -1126,34 +1158,43 @@ export const register: Register = (on, options) => {
           $.ui.invalidate('ui.render')
           await startNext($, ho.resume, surface, isSent)
         }
-        const pillShape = (a: { key: string; emoji: string; color: string }, label: RenderElement) => (
-          <Box key={`${a.key}:box`} borderStyle="round" borderColor={a.color} paddingX={1} flexShrink={0}>
-            <Text>{a.emoji} </Text>
-            {label}
-          </Box>
+        const statusLine = phase ? (
+          <Text color={PHASES[phase].color}>{phaseLine(phase, now)}</Text>
+        ) : (
+          <Text color={status.color}>✋ {status.text}</Text>
         )
+        const afk = afkParts()
+        const byKey: Record<string, Action> = {
+          [TRIGGER_NOW.key]: {
+            ...TRIGGER_NOW,
+            onPress: async () => {
+              triggered = true
+              $.ui.invalidate('ui.render')
+              await $.command.run({ command: 'handover:trigger' })
+            },
+          },
+          ...Object.fromEntries(
+            NEXT_ACTIONS.map(a => [
+              a.key,
+              {
+                ...a,
+                label: launched === ho.written?.path ? 'Starting…' : a.label,
+                autoFocus: a.isSent ? true : undefined,
+                onPress: (press: { surface: UiCopyArgs['surface'] }) => launch(a.isSent, press.surface),
+              },
+            ]),
+          ),
+          ...(afk.action ? { [afk.action.key]: afk.action } : {}),
+        }
+        const actions = handoverActions({ isTriggerable, isStopped, hasResume: Boolean(ho.resume), isAfkOffered: afk.action !== null }).flatMap(k => byKey[k] ?? [])
         return [
-          phase ? <Text color={PHASES[phase].color}>{phaseLine(phase, now)}</Text> : <Text color={status.color}>✋ {status.text}</Text>,
+          statusLine,
           ...(ho.written ? [handoverFile('written', ho.written)] : []),
-          ...(isStopped
+          ...(actions.length > 0
             ? [
-                <Box key="handover:next" flexDirection="column" marginTop={1}>
-                  <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
-                    {(ho.resume ? NEXT_ACTIONS : NEXT_ACTIONS.filter(a => !a.isSent)).map(a =>
-                      pillShape(
-                        a,
-                        <Button
-                          key={a.key}
-                          label={launched === ho.written!.path ? 'Starting…' : a.label}
-                          plain
-                          autoFocus={a.isSent ? true : undefined}
-                          hover={{ color: a.color }}
-                          onPress={press => launch(a.isSent, press.surface)}
-                        />,
-                      ),
-                    )}
-                  </Box>
-                  {ho.resume && (
+                <Box key="handover:actions" flexDirection="column" marginTop={1}>
+                  {actionRow('handover:row', actions)}
+                  {isStopped && ho.resume && (
                     <Text dimColor italic wrap="wrap">
                       {ho.resume}
                     </Text>
@@ -1161,27 +1202,7 @@ export const register: Register = (on, options) => {
                 </Box>,
               ]
             : []),
-          ...(isTriggerable
-            ? [
-                <Box key="handover:now" flexDirection="row" marginTop={1}>
-                  {pillShape(
-                    TRIGGER_NOW,
-                    <Button
-                      key={TRIGGER_NOW.key}
-                      label={TRIGGER_NOW.label}
-                      plain
-                      hover={{ color: TRIGGER_NOW.color }}
-                      onPress={async () => {
-                        triggered = true
-                        $.ui.invalidate('ui.render')
-                        await $.command.run({ command: 'handover:trigger' })
-                      }}
-                    />,
-                  )}
-                </Box>,
-              ]
-            : []),
-          afkRow(pillShape),
+          ...(afk.block ? [afk.block] : []),
         ]
       })()
 
@@ -1617,17 +1638,17 @@ export const register: Register = (on, options) => {
             {helpRow(
               'trigger',
               framed(TRIGGER_NOW.color, <Text>{TRIGGER_NOW.emoji} {TRIGGER_NOW.label}</Text>),
-              'Starts the wind-down at once (/handover:trigger) instead of waiting for the trigger.',
+              'Starts the wind-down at once (/handover:trigger) instead of waiting for the trigger. The section\'s related buttons share one row, wrapping when the pane is too narrow.',
             )}
             {helpRow(
               'afk:on',
               framed(AFK.on.color, <Text>{AFK.on.emoji} {AFK.on.label}</Text>),
-              'Opens a field for the goal (optionally followed by until 8, for 10h): Enter runs /handover:afk with it, and the session works toward it, handing over to fresh sessions, until it is met or blocked. Shown only where the session can relay.',
+              'Opens a field for the goal (optionally followed by until 8, for 10h): Enter runs /handover:afk with it, and the session works toward it, handing over to fresh sessions, until it is met or blocked. Shown only where the session can relay, beside the other Handover buttons.',
             )}
             {helpRow(
               'afk:off',
               <Text color={AFK.on.color}>{AFK.on.emoji} AFK on · until Tue 17 Nov 08:00</Text>,
-              'AFK mode is on, with its goal beneath; Turn AFK off runs /handover:afk off.',
+              'AFK mode is on, with its goal beneath; Turn AFK off, beside this line, runs /handover:afk off.',
             )}
             {(Object.keys(PHASES) as HandoverPhase[]).map(key =>
               helpRow(`phase:${key}`, <Text color={PHASES[key].color}>{phaseLine(key, now)}</Text>, PHASES[key].does),
