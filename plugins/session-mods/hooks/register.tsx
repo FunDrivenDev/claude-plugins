@@ -763,15 +763,20 @@ export const register: Register = (on, options) => {
         history: [],
       }
       await update($, agents, list => [...list, draft])
-      const spawned = await next(e)
-      await update($, agents, list =>
-        list.flatMap(a => {
-          if (a.toolUseId !== draft.toolUseId) return [a]
-          if (spawned.deny !== undefined || !spawned.agentId) return []
-          return [{ ...a, id: spawned.agentId, model: spawned.model }]
-        }),
-      )
-      return spawned
+      let spawned: Awaited<ReturnType<typeof next>> | undefined
+      try {
+        spawned = await next(e)
+        return spawned
+      } finally {
+        // Also when the spawn throws: the draft would otherwise stay running, with no id to finish it by.
+        await update($, agents, list =>
+          list.flatMap(a => {
+            if (a.toolUseId !== draft.toolUseId) return [a]
+            if (!spawned || spawned.deny !== undefined || !spawned.agentId) return []
+            return [{ ...a, id: spawned.agentId, model: spawned.model }]
+          }),
+        )
+      }
     })
 
     let refresh: { cancel: () => void } | null = null

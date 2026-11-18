@@ -109,6 +109,31 @@ test('the pane shows the first prompt and moves a finished sub-agent to the done
   await ui.unmount()
 })
 
+test('a sub-agent whose spawn fails leaves no running entry', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('agent.spawn', () => {
+    throw new Error('spawn failed')
+  })
+  on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
+  await $.agent
+    .spawn({
+      tool_use_id: 'tu1',
+      prompt: 'Find the hooks',
+      description: 'Find hooks',
+      subagentType: 'Explore',
+      provider: { plugin: 'engine', tier: 'core' },
+      parentModel: 'claude-opus-5-5',
+      background: false,
+      fork: false,
+    })
+    .catch(() => undefined)
+
+  const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'tab:misc' })
+  expect(await ui.find({ text: /Find hooks/ })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('an open sub-agent shows its latest entries only and collapses from its foot', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
