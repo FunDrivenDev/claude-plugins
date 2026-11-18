@@ -168,17 +168,25 @@ test('starting agents of one workflow run open one at a time', async ($, on) => 
   const spawns = [$.agent.spawn(spawnOf('W', 'First')), $.agent.spawn(spawnOf('W', 'Second'))]
 
   const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
-  await ui.press({ key: 'tab:misc' })
-  const labels = async () =>
-    (await ui.findAll({ type: 'Button' })).map(b => String(b.props.label)).filter(l => /First|Second|Collapse/.test(l))
-  const rows = (await ui.findAll({ type: 'Button' })).filter(b => /First|Second/.test(String(b.props.label)))
-  expect(rows.map(r => r.props.label)).toEqual(['▸ First', '▸ Second'])
-  expect(new Set(rows.map(r => r.key)).size).toBe(2)
-  await ui.press({ key: rows[0]!.key! })
-  expect(await labels()).toEqual(['▾ First', '▴ Collapse', '▸ Second'])
-  await ui.unmount()
-  release()
-  await Promise.all(spawns)
+  try {
+    await ui.press({ key: 'tab:misc' })
+    const labels = async () =>
+      (await ui.findAll({ type: 'Button' })).map(b => String(b.props.label)).filter(l => /First|Second|Collapse/.test(l))
+    const rows = (await ui.findAll({ type: 'Button' })).filter(b => /First|Second/.test(String(b.props.label)))
+    expect(rows.map(r => r.props.label)).toEqual(['▸ First', '▸ Second'])
+    expect(new Set(rows.map(r => r.key)).size).toBe(2)
+    await ui.press({ key: rows[0]!.key! })
+    expect(await labels()).toEqual(['▾ First', '▴ Collapse', '▸ Second'])
+    // Once started, the open agent stays open.
+    release()
+    await Promise.all(spawns)
+    expect(await ui.find({ text: /2 running · 0 done/ })).toBeDefined()
+    expect(await labels()).toEqual(['▾ First', '▴ Collapse', '▸ Second'])
+  } finally {
+    release()
+    await Promise.allSettled(spawns)
+    await ui.unmount()
+  }
 })
 
 test('an open sub-agent shows its latest entries only and collapses from its foot', async ($, on) => {

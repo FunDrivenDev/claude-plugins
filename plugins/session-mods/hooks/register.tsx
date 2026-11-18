@@ -197,7 +197,10 @@ async function logCall($: EngineInterface, agentId: string, e: ToolCallInput, ra
   else if (ran.text) await addEntry($, agentId, { kind: 'result', text: ran.text })
 }
 
-/** A sub-agent's key in the pane: its id once started, before that its own draft's key, as a workflow run's agents share one toolUseId. */
+/**
+ * A sub-agent's key in the pane: its id once started, before that its own draft's key, as a workflow run's agents
+ * share one toolUseId. The spawn hook carries an open row over to the id.
+ */
 const agentKey = (a: Agent) => a.id ?? a.spawnKey ?? a.toolUseId
 
 /** Marks the main-loop step a refused or failed call belongs to. */
@@ -781,6 +784,9 @@ export const register: Register = (on, options) => {
             return [{ ...a, id: spawned.agentId, model: spawned.model }]
           }),
         )
+        // A row opened while starting stays open under the id it now goes by, or closes with its dropped draft.
+        const id = spawned?.deny === undefined ? spawned?.agentId : undefined
+        await update($, expanded, cur => (cur === draft.spawnKey ? (id ?? null) : cur))
       }
     })
 
