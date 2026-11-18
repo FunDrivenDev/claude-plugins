@@ -20,9 +20,9 @@ hooks {
             }
         }
     }
-    // Everything before it leaves the machine: lint, smoke tests, version bumps,
-    // type-check, the validator and the mods' tests, then the history's secrets and
-    // the workflows' audit.
+    // Everything before it leaves the machine: lint, smoke tests, type-check, the
+    // validator and the mods' tests, then the history's secrets and the workflows'
+    // audit. No version bump: ci.yml's release job versions a plugin once on main.
     ["pre-push"] {
         steps {
             ["check"] {
