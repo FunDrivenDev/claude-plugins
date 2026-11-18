@@ -119,12 +119,19 @@ for sh in "${shells[@]}"; do
   expect "lazy: the same line as a synchronous run" "$out" "$(run env <<<"$payload")"
 
   settle
-  printf '#!/bin/sh\nsleep 3; echo late\n' >"$WORK/seg-plugin/statusline-segment"
+  # A slow segment: it answers once the test lets it ($WORK/go), or after 20 s.
+  rm -f "$WORK/go"
+  printf '#!/bin/sh\ni=0; while [ ! -f "%s" ] && [ $i -lt 200 ]; do sleep 0.1; i=$((i + 1)); done; echo late\n' \
+    "$WORK/go" >"$WORK/seg-plugin/statusline-segment"
   rm -f "$tmp"/claude-statusline-*/seg-*
-  start=$SECONDS
   out=$(lazy env)
-  if (( SECONDS - start < 2 )); then pass "lazy: a slow segment does not delay the line"; else fail "lazy: a slow segment does not delay the line"; fi
+  slow=0
+  for f in "$tmp"/claude-statusline-*/seg-*.pid; do
+    if [ -f "$f" ] && read -r pid <"$f" && kill -0 "$pid" 2>/dev/null; then slow=1; fi
+  done
+  if (( slow )); then pass "lazy: a slow segment does not delay the line"; else fail "lazy: a slow segment does not delay the line"; fi
   expect "lazy: and shows its placeholder meanwhile" "$out" "53% │ …"
+  touch "$WORK/go"
   settle
   late=""
   for f in "$tmp"/claude-statusline-*/seg-*; do case $f in *.pid) ;; *) late=$(cat "$f") ;; esac; done
