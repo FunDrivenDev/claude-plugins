@@ -63,6 +63,26 @@ topic: mise-lockfiles
   Why: y.
 `
 
+test("a proposed decision keeps its whole text and its Why: clause, without the By: and Src: that follow", () => {
+  const long = 'Keep the `gh pr ready` guard as it is, read gh\'s stdout once per call and cache the verdict for the rest of the turn, so that a stacked PR\'s parent is only asked once.'
+  const register = `- **D07** \`proposed\` — ${long}
+  Why: one read of gh per turn keeps the guard fast. By: Claude, 2026-11-18. Src: brief § 1. Also in: —
+- **D08** \`proposed\` — No why here.
+- **D09** \`decided\` — Done.
+  Why: z.
+`
+  expect(proposedOf(register)).toEqual([
+    { id: 'D07', text: long, why: 'one read of gh per turn keeps the guard fast.' },
+    { id: 'D08', text: 'No why here.', why: null },
+  ])
+  // A superseded entry's Why: never lands under the proposed entry above it; CRLF and a Why: without By: read too.
+  const struck = '- **D09** `proposed` — New.\r\n- ~~**D10** `proposed` — old.~~ superseded by D11\r\n  Why: belongs to D10. By: C, x.\r\n- **D11** `proposed` — Newer.\r\n  Why: no author.\r\n'
+  expect(proposedOf(struck)).toEqual([
+    { id: 'D09', text: 'New.', why: null },
+    { id: 'D11', text: 'Newer.', why: 'no author.' },
+  ])
+})
+
 test('a topic slug is the only thing put in a pattern', () => {
   expect(isTopic('session-panel-journal')).toBe(true)
   expect(isTopic('BIM-4544')).toBe(true)
@@ -122,7 +142,7 @@ test('a merge plan reads its rows, pull requests linked, and its Refreshed line'
 
 test('open questions leave out those already decided; proposed decisions leave out the decided ones', () => {
   expect(questionsOf(QUESTIONS)).toEqual([{ id: 'Q1', title: 'pdf-renderer: lock mode in `mise.toml`?' }])
-  expect(proposedOf(REGISTER)).toEqual([{ id: 'D02', text: 'pdf-renderer sets `locked = true` in `mise.toml`.' }])
+  expect(proposedOf(REGISTER)).toEqual([{ id: 'D02', text: 'pdf-renderer sets `locked = true` in `mise.toml`.', why: 'y.' }])
 })
 
 test('the notes give the latest open merge plan, the open questions of open plans, and the register', () => {

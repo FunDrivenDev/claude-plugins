@@ -787,6 +787,44 @@ describe('Situation', () => {
     await ui.unmount()
   })
 
+  test('a proposed decision and an open question show cut to one line, and a press shows the whole of them, the decision with its Why:', ON, async ($, on) => {
+    const decision = "Keep the `gh pr ready` guard as it is, read gh's stdout once per call and cache the verdict for the rest of the turn, so that a stacked PR's parent is only asked once."
+    const question = 'Should the AFK relay retry a handover that failed to load within its wait, or stop and notify with the resume message?'
+    const notes = NOTES.replace('## Q1 — Which name?', `## Q1 — ${question}`).replace(
+      '- **D01** `proposed` — Name it Situation.\n',
+      `- **D01** \`proposed\` — ${decision}\n  Why: one read of gh per turn keeps the guard fast. By: Claude, 2026-11-18. Src: brief. Also in: —\n`,
+    )
+    start(on, { REX_SESSION: 'session:1', REX_BLOCK: 'block:me' }, argv => {
+      if (argv[0] === 'rex' && argv[1] === 'window') return ok(REX)
+      if (argv[0] === 'sh' && argv[2]?.includes('decisions-register')) return argv[4] === 'spj' ? ok(notes) : fail
+      return undefined
+    })
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    await settle()
+    const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+    const row = async (text: string) => (await ui.findAll({ type: 'Text', text })).map(t => t.props.wrap)
+    expect((await ui.find({ key: 'sit:d:0:D01:fold' }))?.props.label).toBe('▸ D01')
+    expect(await row(` ${decision}`)).toEqual(['truncate-end'])
+    expect(await ui.find({ text: /^Why: / })).toBeUndefined()
+
+    await ui.press({ key: 'sit:d:0:D01:fold' })
+    expect((await ui.find({ key: 'sit:d:0:D01:fold' }))?.props.label).toBe('▾ D01')
+    expect(await row(decision)).toEqual(['wrap'])
+    expect(await row('Why: one read of gh per turn keeps the guard fast.')).toEqual(['wrap'])
+
+    // One row is open at a time: opening the question closes the decision.
+    expect((await ui.find({ key: 'sit:q:0:Q1:fold' }))?.props.label).toBe('▸ Q1')
+    await ui.press({ key: 'sit:q:0:Q1:fold' })
+    expect(await row(question)).toEqual(['wrap'])
+    expect((await ui.find({ key: 'sit:d:0:D01:fold' }))?.props.label).toBe('▸ D01')
+    expect(await ui.find({ text: /^Why: / })).toBeUndefined()
+
+    await ui.press({ key: 'sit:q:0:Q1:fold' })
+    expect((await ui.find({ key: 'sit:q:0:Q1:fold' }))?.props.label).toBe('▸ Q1')
+    expect(await row(` ${question}`)).toEqual(['truncate-end'])
+    await ui.unmount()
+  })
+
   test('without a topic the section says so', ON, async ($, on) => {
     start(on, {}, () => undefined)
     await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })

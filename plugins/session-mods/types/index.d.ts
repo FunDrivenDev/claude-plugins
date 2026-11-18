@@ -113,7 +113,8 @@ export type MergeRow = { wave: string; prs: SituationPr[]; status: string; note:
 /** The topic's merge plan file: its table, its `Refreshed:` line and its last change (epoch ms). */
 export type MergePlan = { path: string; modifiedAt: number | null; refreshed: string | null; rows: MergeRow[] }
 export type Question = { id: string; title: string }
-export type Proposed = { id: string; text: string }
+/** A register entry still `proposed`, and the `Why:` clause beneath it (null without one). */
+export type Proposed = { id: string; text: string; why: string | null }
 /** A tab of the topic's Rex session, as its screen's foot shows it. */
 export type Worker = { label: string; state: 'running' | 'waiting' | 'idle' | 'done' | 'blocked' | 'shell'; last: string | null }
 /** A pull request's live state, read from GitHub. */

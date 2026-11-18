@@ -90,9 +90,15 @@ export const questionsOf = (text: string): Question[] =>
       return m && !/\*\*Decided\*\*/.test(part) ? [{ id: m[1]!, title: m[2]!.trim() }] : []
     })
 
-/** A decision register's entries still `proposed`: the ones awaiting Raphaël. */
+/** A decision register's entries still `proposed`: the ones awaiting Raphaël, each with its `Why:` clause. */
 export const proposedOf = (text: string): Proposed[] =>
-  [...text.matchAll(/^- \*\*(D\d+)\*\* `proposed` —\s*(.+)$/gm)].map(m => ({ id: m[1]!, text: m[2]!.trim() }))
+  // A struck-through entry (`- ~~**D10** …~~`) starts a chunk of its own, so its Why: stays its own.
+  text.split(/^(?=- (?:~~)?\*\*D\d+\*\*)/m).flatMap(entry => {
+    const m = /^- \*\*(D\d+)\*\* `proposed` —\s*(.+)$/m.exec(entry)
+    if (!m) return []
+    const why = /^\s+Why:\s*(.+?)(?:\s+By:.*)?$/m.exec(entry)?.[1]?.trim() ?? null
+    return [{ id: m[1]!, text: m[2]!.trim(), why }]
+  })
 
 const isOpen = (n: Note) => !/^(done|cancelled|canceled)$/i.test(frontMatterOf(n.text).status ?? '')
 const byPath = (a: Note, b: Note) => a.path.localeCompare(b.path)
