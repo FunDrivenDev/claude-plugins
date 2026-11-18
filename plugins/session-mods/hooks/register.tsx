@@ -1267,6 +1267,30 @@ export const register: Register = (on, options) => {
       }
 
       /** A block of the Situation section: its heading, then its rows or one dim line when it has none. */
+      /**
+       * A Situation row the pane is too narrow for: `▸ ID` and the text cut to one line; a press opens the whole
+       * text and, for a decision, its `Why:` clause beneath, `▾` closing it again (as Misc's sub-agents do).
+       */
+      const foldRow = (key: string, id: string, color: string, text: string, why?: string | null) => {
+        const isOpen = open === key
+        return (
+          <Box key={key} flexDirection="column">
+            <Box flexDirection="row">
+              <Box flexShrink={0}>
+                <Button key={`${key}:fold`} label={`${isOpen ? '▾' : '▸'} ${id}`} plain hover={hot(key, color)} onPress={() => update($, expanded, cur => (cur === key ? null : key))} />
+              </Box>
+              {!isOpen && <Text wrap="truncate-end"> {text}</Text>}
+            </Box>
+            {isOpen && (
+              <Box flexDirection="column" paddingLeft={2} marginBottom={1}>
+                <Text wrap="wrap">{text}</Text>
+                {why && <Text dimColor wrap="wrap">Why: {why}</Text>}
+              </Box>
+            )}
+          </Box>
+        )
+      }
+
       const sitBlock = (key: string, heading: RenderElement, rows: RenderElement[], empty: string) => (
         <Box key={`sit:${key}`} flexDirection="column" marginTop={1}>
           {heading}
@@ -1349,21 +1373,13 @@ export const register: Register = (on, options) => {
             {sitBlock(
               'questions',
               sitHeading('Open questions'),
-              sit.questions.map((q, i) => (
-                <Text key={`sit:q:${i}`} wrap="truncate-end">
-                  <Text color="#e5c890">{q.id}</Text> {q.title}
-                </Text>
-              )),
+              sit.questions.map((q, i) => foldRow(`sit:q:${i}:${q.id}`, q.id, '#e5c890', q.title)),
               'No open question.',
             )}
             {sitBlock(
               'proposed',
               sitHeading('Awaiting you', sit.register && sit.proposed.length ? link('sit:register', `file://${sit.register}`, ' register') : null),
-              sit.proposed.map((d, i) => (
-                <Text key={`sit:d:${i}`} wrap="truncate-end">
-                  <Text color="#ca9ee6">{d.id}</Text> {d.text}
-                </Text>
-              )),
+              sit.proposed.map((d, i) => foldRow(`sit:d:${i}:${d.id}`, d.id, '#ca9ee6', d.text, d.why)),
               'No proposed decision.',
             )}
           </Box>
@@ -1662,16 +1678,16 @@ export const register: Register = (on, options) => {
               helpRow(
                 'sit:questions',
                 <Text>
-                  <Text color="#e5c890">Q1</Text> Lock mode in mise.toml?
+                  <Text color="#e5c890">▸ Q1</Text> Lock mode in mise.toml?
                 </Text>,
-                "The topic's open-questions plans still todo or doing, one line per question not yet decided.",
+                "The topic's open-questions plans still todo or doing, one line per question not yet decided; a press on ▸ Qn shows its whole title.",
               ),
               helpRow(
                 'sit:proposed',
                 <Text>
-                  <Text color="#ca9ee6">D02</Text> Pin the lock in CI
+                  <Text color="#ca9ee6">▸ D02</Text> Pin the lock in CI
                 </Text>,
-                "Awaiting you: the topic's decision register's entries still proposed, with a link to the register.",
+                "Awaiting you: the topic's decision register's entries still proposed, with a link to the register; a press on ▸ Dnn shows the whole decision and its Why: clause.",
               ),
             ]}
           </Box>

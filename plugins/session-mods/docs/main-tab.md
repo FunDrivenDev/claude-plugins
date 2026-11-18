@@ -48,10 +48,10 @@ Workers
 ✓ fix · done · AFK done: claude-plugins#90
 
 Open questions
-Q1 Lock mode in mise.toml?
+▸ Q1 Lock mode in mise.toml?
 
 Awaiting you register
-D02 Pin the lock in CI
+▸ D02 Pin the lock in CI
 ```
 
 The topic is a notes `topic:` slug (the front matter of the plans and registers in `~/Notes/claude`):
@@ -65,7 +65,7 @@ Four blocks follow, each with one dim line when it has nothing to show:
 
 - **Merge plan**: the topic's latest `*-merge-plan.md` in `~/Notes/claude/plans`, one row per line of its `| Wave | PR | Status | Note |` table: wave, status, each pull request linked in its live state's colour (as in [Git](misc-tab.md#git)) with `!` on a red check, then the note. The heading links the file and gives its age, yellow past an hour. Pull requests are read with `gh` every minute; `gh unreachable` replaces their colours when none answers. A row whose status `gh` contradicts shows, in yellow after its status, `stale:` and the live state that contradicts it, the sign the file needs a refresh: `stale: open` or `stale: closed` on a ✅ row with a pull request open (a draft too) or closed unmerged; `stale: merged` or `stale: closed` on a 🔧, ⏳, 👤 or ⚠️ row once all its pull requests are merged or closed, and on a 🗑️ row once its pull request is. A ❓ row, and a row with a pull request `gh` could not read, is never stale; nor is a ⚠️ row whose checks are green, since `gh`'s answer does not say whether it conflicts.
 - **Workers**: the other tabs of the terminal session labelled by the topic (this one, or another the terminal lists), each with its state read from its screen: `●` running, `◆` waiting for you, `○` idle, `✓` done or `✗` blocked on its `AFK` line, `›` a shell; then the last thing it said. Outside a terminal whose sessions the pane can read, it reads `not in a terminal session`, and `terminal sessions unreachable` when the terminal does not answer.
-- **Open questions**: the `## Qn — title` headings of the topic's `*-open-questions.md` plans still `todo` or `doing`, without those a `**Decided**` line answers.
-- **Awaiting you**: the entries of the topic's decision register (`~/Notes/claude/decisions-register`) still `proposed`, linked to the register.
+- **Open questions**: the `## Qn — title` headings of the topic's `*-open-questions.md` plans still `todo` or `doing`, without those a `**Decided**` line answers. Each shows as `▸ Qn` and its title cut to one line; a press on it shows the whole title, wrapped, and `▾ Qn` closes it.
+- **Awaiting you**: the entries of the topic's decision register (`~/Notes/claude/decisions-register`) still `proposed`, linked to the register. Each shows as `▸ Dnn` and the decision cut to one line; a press on it shows the whole decision, wrapped, and beneath it, dimmed, its `Why:` clause, so it can be judged from the pane. `▾ Dnn` closes it; one row is open at a time across the pane, a sub-agent or a commit of Misc included.
 
 The panel computes it all live from the notes, `gh` and the terminal: no skill or worker writes a state file for it.
