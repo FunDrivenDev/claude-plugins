@@ -65,14 +65,18 @@ jobs:
         with:
           version: 2026.10.3
           install_args: just node pnpm npm:typescript
-          # v2: the v1 caches hold a typescript whose pnpm links point outside them.
-          cache_key_prefix: mise-v2
+          # v3: the older caches hold a typescript whose pnpm links point outside them.
+          cache_key_prefix: mise-v3
+        # mise installs typescript through pnpm, whose global virtual store lives
+        # under PNPM_HOME: inside mise's data dir, the cache keeps it, and a cache
+        # hit no longer leaves tsc a dangling link.
+        env:
+          PNPM_HOME: /home/runner/.local/share/mise/pnpm-home
       # The latest release on purpose: the run checks the mods against the Claude Code
       # people get today. Its build script fetches the native binary.
       - name: Install Claude Code (pnpm)
         # zizmor: ignore[adhoc-packages] the latest, unpinned on purpose (above)
-        # PNPM_HOME on this step alone: set on the job, it sent the pnpm links of
-        # mise's typescript out of the mise cache, and a cache hit left them dangling.
+        # Claude Code's own PNPM_HOME, out of the mise cache: the latest each run.
         env:
           PNPM_HOME: ${{ github.workspace }}/../pnpm-home
         run: |
