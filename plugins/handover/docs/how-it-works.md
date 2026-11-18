@@ -38,3 +38,14 @@ Every Bash command the session runs in the background starts its description wit
 The writer gets the list of the commands stopped, and the handover names each. Stopping a command through `TaskStop` is silent; one killed by the plugin makes Claude Code report its failure and wake the session for one short extra turn, which is why the session is asked first. The handover is written at the stop of that extra turn, once, so that it includes it, and the closing reply follows as usual. With no such turn within 20 s, a watchdog writes the handover and hands over without a closing reply: the status line turns to ready, and a relay resumes with a generic message.
 
 An untagged background command is refused once, with the format. Launched the same way again, it runs, tagged by a guess from its command line (`dev`, `serve`, `watch`, `tail -f` are endless; `test`, `build`, `lint`, `gh run watch` are awaited); a command matching both or neither is taken for endless, so that it is stopped rather than waited for. Each refusal and guess goes to the metrics with the command, its description, whether it came from a subagent and whether the session had been told the tags; `/handover:stats` lists them.
+
+## The hook daemon
+
+A cold `python3 handover.py hook` costs about 60 ms of CPU, and `PreToolUse`, `PostToolUse`, `SubagentStart` and `SubagentStop` fire on every tool call: across many sessions, those starts load the machine. These four events go through `scripts/hookd-client` instead, a `sh` script that hands the event to a daemon over a Unix socket, `hookd-<version>.sock` in the plugin's data folder, one per plugin version. The daemon (`scripts/hookd.py`) imported `handover.py` once; it forks per event, and the child takes the session's environment, working directory, parent pid and hook input from the client, runs the same hook code and answers with its output.
+
+- **Start.** A `SessionStart` (still a cold hook) starts the daemon, detached, when its socket does not answer. A lock (`hookd-<version>.lock`) keeps one daemon per version, which replaces a stale socket.
+- **Fallback.** With no socket, or nobody listening on it, the client runs the cold hook, which starts the daemon again. Any other failure (the hook raised, the daemon died mid-event) is reported on stderr and the event is not run again, since the daemon may have run its side effects.
+- **Exit.** The daemon exits after an hour without an event, once its socket is gone, or once a script under `scripts/` changed, so that it never serves stale code; the next event falls back to the cold hook.
+- **Off.** `HANDOVER_HOOKD=off` in the session's environment keeps every event on the cold hook.
+
+`Stop`, `SessionStart`, `SessionEnd` and the other events stay cold: they are rare, and some need what a detached daemon lacks, such as the terminal the session runs in for the bell. A YOLO run may not call the daemon or its client (the guard treats them as any other script of the plugin).

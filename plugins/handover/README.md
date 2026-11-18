@@ -29,7 +29,7 @@ Coming from `handover@fundriven` or `handoff`: see [Migrating from older version
 
 ## Documentation
 
-- [How it works](docs/how-it-works.md): the wind-down, the writer, `/clear`, sub-agents and background commands
+- [How it works](docs/how-it-works.md): the wind-down, the writer, `/clear`, sub-agents, background commands and the hook daemon
 - [Relay](docs/relay.md): automatic `/clear` under tmux, in Rex or in any terminal, started with the `toolbox session` commands (toolbox 0.16.0 or later)
 - [AFK mode](docs/afk.md): unattended runs on a goal, deadlines, YOLO
 - [Settings](docs/settings.md): the thresholds, how they relate, and every option

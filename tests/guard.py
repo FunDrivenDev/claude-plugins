@@ -54,6 +54,12 @@ class OwnCommands(unittest.TestCase):
         other = os.path.join(H.plugin_root(), "scripts", "notify.py")
         self.assertIsNotNone(hit(f"python3 {other} request --session abc"))
 
+    def test_the_hook_daemon_and_its_client_stay_denied(self):
+        client = os.path.join(H.plugin_root(), "scripts", "hookd-client")
+        self.assertIsNotNone(hit(f"{CALL} hookd"))
+        self.assertIsNotNone(hit(f"sh {client}"))
+        self.assertIsNotNone(hit(f"curl --unix-socket {DATA}/hookd-0.36.0.sock http://hookd/hook"))
+
 
 def installed(*parts):
     path = os.path.join(HOME, ".claude", "plugins", *parts)
