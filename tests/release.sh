@@ -149,10 +149,14 @@ land "feat: fresh (#11)" plugins/fresh/README.md
 release
 check "a plugin with no tag gets its version as its first release" "$(tagged fresh-v0.1.0)" yes
 
+land "release: demo 1x3x8" plugins/demo/hooks/h.ts
+release
+check "a title with any other character for the release subject's dots is a change" "$(version demo)" 1.3.8
+
 land "fix: dry (#12)" plugins/demo/hooks/h.ts
 RELEASE_PUBLISH=0 scripts/release.sh HEAD >/dev/null
 git fetch -q --tags origin
-check "a dry run pushes nothing" "$(version demo)" 1.3.7
+check "a dry run pushes nothing" "$(version demo)" 1.3.8
 
 for level in patch minor major; do scripts/bump.sh demo "$level" >/dev/null; done
 check "bump: patch, then minor resets the patch, then major resets both" "$(jq -r .version plugins/demo/.claude-plugin/plugin.json)" 2.0.0

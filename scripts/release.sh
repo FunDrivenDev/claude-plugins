@@ -29,7 +29,8 @@ release_subject='^release: [a-z0-9-]+ [0-9]+\.[0-9]+\.[0-9]+$'
 # changes <range> [path…]: the commits in range, release commits aside, newest first.
 changes() {
   local range=$1; shift
-  git log --format='%H%x09%s' "$range" -- "$@" | awk -F '\t' -v r="$release_subject" '$2 !~ r { print $1 }'
+  # Through ENVIRON, not -v, which reads escapes and turns the regex's \. into any character.
+  git log --format='%H%x09%s' "$range" -- "$@" | r=$release_subject awk -F '\t' '$2 !~ ENVIRON["r"] { print $1 }'
 }
 
 git fetch -q --tags "$remote" main
