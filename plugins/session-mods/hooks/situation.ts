@@ -11,12 +11,16 @@ export const isTopic = (s: string | null | undefined): s is string => typeof s =
 
 /**
  * Prints each plan and register whose front matter names topic `$1`: a `\x1e` line holding its path, a tab and its
- * last change (epoch seconds), then the file. Exits 1 when none does.
+ * last change (epoch seconds), then the file. Exits 1 when none does. One `grep -l` over every note picks the
+ * candidates, and only those get their head checked: a `head | grep` per note forked hundreds of processes per read,
+ * in every session, every 30 s.
  */
-export const TOPIC_NOTES = `d="$HOME/Notes/claude"; found=1; t=$(printf '%s' "$1" | sed 's/[.]/[.]/g')
-for f in "$d"/plans/*.md "$d"/decisions-register/*.md; do
+export const TOPIC_NOTES = `d="$HOME/Notes/claude"; found=1; t=$(printf '%s' "$1" | sed 's/[.]/[.]/g'); re="topic: *[\\"']?$t[\\"']? *"
+l=$(grep -lxE -- "$re" "$d"/plans/*.md "$d"/decisions-register/*.md 2>/dev/null); IFS='
+'; set -f
+for f in $l; do
   [ -f "$f" ] || continue
-  head -20 "$f" | grep -qxE "topic: *[\\"']?$t[\\"']? *" || continue
+  head -20 "$f" | grep -qxE -- "$re" || continue
   printf '\\036%s\\t%s\\n' "$f" "$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f")"; cat "$f"; found=0
 done
 exit $found`
