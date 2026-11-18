@@ -92,7 +92,8 @@ export const questionsOf = (text: string): Question[] =>
 
 /** A decision register's entries still `proposed`: the ones awaiting Raphaël, each with its `Why:` clause. */
 export const proposedOf = (text: string): Proposed[] =>
-  text.split(/^(?=- \*\*D\d+\*\*)/m).flatMap(entry => {
+  // A struck-through entry (`- ~~**D10** …~~`) starts a chunk of its own, so its Why: stays its own.
+  text.split(/^(?=- (?:~~)?\*\*D\d+\*\*)/m).flatMap(entry => {
     const m = /^- \*\*(D\d+)\*\* `proposed` —\s*(.+)$/m.exec(entry)
     if (!m) return []
     const why = /^\s+Why:\s*(.+?)(?:\s+By:.*)?$/m.exec(entry)?.[1]?.trim() ?? null

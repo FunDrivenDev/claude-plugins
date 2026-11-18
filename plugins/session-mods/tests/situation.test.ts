@@ -75,6 +75,12 @@ test("a proposed decision keeps its whole text and its Why: clause, without the 
     { id: 'D07', text: long, why: 'one read of gh per turn keeps the guard fast.' },
     { id: 'D08', text: 'No why here.', why: null },
   ])
+  // A superseded entry's Why: never lands under the proposed entry above it; CRLF and a Why: without By: read too.
+  const struck = '- **D09** `proposed` — New.\r\n- ~~**D10** `proposed` — old.~~ superseded by D11\r\n  Why: belongs to D10. By: C, x.\r\n- **D11** `proposed` — Newer.\r\n  Why: no author.\r\n'
+  expect(proposedOf(struck)).toEqual([
+    { id: 'D09', text: 'New.', why: null },
+    { id: 'D11', text: 'Newer.', why: 'no author.' },
+  ])
 })
 
 test('a topic slug is the only thing put in a pattern', () => {

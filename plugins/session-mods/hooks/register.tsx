@@ -1266,7 +1266,6 @@ export const register: Register = (on, options) => {
         )
       }
 
-      /** A block of the Situation section: its heading, then its rows or one dim line when it has none. */
       /**
        * A Situation row the pane is too narrow for: `▸ ID` and the text cut to one line; a press opens the whole
        * text and, for a decision, its `Why:` clause beneath, `▾` closing it again (as Misc's sub-agents do).
@@ -1291,6 +1290,7 @@ export const register: Register = (on, options) => {
         )
       }
 
+      /** A block of the Situation section: its heading, then its rows or one dim line when it has none. */
       const sitBlock = (key: string, heading: RenderElement, rows: RenderElement[], empty: string) => (
         <Box key={`sit:${key}`} flexDirection="column" marginTop={1}>
           {heading}
@@ -1678,14 +1678,14 @@ export const register: Register = (on, options) => {
               helpRow(
                 'sit:questions',
                 <Text>
-                  <Text color="#e5c890">▸ Q1</Text> Lock mode in mise.toml?
+                  ▸ Q1 Lock mode in mise.toml?
                 </Text>,
                 "The topic's open-questions plans still todo or doing, one line per question not yet decided; a press on ▸ Qn shows its whole title.",
               ),
               helpRow(
                 'sit:proposed',
                 <Text>
-                  <Text color="#ca9ee6">▸ D02</Text> Pin the lock in CI
+                  ▸ D02 Pin the lock in CI
                 </Text>,
                 "Awaiting you: the topic's decision register's entries still proposed, with a link to the register; a press on ▸ Dnn shows the whole decision and its Why: clause.",
               ),
