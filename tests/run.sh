@@ -96,29 +96,39 @@ for sh in "${shells[@]}"; do
   # the background, and a slow segment never holds the line up.
   tmp="$WORK/tmp-lazy-$RANDOM"; mkdir -p "$tmp"
   lazy() { HOME=$home TMPDIR=$tmp "$@" "$sh" "$PLUGIN/statusline.sh" <<<"$payload" | plain; }
+  # settle: waits for the background runs the lazy line started, which outlive it. One still starting the segment
+  # makes Linux refuse to rewrite it ("Text file busy"), and one still writing its value keeps `rm -rf` from
+  # emptying the directory.
+  settle() {
+    local f pid deadline=$((SECONDS + 20))
+    for f in "$tmp"/claude-statusline-*/*.pid; do
+      if ! [ -f "$f" ] || ! read -r pid <"$f"; then continue; fi
+      while kill -0 "$pid" 2>/dev/null; do
+        (( SECONDS < deadline )) || { fail "lazy: a background run outlived 20 s"; return 0; }
+        sleep 0.1
+      done
+    done
+  }
   out=$(lazy env)
   expect "lazy: a placeholder before the first segment value" "$out" "53% │ …"
   expect "lazy: a placeholder before the first git value" "$out" "⎇ …"
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    # A value lands by an atomic rename once computed: its file is complete.
-    done=0
-    for f in "$tmp"/claude-statusline-*/seg-* "$tmp"/claude-statusline-*/git-*; do
-      case $f in *.pid) ;; *) [ -f "$f" ] && done=$((done + 1)) ;; esac
-    done
-    [ "$done" -ge 2 ] && break
-    sleep 0.2
-  done
+  settle
   out=$(lazy env)
   expect "lazy: the segment computed in the background" "$out" "53% │ segment line"
   expect "lazy: the branch computed in the background" "$out" "⎇ feat/smoke"
   expect "lazy: the same line as a synchronous run" "$out" "$(run env <<<"$payload")"
 
+  settle
   printf '#!/bin/sh\nsleep 3; echo late\n' >"$WORK/seg-plugin/statusline-segment"
   rm -f "$tmp"/claude-statusline-*/seg-*
   start=$SECONDS
   out=$(lazy env)
   if (( SECONDS - start < 2 )); then pass "lazy: a slow segment does not delay the line"; else fail "lazy: a slow segment does not delay the line"; fi
   expect "lazy: and shows its placeholder meanwhile" "$out" "53% │ …"
+  settle
+  late=""
+  for f in "$tmp"/claude-statusline-*/seg-*; do case $f in *.pid) ;; *) late=$(cat "$f") ;; esac; done
+  expect "lazy: then its value, once computed" "$late" "late"
   printf '#!/bin/sh\ncat >/dev/null; echo "segment line"\n' >"$WORK/seg-plugin/statusline-segment"
 done
 
