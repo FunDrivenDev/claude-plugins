@@ -4,9 +4,11 @@ The topic at a glance: Handover (AFK mode included), then Situation when the `si
 
 ## Handover
 
-What the `handover` plugin's status line says (when the handover triggers, or that it is ready or writing), the handover this session loaded on a line of its own beneath the section's title (`loaded none` until one loads), a blank line on either side, and the one it wrote beneath the status. Each shows by its title (front matter `summary`, else its `# Handover:` heading), linked to its file and followed, greyed, by its line count and last change (`(142 lines · 2026-10-07 09:32)`).
+What the `handover` plugin's status line says (its thresholds, or that it is ready or writing), the handover this session loaded on a line of its own beneath the section's title (`loaded none` until one loads), a blank line on either side, and the one it wrote beneath the status. Each shows by its title (front matter `summary`, else its `# Handover:` heading), linked to its file and followed, greyed, by its line count and last change (`(142 lines · 2026-10-07 09:32)`).
 
 The pane renders what the handover plugin answers: it runs the installed plugin's `handover.py state --session <id> --json` (handover 0.29.0 and later) and reads none of its files. Without that answer (the plugin not installed, or older), the section reads `Handover state unknown` and why.
+
+Before a handover starts, the line lists every threshold the handover state gives, as the handover plugin names them ([Settings](../../handover/docs/settings.md)): `✋ suggest 170k · warn 185k · trigger 200k`, `suggest` from `suggest_tokens`, `warn` its `warn_at_tokens` (where the line turns yellow, halfway from the suggestion to the trigger), `trigger` from `trigger_tokens`. A threshold the context has passed is dimmed, with a ✓ (`✓ suggest 170k`), so the next one stands out; one set to 0 reads `off` (`trigger off`, and then no `warn`). Past the trigger, the line reads `wind-down on the next tool call`. The context's size is the status line's, not the pane's.
 
 While a handover is under way the status line animates its phase: `◐ Winding down` (the tasks in progress finish), `✎··· Writing the handover`, then `● Ready for the next session`.
 
