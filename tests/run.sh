@@ -113,10 +113,18 @@ for sh in "${shells[@]}"; do
   expect "lazy: a placeholder before the first segment value" "$out" "53% │ …"
   expect "lazy: a placeholder before the first git value" "$out" "⎇ …"
   settle
+  # The countdowns tick each minute from the payload's `now`: a synchronous run just before and one just after
+  # bracket the lazy one, which matches either, whatever minute boundary the three straddle.
+  before=$(run env <<<"$payload")
   out=$(lazy env)
+  after=$(run env <<<"$payload")
   expect "lazy: the segment computed in the background" "$out" "53% │ segment line"
   expect "lazy: the branch computed in the background" "$out" "⎇ feat/smoke"
-  expect "lazy: the same line as a synchronous run" "$out" "$(run env <<<"$payload")"
+  if [ "$out" = "$before" ] || [ "$out" = "$after" ]; then
+    pass "lazy: the same line as a synchronous run"
+  else
+    fail "lazy: the same line as a synchronous run" "wanted: $before"$'\n'"got:    $out"
+  fi
 
   settle
   # A slow segment: it answers once the test lets it ($WORK/go), or after 20 s.
