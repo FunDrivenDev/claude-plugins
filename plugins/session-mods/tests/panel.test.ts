@@ -155,6 +155,40 @@ test('a failed spawn of a workflow run leaves its started agents, each under its
   await ui.unmount()
 })
 
+test('starting agents of one workflow run open one at a time', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
+  let release = () => {}
+  const held = new Promise<void>(resolve => (release = resolve))
+  const ids = ['a1', 'a2']
+  on('agent.spawn', async () => {
+    await held
+    return { model: 'claude-sonnet-5-5', agentId: ids.shift()! }
+  })
+  const spawns = [$.agent.spawn(spawnOf('W', 'First')), $.agent.spawn(spawnOf('W', 'Second'))]
+
+  const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+  try {
+    await ui.press({ key: 'tab:misc' })
+    const labels = async () =>
+      (await ui.findAll({ type: 'Button' })).map(b => String(b.props.label)).filter(l => /First|Second|Collapse/.test(l))
+    const rows = (await ui.findAll({ type: 'Button' })).filter(b => /First|Second/.test(String(b.props.label)))
+    expect(rows.map(r => r.props.label)).toEqual(['▸ First', '▸ Second'])
+    expect(new Set(rows.map(r => r.key)).size).toBe(2)
+    await ui.press({ key: rows[0]!.key! })
+    expect(await labels()).toEqual(['▾ First', '▴ Collapse', '▸ Second'])
+    // Once started, the open agent stays open.
+    release()
+    await Promise.all(spawns)
+    expect(await ui.find({ text: /2 running · 0 done/ })).toBeDefined()
+    expect(await labels()).toEqual(['▾ First', '▴ Collapse', '▸ Second'])
+  } finally {
+    release()
+    await Promise.allSettled(spawns)
+    await ui.unmount()
+  }
+})
+
 test('an open sub-agent shows its latest entries only and collapses from its foot', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
