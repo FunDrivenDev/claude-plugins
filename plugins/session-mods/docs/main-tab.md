@@ -10,9 +10,11 @@ The pane renders what the handover plugin answers: it runs the installed plugin'
 
 While a handover is under way the status line animates its phase: `◐ Winding down` (the tasks in progress finish), `✎··· Writing the handover`, then `● Ready for the next session`.
 
+The section's buttons sit side by side on one row of pills, beneath the status and the handover written, and wrap onto a second row where the pane is too narrow: `⚡ Hand over now` and `🌙 Go AFK` while no handover is under way; `🚀 Start with this prompt`, `✏️ Edit the prompt first` and `🌙 Go AFK` once one is written.
+
 While no handover is under way, wherever the context stands, `⚡ Hand over now` starts the wind-down at once (`/handover:trigger`): the work in progress and its sub-agents finish, then the handover is written.
 
-Once the handover is written and the session has stopped, two buttons start the next session from it, the resume message the closing reply ended on shown beneath them. Both copy it, run `/clear` (which has the handover plugin load the handover into the new session), wait until the plugin records the handover as loaded, then enter the message in the prompt box:
+Once the handover is written and the session has stopped, two buttons start the next session from it, the resume message the closing reply ended on shown beneath their row. Both copy it, run `/clear` (which has the handover plugin load the handover into the new session), wait until the plugin records the handover as loaded, then enter the message in the prompt box:
 
 - `🚀 Start with this prompt` (focused, so Enter alone starts it) then sends it;
 - `✏️ Edit the prompt first` leaves it there to edit and send yourself.
@@ -23,8 +25,8 @@ When the handover does not load within its 3-minute wait, the message stays in t
 
 Last in Handover, the `handover` plugin's AFK mode: a run toward a goal while you are away, handing over to fresh sessions until the goal is met or blocked ([AFK mode](../../handover/docs/afk.md)).
 
-- Off, `🌙 Go AFK` opens a field for the goal and, when the prompt is empty, moves the keyboard into it (with a draft in the prompt, click the field first); the goal may end on a deadline as `/handover:afk` takes it (`until 8`, `until tomorrow 9:00`, `for 10h`). Enter runs `/handover:afk <goal>`: the session gets the AFK rules from the plugin and starts on the goal. `cancel` closes the field.
-- On, the line reads `🌙 AFK on · until Tue 17 Nov 08:00` (`AFK on` without a deadline), the goal beneath it, and `☀️ Turn AFK off` runs `/handover:afk off`.
+- Off, `🌙 Go AFK` opens a field for the goal and, when the prompt is empty, moves the keyboard into it (with a draft in the prompt, click the field first); the goal may end on a deadline as `/handover:afk` takes it (`until 8`, `until tomorrow 9:00`, `for 10h`). Enter runs `/handover:afk <goal>`: the session gets the AFK rules from the plugin and starts on the goal. `cancel`, beside the field, closes it.
+- On, the line reads `🌙 AFK on · until Tue 17 Nov 08:00` (`AFK on` without a deadline), the goal beneath it, and `☀️ Turn AFK off`, on the AFK line's row, runs `/handover:afk off`.
 - Until the state follows a press, `Turning AFK on…` or `Turning AFK off…` stands in its place, two minutes at most.
 
 The pane reads AFK mode from the handover plugin's `state` answer (its `afk` and `relays`, handover 0.35.0 and later) and writes none of its files. Where the session cannot relay (no terminal the plugin types into, such as tmux, and no `toolbox session run`), a dim line says so in place of the button; with an older handover plugin, it names the version needed.

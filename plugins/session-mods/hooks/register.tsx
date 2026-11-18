@@ -1638,17 +1638,17 @@ export const register: Register = (on, options) => {
             {helpRow(
               'trigger',
               framed(TRIGGER_NOW.color, <Text>{TRIGGER_NOW.emoji} {TRIGGER_NOW.label}</Text>),
-              'Starts the wind-down at once (/handover:trigger) instead of waiting for the trigger.',
+              'Starts the wind-down at once (/handover:trigger) instead of waiting for the trigger. The section\'s related buttons share one row, wrapping when the pane is too narrow.',
             )}
             {helpRow(
               'afk:on',
               framed(AFK.on.color, <Text>{AFK.on.emoji} {AFK.on.label}</Text>),
-              'Opens a field for the goal (optionally followed by until 8, for 10h): Enter runs /handover:afk with it, and the session works toward it, handing over to fresh sessions, until it is met or blocked. Shown only where the session can relay.',
+              'Opens a field for the goal (optionally followed by until 8, for 10h): Enter runs /handover:afk with it, and the session works toward it, handing over to fresh sessions, until it is met or blocked. Shown only where the session can relay, beside the other Handover buttons.',
             )}
             {helpRow(
               'afk:off',
               <Text color={AFK.on.color}>{AFK.on.emoji} AFK on · until Tue 17 Nov 08:00</Text>,
-              'AFK mode is on, with its goal beneath; Turn AFK off runs /handover:afk off.',
+              'AFK mode is on, with its goal beneath; Turn AFK off, beside this line, runs /handover:afk off.',
             )}
             {(Object.keys(PHASES) as HandoverPhase[]).map(key =>
               helpRow(`phase:${key}`, <Text color={PHASES[key].color}>{phaseLine(key, now)}</Text>, PHASES[key].does),
