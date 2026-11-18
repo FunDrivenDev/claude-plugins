@@ -133,6 +133,15 @@ git fetch -q --tags origin
 release
 check "the next run publishes the release that failed" "$(grep -cx 'demo-v1.3.5' "$WORK/published")" 1
 check "its notes list the titles since the previous tag" "$(sed -n '/== demo-v1.3.5/{n;p;}' "$WORK/releases.log")" "- fix: n (#17)"
+touch "$WORK/failing"
+land "fix: o (#18)" plugins/demo/hooks/h.ts
+scripts/release.sh HEAD >/dev/null 2>&1 || true
+rm "$WORK/failing"
+git fetch -q --tags origin
+land "fix: p (#19)" plugins/demo/hooks/h.ts
+release
+check "a failed publish is retried after a newer tag, oldest first" "$(grep -x 'demo-v1.3.[67]' "$WORK/published" | tr '\n' ' ')" "demo-v1.3.6 demo-v1.3.7 "
+check "the retried release keeps its own notes" "$(sed -n '/== demo-v1.3.6/{n;p;}' "$WORK/releases.log")" "- fix: o (#18)"
 
 mkdir -p plugins/fresh/.claude-plugin
 printf '{\n  "name": "fresh",\n  "version": "0.1.0"\n}\n' >plugins/fresh/.claude-plugin/plugin.json
@@ -143,7 +152,7 @@ check "a plugin with no tag gets its version as its first release" "$(tagged fre
 land "fix: dry (#12)" plugins/demo/hooks/h.ts
 RELEASE_PUBLISH=0 scripts/release.sh HEAD >/dev/null
 git fetch -q --tags origin
-check "a dry run pushes nothing" "$(version demo)" 1.3.5
+check "a dry run pushes nothing" "$(version demo)" 1.3.7
 
 for level in patch minor major; do scripts/bump.sh demo "$level" >/dev/null; done
 check "bump: patch, then minor resets the patch, then major resets both" "$(jq -r .version plugins/demo/.claude-plugin/plugin.json)" 2.0.0

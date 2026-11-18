@@ -43,7 +43,8 @@ fi
 newest=$(changes "$checked..$head" | head -n1)
 if [ -n "$newest" ]; then
   green=$("$gh" api "repos/${GITHUB_REPOSITORY:-FunDrivenDev/claude-plugins}/commits/$newest/check-runs?check_name=required-checks" \
-    --jq '[.check_runs[].conclusion] | any(. == "success")' 2>/dev/null || echo false)
+    --jq '[.check_runs[].conclusion] | any(. == "success")') \
+    || { echo "release: cannot read the checks of $newest" >&2; exit 1; }
   if [ "$green" != true ]; then
     echo "release: $remote/main moved past $checked to $newest, whose checks are not green yet; its run releases both"
     exit 0
@@ -111,21 +112,34 @@ if [ ${#tags[@]} -gt 0 ]; then
   git push -q --atomic "$remote" HEAD:refs/heads/main "${refs[@]}"
 fi
 
-# Each plugin's newest tag gets its GitHub release if it has none yet; the notes
-# list every subject between its previous tag and it, oldest first (GitHub links
-# each (#N) to its PR).
+# Each plugin's tags since its newest GitHub release get theirs, oldest first, so
+# a publish that failed is retried even after a newer tag; the notes list every
+# subject between the previous tag and it, oldest first (GitHub links each (#N)
+# to its PR).
 notes=$(mktemp)
 trap 'rm -f "$notes"' EXIT
 failed=0
+pending=()
 for dir in plugins/*/; do
-  dir=${dir%/}
   name=${dir#plugins/}
-  tag=$(newest_tag "$name")
-  [ -n "$tag" ] || continue
-  "$gh" release view "$tag" >/dev/null 2>&1 && continue
-  previous=$(newest_tag "$name" 2)
+  name=${name%/}
+  missing=()
+  n=1
+  while tag=$(newest_tag "$name" "$n") && [ -n "$tag" ]; do
+    "$gh" release view "$tag" >/dev/null 2>&1 && break
+    missing=("$n" "${missing[@]}")
+    n=$((n + 1))
+  done
+  for n in "${missing[@]}"; do pending+=("$name:$n"); done
+done
+for item in "${pending[@]}"; do
+  name=${item%:*}
+  n=${item#*:}
+  dir=plugins/$name
+  tag=$(newest_tag "$name" "$n")
+  previous=$(newest_tag "$name" $((n + 1)))
   if [ -z "$previous" ]; then
-    echo "The first version the release workflow tagged." >"$notes"
+    echo "The first tagged version." >"$notes"
   else
     mapfile -t listed < <(changes "$previous..$tag" "$dir" ":(exclude)$dir/tests")
     : >"$notes"
