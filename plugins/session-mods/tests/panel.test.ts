@@ -34,10 +34,16 @@ describe('helpers', () => {
     expect(fileMeta(null, null)).toBeNull()
     const thresholds = { suggest: 150_000, warnAt: 167_500, trigger: 185_000 }
     const ho = { isOn: true, unknown: null, loaded: null, written: null, thresholds, thresholdsError: null, pending: null, isWriting: false, isWindingDown: false, error: null, resume: null, afk: null, relays: null }
-    expect(handoverStatus(ho, 92_000).text).toBe('triggers at 185k · now 92k')
+    expect(handoverStatus(ho, 92_000).text).toBe('suggest 150k · warn 167k · trigger 185k')
+    expect(handoverStatus(ho, 160_000).text).toBe('✓ suggest 150k · warn 167k · trigger 185k')
+    expect(handoverStatus(ho, 170_000).marks?.map(m => m.isPassed)).toEqual([true, true, false])
+    expect(handoverStatus(ho, 185_000)).toEqual({ text: 'wind-down on the next tool call', color: '#ef9f76', marks: null })
+    expect(handoverStatus({ ...ho, thresholds: { suggest: 150_000, warnAt: -20_000, trigger: 0 } }, 160_000)).toMatchObject({ text: '✓ suggest 150k · trigger off', color: '#a5adce' })
+    expect(handoverStatus({ ...ho, thresholds: { suggest: 0, warnAt: 165_000, trigger: 185_000 } }, 92_000).text).toBe('suggest off · warn 165k · trigger 185k')
+    for (const tokens of [0, 92_000, 160_000, 170_000, 190_000]) expect(handoverStatus(ho, tokens).text).not.toContain('now')
     expect(handoverStatus(ho, 167_000).color).toBe('#a5adce')
     expect(handoverStatus(ho, 167_500).color).toBe('#e5c890')
-    expect(handoverStatus({ ...ho, thresholds: null, thresholdsError: 'why' }, 92_000)).toEqual({ text: 'thresholds unknown · why', color: '#e78284' })
+    expect(handoverStatus({ ...ho, thresholds: null, thresholdsError: 'why' }, 92_000)).toEqual({ text: 'thresholds unknown · why', color: '#e78284', marks: null })
     expect(handoverPhase({ ...ho, thresholds: null, thresholdsError: 'why' }, 190_000)).toBeNull()
     expect(handoverPhase(ho, 92_000)).toBeNull()
     expect(handoverPhase({ ...ho, isWindingDown: true }, 92_000)).toBe('winding')
@@ -452,6 +458,32 @@ test('the handover section leaves its states to Help, and Hand over now starts t
   await ui.press({ key: 'handover:trigger' })
   expect(sent).toEqual(['/handover:trigger'])
   expect(await ui.find({ key: 'handover:trigger' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the Handover line lists every threshold, the passed ones dimmed with a check, and never the token count', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 230_000 } as never, rateLimits: [] } }))
+  const state = { on: true, thresholds: { suggest: 200_000, warn_at: 225_000, trigger: 250_000 } }
+  on('process.run', ($, e) => {
+    const answer = e.argv.includes(HANDOVER_STATE) ? { exitCode: 0, stdout: JSON.stringify(state) } : { exitCode: 1, stdout: '' }
+    return { value: { stderr: '', ...answer } } as never
+  })
+  on('session.id', () => ({ value: 's1' }) as never)
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.model', () => ({ value: 'opus' }))
+  on('command.register', () => ({ value: undefined }) as never)
+  on('session.messages', () => ({ value: [] }))
+  on('ui.open', () => ({ value: undefined }) as never)
+  on('env.get', () => ({ value: undefined }))
+  on('settings.read', () => ({ value: {} }))
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+
+  const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+  expect((await ui.find({ text: /^✓ suggest 200k$/ }))?.props.dimColor).toBe(true)
+  expect((await ui.find({ text: /^ · ✓ warn 225k$/ }))?.props.dimColor).toBe(true)
+  expect((await ui.find({ text: /^ · trigger 250k$/ }))?.props.dimColor).toBe(false)
+  expect(await ui.find({ text: /now 230k/ })).toBeUndefined()
   await ui.unmount()
 })
 

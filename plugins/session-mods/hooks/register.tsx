@@ -9,7 +9,7 @@ import { changesOf, treeRows } from './files'
 import { HANDOVER_STATE, handoverOf } from './handover'
 import { ARTIFACTS, DOC_CONTEXT, HANDOVER_DIR, PLANS_DIR, WRITTEN_SINCE, artifactOf, type DocContext, docContextOf, docGroups, docOf, docPaths, tilde, writtenSpots } from './documents'
 import { frontMatterOf, fromNotes, isTopic, NOTE_HEAD, notesOf, notesPathsIn, PR_JQ, prLiveOf, rexSessionLabelled, rexSessionOf, STALE_MS, staleOf, TOPIC_NOTES, WORKER_LOOK, workerOf, type RexSession } from './situation'
-import { afkGoal, afkLine, afkState, AFK, ago, cleanTitle, clockTime, describeCall, fileMeta, handoverActions, handoverPhase, handoverStatus, headline, HELP_EXAMPLE, intentOf, isPastTrigger, isRunning, kilo, lastSentence, NEXT_ACTIONS, oneLine, phaseLine, PHASES, previousPrompts, promptOf, promptText, SIGN, SIGN_COLOR, TRIGGER_NOW, type HandoverPhase } from './panel'
+import { afkGoal, afkLine, afkState, AFK, ago, cleanTitle, clockTime, describeCall, fileMeta, handoverActions, handoverPhase, handoverStatus, headline, markText, HELP_EXAMPLE, intentOf, isPastTrigger, isRunning, kilo, lastSentence, NEXT_ACTIONS, oneLine, phaseLine, PHASES, previousPrompts, promptOf, promptText, SIGN, SIGN_COLOR, TRIGGER_NOW, type HandoverPhase } from './panel'
 import { PR_COLOR, RANK, findRefs, linearOfResult, prState, refKey, refsOfGh, repoOfRemote, titleOfSlug } from './tracker'
 import type { GithubRef, LinearRef } from './tracker'
 
@@ -1161,7 +1161,17 @@ export const register: Register = (on, options) => {
         const statusLine = phase ? (
           <Text color={PHASES[phase].color}>{phaseLine(phase, now)}</Text>
         ) : (
-          <Text color={status.color}>✋ {status.text}</Text>
+          <Text color={status.color}>
+            ✋{' '}
+            {status.marks
+              ? status.marks.map((m, i) => (
+                  <Text key={m.name} dimColor={m.isPassed}>
+                    {i > 0 ? ' · ' : ''}
+                    {markText(m)}
+                  </Text>
+                ))
+              : status.text}
+          </Text>
         )
         const afk = afkParts()
         const byKey: Record<string, Action> = {
@@ -1632,8 +1642,10 @@ export const register: Register = (on, options) => {
             )}
             {helpRow(
               'status',
-              <Text color="#e5c890">✋ triggers at 150k · now 141k</Text>,
-              'Where the handover plugin winds the session down; yellow once close, "suggested" once a handover is worth doing at the next boundary.',
+              <Text color="#e5c890">
+                ✋ <Text dimColor>✓ suggest 120k · ✓ warn 160k</Text> · trigger 200k
+              </Text>,
+              'Every threshold the handover plugin sets: suggest (a handover is worth doing at the next boundary), warn (the line turns yellow) and trigger (the session winds down). A passed one is dimmed, with a ✓.',
             )}
             {helpRow(
               'trigger',

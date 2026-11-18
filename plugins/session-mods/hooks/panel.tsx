@@ -1,4 +1,4 @@
-import type { FileChange, Handover, Prompt, Step } from '../types'
+import type { FileChange, Handover, HandoverThresholds, Prompt, Step } from '../types'
 
 /** How long ago, coarsely: minutes within the hour, then hours, then days. */
 export const ago = (ms: number): string => {
@@ -111,19 +111,35 @@ export const fileMeta = (lines: number | null, modifiedAt: number | null): strin
 
 export const kilo = (n: number) => (n < 1000 ? String(n) : n < 10_000 ? `${(n / 1000).toFixed(1)}k` : `${Math.floor(n / 1000)}k`)
 
-/** What the handover plugin's status line says, in the same words and colours. */
-export const handoverStatus = (h: Handover, tokens: number): { text: string; color: string } => {
-  if (h.error) return { text: `failed · ${h.error}`, color: '#e78284' }
-  if (h.isWriting) return { text: 'writing…', color: '#ef9f76' }
-  if (h.written) return { text: 'ready · run /clear', color: '#a6d189' }
+/** One threshold on the Handover line: its name as the handover plugin's state gives it, its value, and whether the context has passed it. */
+export type ThresholdMark = { name: 'suggest' | 'warn' | 'trigger'; text: string; isPassed: boolean }
+
+/** Every threshold the handover state gives, in order: `suggest 120k`, `warn 180k`, `trigger 200k`; `off` for one set to 0, and no warn point without a trigger. */
+export const thresholdMarks = (t: HandoverThresholds, tokens: number): ThresholdMark[] => {
+  const mark = (name: ThresholdMark['name'], value: number): ThresholdMark => ({
+    name,
+    text: value > 0 ? `${name} ${kilo(value)}` : `${name} off`,
+    isPassed: value > 0 && tokens >= value,
+  })
+  return [mark('suggest', t.suggest), ...(t.trigger > 0 ? [mark('warn', t.warnAt)] : []), mark('trigger', t.trigger)]
+}
+
+/** A threshold as the line writes it: a passed one with a ✓ before its name. */
+export const markText = (m: ThresholdMark) => (m.isPassed ? `✓ ${m.text}` : m.text)
+
+/** What the handover plugin's status line says, in the same words and colours; `marks` holds the thresholds when the line lists them. */
+export const handoverStatus = (h: Handover, tokens: number): { text: string; color: string; marks: ThresholdMark[] | null } => {
+  if (h.error) return { text: `failed · ${h.error}`, color: '#e78284', marks: null }
+  if (h.isWriting) return { text: 'writing…', color: '#ef9f76', marks: null }
+  if (h.written) return { text: 'ready · run /clear', color: '#a6d189', marks: null }
   const t = h.thresholds
-  if (!t) return { text: `thresholds unknown · ${h.thresholdsError}`, color: '#e78284' }
-  const suggested = t.suggest > 0 && tokens >= t.suggest
-  if (!t.trigger) return { text: suggested ? 'suggested' : 'trigger off', color: '#a5adce' }
-  if (tokens >= t.trigger) return { text: 'wind-down on the next tool call', color: '#ef9f76' }
+  if (!t) return { text: `thresholds unknown · ${h.thresholdsError}`, color: '#e78284', marks: null }
+  if (t.trigger > 0 && tokens >= t.trigger) return { text: 'wind-down on the next tool call', color: '#ef9f76', marks: null }
+  const marks = thresholdMarks(t, tokens)
   return {
-    text: `${suggested ? 'suggested · ' : ''}triggers at ${kilo(t.trigger)} · now ${kilo(tokens)}`,
-    color: tokens >= t.warnAt ? '#e5c890' : '#a5adce',
+    text: marks.map(markText).join(' · '),
+    color: t.trigger > 0 && tokens >= t.warnAt ? '#e5c890' : '#a5adce',
+    marks,
   }
 }
 
