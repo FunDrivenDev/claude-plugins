@@ -114,6 +114,7 @@ RECOVER_POLL_SECONDS = 2
 RECOVER_ENDED_SURVEYS = 3
 RECOVER_SHELL_SECONDS = 3
 RESUME_SECONDS = 90
+RESUME_TRIES = 3
 # How far below the trigger the status line turns yellow when no suggestion comes before it.
 WARN_TOKENS = 20_000
 # Claude Code's autoCompactWindow when the settings leave it unset.
@@ -2910,6 +2911,14 @@ def resume_command(sid, afk):
     )
 
 
+def type_resume(term, sid, afk):
+    """Types the resume command into the restored pane. Under load a rex call can time out: the failed step is tried
+    again, the line cleared before the text is typed again, and Enter alone, harmless twice, pressed again."""
+    if not any(term.clear_input() and term.type_text(resume_command(sid, afk)) for _ in range(RESUME_TRIES)):
+        return False
+    return any(term.press_enter() for _ in range(RESUME_TRIES))
+
+
 def cmd_relay_recover(args):
     """The AFK session ended with the host's server or its pane. A restart restores the pane, with a shell in it:
     the run is resumed there. Anything else ends the run, with the command to resume it by hand."""
@@ -2923,7 +2932,7 @@ def cmd_relay_recover(args):
     afk = afk_active(S.read(args.session))
     if seen == "restarted" and afk:
         time.sleep(RECOVER_SHELL_SECONDS)
-        typed = term.clear_input() and term.type_text(resume_command(args.session, afk)) and term.press_enter()
+        typed = type_resume(term, args.session, afk)
     deadline = time.time() + RESUME_SECONDS
     while typed and time.time() < deadline:
         if not S.read(args.session).get("recovering"):
