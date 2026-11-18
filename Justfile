@@ -24,13 +24,13 @@ test:
     for t in tests/[!_]*.sh; do echo "== $t"; mise exec -- "$t"; done
     for t in tests/[!_]*.py; do echo "== $t"; mise exec -- python3 "$t"; done
 
-# Fail when a plugin changed since origin/main without a version bump (needs origin/main, so not in ci.yml).
-versions:
-    mise exec -- scripts/versions.sh
-
-# Raise a plugin's version: `just bump session-mods minor`.
+# Raise a plugin's version: `just bump session-mods minor`; `just release` calls it.
 bump plugin level:
     mise exec -- scripts/bump.sh {{plugin}} {{level}}
+
+# Release each plugin changed since its last tag, from the PR titles, once CI checked <sha> on main: ci.yml's release job.
+release sha:
+    mise exec -- scripts/release.sh {{ quote(sha) }}
 
 # CI's verdict from the results of the jobs required-checks needs: green when each one succeeded or was skipped.
 ci-verdict *results:
@@ -44,8 +44,8 @@ validate:
 typecheck:
     scripts/typecheck.sh
 
-# Every check: lint, the smoke tests, the version bumps, the type-check, then the validator and the mods' tests; the pre-push hook.
-check: lint test versions typecheck validate
+# Every check: lint, the smoke tests, the type-check, then the validator and the mods' tests; the pre-push hook.
+check: lint test typecheck validate
 
 # Look for secrets (gitleaks: the whole history, or `staged` for the pre-commit hook) and audit the workflows (zizmor).
 audit scope="all":

@@ -1,10 +1,14 @@
-# The checks of the pre-push hook but `just versions` (it compares a branch with
-# origin/main), on GitHub: on each push to main and weekly, so a
+# The checks of the pre-push hook, on GitHub: on each push to main and weekly, so a
 # Claude Code release that breaks a mod shows up with no commit of ours (the
 # validator, the mods' tests and the type-check run on the latest claude); by hand;
 # and on Renovate's pull requests, which no laptop checks. A human's pull request
 # runs none: the git hooks are its CI (hk.pkl). Linux only: the laptop's pre-push
 # hook covers macOS, and the harness needs bash 5 anyway.
+# Then, on main (a push or a run by hand) and once required-checks is green, the
+# release job versions each plugin the merged commits changed and publishes it
+# (`just release`): a PR never bumps a version, so two PRs on one plugin cannot
+# ship at the same one. Its commit and tags, pushed with the GITHUB_TOKEN, start
+# no workflow.
 name: CI
 
 on:
@@ -53,8 +57,6 @@ jobs:
     permissions:
       contents: read
     timeout-minutes: 10
-    env:
-      PNPM_HOME: ${{ github.workspace }}/../pnpm-home
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -63,10 +65,20 @@ jobs:
         with:
           version: 2026.10.3
           install_args: just node pnpm npm:typescript
+          # v3: the older caches hold a typescript whose pnpm links point outside them.
+          cache_key_prefix: mise-v3
+        # mise installs typescript through pnpm, whose global virtual store lives
+        # under PNPM_HOME: inside mise's data dir, the cache keeps it, and a cache
+        # hit no longer leaves tsc a dangling link.
+        env:
+          PNPM_HOME: /home/runner/.local/share/mise/pnpm-home
       # The latest release on purpose: the run checks the mods against the Claude Code
       # people get today. Its build script fetches the native binary.
       - name: Install Claude Code (pnpm)
         # zizmor: ignore[adhoc-packages] the latest, unpinned on purpose (above)
+        # Claude Code's own PNPM_HOME, out of the mise cache: the latest each run.
+        env:
+          PNPM_HOME: ${{ github.workspace }}/../pnpm-home
         run: |
           echo "$PNPM_HOME/bin" >> "$GITHUB_PATH"
           PATH="$PNPM_HOME/bin:$PATH" pnpm add -g --allow-build=@anthropic-ai/claude-code @anthropic-ai/claude-code
@@ -140,3 +152,42 @@ jobs:
           just ci-verdict $RESULTS
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
+
+  release:
+    name: Release the changed plugins (just release)
+    needs: [required-checks]
+    # A red or cancelled required-checks skips it: only a green main is released.
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      # Whether main's head passed required-checks, when it is past this run's commit.
+      checks: read
+    timeout-minutes: 10
+    # One release at a time. A newer queued run cancels a pending one, so a run
+    # behind main's head releases the head when its required-checks is green
+    # already, and else leaves it to the head's own run (scripts/release.sh).
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The last release tags and every commit since them.
+          fetch-depth: 0
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        with:
+          version: 2026.10.3
+          install_args: just jq
+      # gh (on the runner) pushes and publishes with the job's token.
+      - run: gh auth setup-git
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: just release "$GITHUB_SHA"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898583+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898583+github-actions[bot]@users.noreply.github.com
