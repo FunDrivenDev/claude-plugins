@@ -587,6 +587,22 @@ describe('AFK', () => {
     await ui.unmount()
   })
 
+  const written = { path: '/h/written.md', title: null, lines: null, modified_at: null }
+
+  test('once a handover is written, Start, Edit and Go AFK share the row, the resume message beneath it', async ($, on) => {
+    const ui = await mountWith($, on, { relays: true, written, resume: 'Resume the panel work.' }, [])
+    expect(await buttonsIn(ui, 'handover:row')).toEqual(['handover:run', 'handover:edit', 'afk:on'])
+    expect((await ui.find({ key: 'handover:run' }))?.props.autoFocus).toBe(true)
+    expect((await ui.find({ key: 'handover:actions' }))?.text).toMatch(/Resume the panel work\.$/)
+    await ui.unmount()
+  })
+
+  test('without a resume message, the written handover offers Edit and Go AFK alone', async ($, on) => {
+    const ui = await mountWith($, on, { relays: true, written, resume: null }, [])
+    expect(await buttonsIn(ui, 'handover:row')).toEqual(['handover:edit', 'afk:on'])
+    await ui.unmount()
+  })
+
   test('on, Turn AFK off sits beside the AFK line', async ($, on) => {
     const ui = await mountWith($, on, { relays: true, afk: { goal: 'ship the pane', until: null } }, [])
     expect(await buttonsIn(ui, 'afk:line')).toEqual(['afk:off'])

@@ -10,7 +10,7 @@ The pane renders what the handover plugin answers: it runs the installed plugin'
 
 While a handover is under way the status line animates its phase: `◐ Winding down` (the tasks in progress finish), `✎··· Writing the handover`, then `● Ready for the next session`.
 
-The section's buttons sit side by side on one row of pills, beneath the status and the handover written, and wrap onto a second row where the pane is too narrow: `⚡ Hand over now` and `🌙 Go AFK` while no handover is under way; `🚀 Start with this prompt`, `✏️ Edit the prompt first` and `🌙 Go AFK` once one is written.
+The section's buttons sit side by side on one row of pills, beneath the status and the handover written, and wrap onto a second row where the pane is too narrow: `⚡ Hand over now` while a handover can start; `🚀 Start with this prompt` (with a resume message) and `✏️ Edit the prompt first` once one is written and the session has stopped; then `🌙 Go AFK` whenever AFK mode can be turned on.
 
 While no handover is under way, wherever the context stands, `⚡ Hand over now` starts the wind-down at once (`/handover:trigger`): the work in progress and its sub-agents finish, then the handover is written.
 
