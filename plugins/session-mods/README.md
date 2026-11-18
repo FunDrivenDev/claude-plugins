@@ -11,6 +11,8 @@ Two mods for a Claude Code session, drawn by the engine: a calm side pane with w
 /plugin install session-mods@fundrivendev
 ```
 
+Each version's changes are in the [`session-mods-v*` releases](https://github.com/FunDrivenDev/claude-plugins/releases?q=session-mods-v&expanded=true).
+
 The pane opens at session start when the terminal is at least 144 columns wide; `/session-panel` opens it at any width. The bar shows beneath the prompt from the start.
 
 ## The pane
