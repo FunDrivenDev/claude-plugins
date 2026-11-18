@@ -197,6 +197,9 @@ async function logCall($: EngineInterface, agentId: string, e: ToolCallInput, ra
   else if (ran.text) await addEntry($, agentId, { kind: 'result', text: ran.text })
 }
 
+/** A sub-agent's key in the pane: its id once started, before that its own draft's key, as a workflow run's agents share one toolUseId. */
+const agentKey = (a: Agent) => a.id ?? a.spawnKey ?? a.toolUseId
+
 /** Marks the main-loop step a refused or failed call belongs to. */
 async function flagStep($: EngineInterface, toolUseId: string, ran: ToolCallResult) {
   const flag: Step['flag'] = ran.deny !== undefined ? 'refused' : ran.isError ? 'failed' : undefined
@@ -899,7 +902,7 @@ export const register: Register = (on, options) => {
       }
 
       const card = (a: Agent, isDone: boolean) => {
-        const key = a.id ?? a.toolUseId
+        const key = agentKey(a)
         const isOpen = open === key
         const history = a.history.slice(isOpen ? -OPEN_HISTORY : -3)
         const earlier = a.history.length - history.length
@@ -1284,7 +1287,7 @@ export const register: Register = (on, options) => {
       }
 
       const agentLine = (a: Agent, isDone: boolean) => {
-        const key = a.id ?? a.toolUseId
+        const key = agentKey(a)
         if (open === key) return card(a, isDone)
         return (
           <Box key={key} flexDirection="column">
