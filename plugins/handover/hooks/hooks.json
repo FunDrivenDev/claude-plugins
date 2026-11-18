@@ -1,16 +1,16 @@
 {
   "hooks": {
     "PreToolUse": [
-      {"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/handover.py\" hook", "timeout": 10}]}
+      {"hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hookd-client\"", "timeout": 10}]}
     ],
     "PostToolUse": [
-      {"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/handover.py\" hook", "timeout": 10}]}
+      {"hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hookd-client\"", "timeout": 10}]}
     ],
     "SubagentStart": [
-      {"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/handover.py\" hook", "timeout": 10}]}
+      {"hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hookd-client\"", "timeout": 10}]}
     ],
     "SubagentStop": [
-      {"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/handover.py\" hook", "timeout": 10}]}
+      {"hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hookd-client\"", "timeout": 10}]}
     ],
     "Stop": [
       {"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/handover.py\" hook", "timeout": 300}]}

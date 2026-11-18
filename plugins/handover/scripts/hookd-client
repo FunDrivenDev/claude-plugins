@@ -1,0 +1,38 @@
+#!/bin/sh
+# A hot hook event (hooks.json) for the hook daemon, hookd.py: the session's environment, then a NUL, then the
+# hook's input go to the daemon's socket, and its answer comes back on stdout. With no daemon to connect to, the
+# cold `handover.py hook` runs the event and starts one. Any other failure is reported and never runs the event
+# again: past the connection, the daemon may have run its side effects.
+[ -n "$HANDOVER_CHILD" ] && exit 0
+scripts=${0%/*}
+root=${scripts%/*}
+input=$(cat)
+
+cold() {
+  printf '%s\n' "$input" | HANDOVER_HOOKD_START=1 python3 "$scripts/handover.py" hook
+  exit $?
+}
+
+[ -n "$CLAUDE_PLUGIN_DATA" ] && [ "$HANDOVER_HOOKD" != off ] || cold
+sock="$CLAUDE_PLUGIN_DATA/hookd-${root##*/}.sock"
+[ -S "$sock" ] || cold
+
+out=$({
+  HANDOVER_HOOK_PID=$PPID HANDOVER_HOOK_CWD=$PWD env -0
+  printf '\0%s' "$input"
+} | curl -s --max-time 9 --fail-with-body -H 'Expect:' -H 'Content-Type: application/octet-stream' \
+  --unix-socket "$sock" --data-binary @- http://hookd/hook)
+rc=$?
+case $rc in
+0) [ -z "$out" ] || printf '%s\n' "$out" ;;
+# 7: nobody listens; 2 and 127: a curl too old for --fail-with-body, or none. No request was sent.
+2 | 7 | 127) cold ;;
+22)
+  printf 'handover: the hook daemon failed:\n%s\n' "$out" >&2
+  exit 1
+  ;;
+*)
+  printf 'handover: the hook daemon did not answer (curl exit %s)\n' "$rc" >&2
+  exit 1
+  ;;
+esac

@@ -5,6 +5,7 @@ The handover is written by a separate `claude -p` call from a render of the
 transcript, never by the session whose context is full.
 
     handover.py hook                   hook entry point, hook input on stdin
+    handover.py hookd                  the hook daemon the hot events go through (hookd.py), started by the hooks
     handover.py write --session ID     write or refresh the session's handover now
     handover.py request --session ID   the session asks to hand over (the handover and relay skills)
     handover.py status [--session ID]  state of one session, or of all of them
@@ -91,6 +92,7 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import hookd
 import notify as N
 import relay as R
 import session as S
@@ -127,6 +129,10 @@ WAKE_SECONDS = 20
 STARTUP_POINTER_SECONDS = 24 * 3600
 LIVE_SECONDS = 7 * 24 * 3600
 
+
+# The parent pid of the hook's command, which the hook daemon's client sends (hookd.py): in the daemon, the
+# hook runs in a process that is not under claude.
+HOOK_PID = None
 
 PLUGIN_JSON = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".claude-plugin", "plugin.json")
 
@@ -674,7 +680,7 @@ def running_shells(inp):
 
 def session_process():
     """The claude process this hook runs under, which runs the session's background commands."""
-    pid = os.getppid()
+    pid = HOOK_PID or os.getppid()
     for _ in range(6):
         p = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)], capture_output=True, text=True, check=False)
         parts = p.stdout.split(None, 1)
@@ -2744,7 +2750,7 @@ def claude_pid():
     if os.environ.get("HANDOVER_CLAUDE_PID"):
         # A detached watchdog, no longer under claude: the hook that started it found the process.
         return int(os.environ["HANDOVER_CLAUDE_PID"])
-    loop_pid, pid = os.environ.get("HANDOVER_RELAY_PID"), os.getpid()
+    loop_pid, pid = os.environ.get("HANDOVER_RELAY_PID"), HOOK_PID or os.getpid()
     for _ in range(10):
         p = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)], capture_output=True, text=True, check=False)
         ppid = p.stdout.strip()
@@ -3327,6 +3333,9 @@ def cmd_hook(_args):
         return 0
     inp = json.load(sys.stdin)
     event = inp.get("hook_event_name")
+    # A cold SessionStart, or a hot event its client could not send to the daemon, starts the daemon.
+    if event == "SessionStart" or os.environ.pop("HANDOVER_HOOKD_START", None):
+        hookd.ensure(sys.modules[__name__])
     if event == "SessionStart":
         import_old_data()
         if inp.get("session_id"):
@@ -4050,6 +4059,7 @@ def main():
     ap.add_argument("--data-dir", help="plugin data directory, for callers outside a hook")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("hook")
+    sub.add_parser("hookd", help="the hook daemon the hot events go through (hookd.py)")
     sub.add_parser("guidance", help="SessionStart hook: the background-command tags, and the delegation guidance")
     w = sub.add_parser("await-timeout", help="watchdog of an [await] command the wind-down waits for")
     w.add_argument("--session", required=True)
@@ -4130,6 +4140,7 @@ def main():
         os.environ["CLAUDE_PLUGIN_DATA"] = args.data_dir
     return {
         "hook": cmd_hook,
+        "hookd": lambda _args: hookd.serve(sys.modules[__name__]),
         "write": cmd_write,
         "request": cmd_request,
         "status": cmd_status,
