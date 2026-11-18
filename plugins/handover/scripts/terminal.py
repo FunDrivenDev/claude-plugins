@@ -13,10 +13,10 @@ One query besides: `label()`, the name a dispatcher or the user gave the session
 named it itself or the adapter cannot tell. The plugin keeps that label in the titles it sets.
 
 An adapter whose host can end a session and restore its pane sets `recovers`, and answers `instance()`, what
-identifies its server now, and `survey(instance)`: "gone", the server does not answer; "restarted", another
-server than `instance` holds the pane; "ended", anything else. Only Rex does: handover.py resumes a restarted
-session by typing `toolbox rex-session run --resume` (resume_command), so another adapter that set `recovers`
-would need its own resume first; the contract's Selection case pins this.
+identifies its server now, and `survey(instance)`: "gone", the server does not answer, or not in time;
+"restarted", another server than `instance` holds the pane; "ended", anything else. Only Rex does: handover.py
+resumes a restarted session by typing `toolbox rex-session run --resume` (resume_command), so another adapter
+that set `recovers` would need its own resume first; the contract's Selection case pins this.
 
 `detect()` picks the adapter from the `terminal` option and the environment, innermost host first, and
 `adapter()` rebuilds one from its name and address, for the detached half of the relay:
@@ -163,7 +163,8 @@ class Rex(Terminal):
         super().__init__(address)
         self.session, _, self.block = address.partition(" ")
 
-    def _rex(self, *args, stdin=None):
+    def _call(self, *args, stdin=None):
+        """rex's answer, None when it gives none in time (a loaded machine can stall it past TIMEOUT)."""
         with contextlib.suppress(OSError, subprocess.SubprocessError):
             return subprocess.run(
                 ["rex", "--autostart=false", *args],
@@ -171,9 +172,13 @@ class Rex(Terminal):
                 capture_output=True,
                 text=True,
                 timeout=TIMEOUT,
-                check=True,
-            ).stdout
+                check=False,
+            )
         return None
+
+    def _rex(self, *args, stdin=None):
+        p = self._call(*args, stdin=stdin)
+        return p.stdout if p and p.returncode == 0 else None
 
     def _keys(self, *keys):
         return self._rex("send-key", "-s", self.session, "-b", self.block, *keys) is not None
@@ -202,7 +207,14 @@ class Rex(Terminal):
         now = self.instance()
         if not now:
             return "gone"
-        blocks = self._json("block", "ls", "-s", self.session, "--json").get("blocks") or []
+        listed = self._call("block", "ls", "-s", self.session, "--json")
+        if listed is None:
+            # No answer in time is no news of the pane: under load, counting it as a closed tab ended a restored run.
+            return "gone"
+        blocks = []
+        if listed.returncode == 0:
+            with contextlib.suppress(ValueError, AttributeError):
+                blocks = json.loads(listed.stdout).get("blocks") or []
         held = any(b.get("block_id") == self.block for b in blocks)
         return "restarted" if held and now != instance else "ended"
 

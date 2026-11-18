@@ -597,6 +597,11 @@ class Recovery(unittest.TestCase):
         except FileNotFoundError:
             return []
 
+    def ended(self):
+        """The reason the run ended, for a failure's message."""
+        with open(os.path.join(self.data, "metrics.jsonl"), encoding="utf-8") as f:
+            return [e.get("reason") for e in map(json.loads, f) if e["event"] == "afk_ended"]
+
     def test_a_restart_resumes_the_run_in_the_restored_pane(self):
         self.assertTrue(wait_until(lambda: self.host.persisted(self.pane), 15), "the server never saved the pane")
         self.host.crash()
@@ -604,7 +609,7 @@ class Recovery(unittest.TestCase):
         self.assertIn("recovering", self.state())
         self.host.start()
         self.assertTrue(wait_until(lambda: "recovering" not in self.state(), 30), self.events())
-        self.assertIn("afk_recovered", self.events())
+        self.assertIn("afk_recovered", self.events(), self.ended())
         with open(os.path.join(self.root, "toolbox.args"), encoding="utf-8") as f:
             args = f.read().splitlines()
         self.assertEqual(

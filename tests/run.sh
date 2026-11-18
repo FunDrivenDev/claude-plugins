@@ -96,29 +96,55 @@ for sh in "${shells[@]}"; do
   # the background, and a slow segment never holds the line up.
   tmp="$WORK/tmp-lazy-$RANDOM"; mkdir -p "$tmp"
   lazy() { HOME=$home TMPDIR=$tmp "$@" "$sh" "$PLUGIN/statusline.sh" <<<"$payload" | plain; }
+  # settle: waits for the background runs the lazy line started, which outlive it. One still starting the segment
+  # makes Linux refuse to rewrite it ("Text file busy"), and one still writing its value keeps `rm -rf` from
+  # emptying the directory.
+  settle() {
+    local f pid deadline=$((SECONDS + 20))
+    for f in "$tmp"/claude-statusline-*/*.pid; do
+      if ! [ -f "$f" ] || ! read -r pid <"$f"; then continue; fi
+      while kill -0 "$pid" 2>/dev/null; do
+        (( SECONDS < deadline )) || { fail "lazy: a background run outlived 20 s"; return 0; }
+        sleep 0.1
+      done
+    done
+  }
   out=$(lazy env)
   expect "lazy: a placeholder before the first segment value" "$out" "53% │ …"
   expect "lazy: a placeholder before the first git value" "$out" "⎇ …"
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    # A value lands by an atomic rename once computed: its file is complete.
-    done=0
-    for f in "$tmp"/claude-statusline-*/seg-* "$tmp"/claude-statusline-*/git-*; do
-      case $f in *.pid) ;; *) [ -f "$f" ] && done=$((done + 1)) ;; esac
-    done
-    [ "$done" -ge 2 ] && break
-    sleep 0.2
-  done
+  settle
+  # The countdowns are the payload's reset times minus the clock at render, in whole minutes, so two renders a
+  # moment apart can differ: a synchronous run just before and one just after bracket the lazy one, which
+  # matches either, whatever minute boundary the three straddle.
+  before=$(run env <<<"$payload")
   out=$(lazy env)
+  after=$(run env <<<"$payload")
   expect "lazy: the segment computed in the background" "$out" "53% │ segment line"
   expect "lazy: the branch computed in the background" "$out" "⎇ feat/smoke"
-  expect "lazy: the same line as a synchronous run" "$out" "$(run env <<<"$payload")"
+  if [ "$out" = "$before" ] || [ "$out" = "$after" ]; then
+    pass "lazy: the same line as a synchronous run"
+  else
+    fail "lazy: the same line as a synchronous run" "wanted: $before"$'\n'"or:     $after"$'\n'"got:    $out"
+  fi
 
-  printf '#!/bin/sh\nsleep 3; echo late\n' >"$WORK/seg-plugin/statusline-segment"
+  settle
+  # A slow segment: it answers once the test lets it ($WORK/go), or after 20 s.
+  rm -f "$WORK/go"
+  printf '#!/bin/sh\ni=0; while [ ! -f "%s" ] && [ $i -lt 200 ]; do sleep 0.1; i=$((i + 1)); done; echo late\n' \
+    "$WORK/go" >"$WORK/seg-plugin/statusline-segment"
   rm -f "$tmp"/claude-statusline-*/seg-*
-  start=$SECONDS
   out=$(lazy env)
-  if (( SECONDS - start < 2 )); then pass "lazy: a slow segment does not delay the line"; else fail "lazy: a slow segment does not delay the line"; fi
+  slow=0
+  for f in "$tmp"/claude-statusline-*/seg-*.pid; do
+    if [ -f "$f" ] && read -r pid <"$f" && kill -0 "$pid" 2>/dev/null; then slow=1; fi
+  done
+  if (( slow )); then pass "lazy: a slow segment does not delay the line"; else fail "lazy: a slow segment does not delay the line"; fi
   expect "lazy: and shows its placeholder meanwhile" "$out" "53% │ …"
+  touch "$WORK/go"
+  settle
+  late=""
+  for f in "$tmp"/claude-statusline-*/seg-*; do case $f in *.pid) ;; *) late=$(cat "$f") ;; esac; done
+  expect "lazy: then its value, once computed" "$late" "late"
   printf '#!/bin/sh\ncat >/dev/null; echo "segment line"\n' >"$WORK/seg-plugin/statusline-segment"
 done
 
