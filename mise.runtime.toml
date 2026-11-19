@@ -1,0 +1,6 @@
+# The language runtimes, Renovate's Runtime realm (rlvdx/renovate default.json,
+# FunDrivenDev/renovate-config): every other tool stays in mise.toml, the Tooling
+# realm. Loaded always through .miserc.toml; locked in mise.runtime.lock.
+
+[tools]
+node = "24.22.3"

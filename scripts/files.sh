@@ -18,7 +18,7 @@ case "$scope" in
     else
       files=$( { git diff --name-only --diff-filter=d "$base"; git ls-files --others --exclude-standard; } | sort -u)
       # A change to the toolchain can change any result: check everything then.
-      if printf '%s\n' "$files" | grep -qE '^(mise\.(toml|lock)|[Jj]ustfile|hk\.pkl|biome\.json|ruff\.toml|scripts/.*\.sh|\.github/workflows/.*)$'; then
+      if printf '%s\n' "$files" | grep -qE '^(mise(\.runtime)?\.(toml|lock)|\.miserc\.toml|[Jj]ustfile|hk\.pkl|biome\.json|ruff\.toml|scripts/.*\.sh|\.github/workflows/.*)$'; then
         files=$(git ls-files --cached --others --exclude-standard)
       fi
     fi ;;
