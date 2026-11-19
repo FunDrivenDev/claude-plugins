@@ -1,0 +1,2 @@
+# Loads mise.runtime.toml beside mise.toml in every shell, hook and CI job.
+env = ["runtime"]
