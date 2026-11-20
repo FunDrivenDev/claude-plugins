@@ -10,7 +10,7 @@ It is a mod: a plugin of function hooks, drawn by the engine (no shell script, n
 
 ## Settings
 
-The bar's one option, `cacheTtl`, is described in [Bar](bar.md#configuration). The pane's one option is `situation`, below. The pane writes no state file. It reads Claude Code's `plansDirectory` and the handover plugin's `handover_dir` and token thresholds. The **Config** tab lists each one as in effect, `situation` included, with what it does, and its default where it has one.
+The bar's one option, `cacheTtl`, is described in [Bar](bar.md#configuration). The pane's options are `situation` and `rename`, below. The pane writes no state file. It reads Claude Code's `plansDirectory` and the handover plugin's `handover_dir` and token thresholds. The **Config** tab lists each one as in effect, `situation` included, with what it does, and its default where it has one.
 
 ### Situation
 
@@ -22,6 +22,22 @@ To turn it on, set it in Claude Code's user settings (`~/.claude/settings.json`,
 {
   "pluginConfigs": {
     "session-mods@fundrivendev": { "options": { "situation": true } }
+  }
+}
+```
+
+It applies from the next session.
+
+### Rename
+
+`rename` (boolean, default `true`) lets the pane's title name the session: the agent gets the `session_title` tool and its first-prompt reminder, and the title, the agent's or a handover's, goes to `/rename`, which names the session in `/resume` and the terminal tab. See [Top bar](top-bar.md#title).
+
+Turn it off when another tool names your sessions, so the two never fight over the name: the tool and the reminder are gone, no `/rename` runs, and the title (a handover's, else `Session`) only heads the pane. Everything else draws as before.
+
+```json
+{
+  "pluginConfigs": {
+    "session-mods@fundrivendev": { "options": { "rename": false } }
   }
 }
 ```
