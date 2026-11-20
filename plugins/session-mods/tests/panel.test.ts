@@ -821,6 +821,19 @@ test('a session without a title of its own reminds the agent once, and no more o
   expect(reminded()).toEqual([true, false, false])
 })
 
+test('with the rename option off, a session without a title gets no reminder', { options: { rename: false } }, async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.id', () => ({ value: 's1' }) as never)
+  on('command.list', () => ({ value: [] }) as never)
+  const contexts: (readonly string[] | undefined)[] = []
+  on('prompt.submit', ($, e) => {
+    contexts.push(e.context)
+    return { text: e.text }
+  })
+  await $.prompt.submit(typed('Fix the panel'))
+  expect(contexts.map(c => (c ?? []).some(line => line.includes('session_title')))).toEqual([false])
+})
+
 test('with the rename option off, the title heads the pane but names nothing: no tool, no reminder, no /rename', { options: { rename: false } }, async ($, on) => {
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
