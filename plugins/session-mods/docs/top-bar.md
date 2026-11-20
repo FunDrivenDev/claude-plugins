@@ -11,6 +11,7 @@ The session's title, its overall topic in a few words, sits on a line of its own
 - The main agent names the topic with the plugin's `session_title` tool, once the first task is clear and again only when what the session is about changes significantly. Once its turn ends, the title also goes to `/rename`, which names the session in `/resume` and the terminal tab.
 - A session started from a handover takes the handover's title (its front matter `summary`, else its `# Handover:` heading) as soon as it has loaded, renamed at once, until the agent names it.
 - A session that has no title of its own yet (Claude Code carries the previous name through `/clear` and a plugin reload) has its first typed prompt carry a one-line reminder to set one.
+- With the `rename` option off, none of this names the session: no tool, no reminder, no `/rename`; the title, a handover's, else `Session`, only heads the pane. See [Configuration](configuration.md#rename).
 
 ## Tabs
 

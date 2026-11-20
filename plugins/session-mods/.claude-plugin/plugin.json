@@ -34,6 +34,12 @@
       "title": "Situation section",
       "description": "Show the Situation section on Main: the live state of the session's topic, read from notes in ~/Notes/claude, the terminal session's tabs and GitHub. Off by default.",
       "default": false
+    },
+    "rename": {
+      "type": "boolean",
+      "title": "Rename the session",
+      "description": "Name the session (/resume, the terminal tab) with the pane's title, and give the agent the session_title tool and its first-prompt reminder. Off, the title only heads the pane, so another tool can own the session's name. On by default.",
+      "default": true
     }
   }
 }

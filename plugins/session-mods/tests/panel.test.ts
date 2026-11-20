@@ -821,6 +821,70 @@ test('a session without a title of its own reminds the agent once, and no more o
   expect(reminded()).toEqual([true, false, false])
 })
 
+test('with the rename option off, a session without a title gets no reminder', { options: { rename: false } }, async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.id', () => ({ value: 's1' }) as never)
+  on('command.list', () => ({ value: [] }) as never)
+  const contexts: (readonly string[] | undefined)[] = []
+  on('prompt.submit', ($, e) => {
+    contexts.push(e.context)
+    return { text: e.text }
+  })
+  await $.prompt.submit(typed('Fix the panel'))
+  expect(contexts.map(c => (c ?? []).some(line => line.includes('session_title')))).toEqual([false])
+})
+
+test('with the rename option off, the title heads the pane but names nothing: no tool, no reminder, no /rename', { options: { rename: false } }, async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
+  const state = { on: true, written: null, loaded: { path: '/h/loaded.md', title: 'Ship the session panel', lines: 12, modified_at: 1 }, resume: RESUME }
+  on('process.run', ($, e) => {
+    const answer = e.argv.includes(HANDOVER_STATE) ? { exitCode: 0, stdout: JSON.stringify(state) } : { exitCode: 1, stdout: '' }
+    return { value: { stderr: '', ...answer } } as never
+  })
+  on('session.id', () => ({ value: 's1' }) as never)
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.model', () => ({ value: 'opus' }))
+  on('turn.complete', ($, e) => ({ text: e.answer }))
+  on('command.register', () => ({ value: undefined }) as never)
+  on('command.list', () => ({ value: [{ name: 'rename' }] }) as never)
+  on('session.messages', () => ({ value: [] }))
+  on('ui.open', () => ({ value: undefined }) as never)
+  on('env.get', () => ({ value: undefined }))
+  on('settings.read', () => ({ value: {} }))
+  const tools: string[] = []
+  on('tool.register', ($, e) => {
+    tools.push(String((e as unknown as { name: string }).name))
+    return { value: undefined } as never
+  })
+  const ran: string[] = []
+  on('command.run', ($, e) => {
+    ran.push(`/${e.command}${e.args ? ` ${e.args}` : ''}`)
+    return { text: '' } as never
+  })
+  const contexts: (readonly string[] | undefined)[] = []
+  on('prompt.submit', ($, e) => {
+    contexts.push(e.context)
+    return { text: e.text }
+  })
+
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  await $.prompt.submit(typed('Fix the panel'))
+  await $.turn.complete({ answer: 'Done', durationMs: 5, isAborted: false, turnId: 't', reason: 'answer' } as never)
+  expect(tools).not.toContain('session_title')
+  expect(contexts.map(c => (c ?? []).some(line => line.includes('session_title')))).toEqual([false])
+  const set = await $.tool.call({ tool: 'mcp__session-mods__session_title', title: 'Panel title fix' } as never)
+  expect(set.deny).toContain('rename option is off')
+
+  const ui = await $.ui.mount({ plugin: 'session-mods', surface: 'terminal', ...PANE })
+  expect(await ui.find({ text: /^Ship the session panel$/ })).toBeDefined()
+  await ui.press({ key: 'tab:config' })
+  expect(await ui.find({ text: /^rename$/ })).toBeDefined()
+  expect(await ui.find({ text: /^off$/ })).toBeDefined()
+  await ui.unmount()
+  expect(ran.filter(c => c.startsWith('/rename'))).toEqual([])
+})
+
 test('the Help tab explains each item beside an example of it, in place of the rest', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))

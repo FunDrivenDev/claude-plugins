@@ -441,6 +441,8 @@ let situationRun = 0
 
 /** The `situation` option: off (its default), the section is neither drawn nor read. Set by `register`. */
 let situationOn = false
+/** The `rename` option: on (its default), the session's title also names the session (`/rename`), and the agent gets the session_title tool and its reminder. Off, the title only heads the pane, so another tool can own the session's name. Set by `register`. */
+let renameOn = true
 
 async function refreshSituation($: EngineInterface) {
   if (!situationOn) return
@@ -588,6 +590,7 @@ async function titleFromHandover($: EngineInterface) {
   if (!title) return
   await update($, titled, t => ({ ...t, set: sid }))
   await update($, topic, () => title)
+  if (!renameOn) return
   const canRename = (await $.command.list()).some(c => c.name === 'rename')
   if (canRename) void $.command.run({ command: 'rename', args: title }).catch(() => undefined)
 }
@@ -619,7 +622,7 @@ export async function startPanel($: StartArgs[0], e: StartArgs[1]): Promise<void
   await update($, expanded, () => null)
   await update($, view, () => 'overview')
   await $.command.register({ name: 'session-panel', description: 'Open the session overview pane' })
-  await $.tool
+  if (renameOn) await $.tool
     .register({
     name: TITLE_TOOL,
     description: TITLE_TOOL_DESCRIPTION,
@@ -726,6 +729,7 @@ export async function* stepPanel($: StepArgs[0], e: StepArgs[1], next: StepArgs[
 
 export const register: Register = (on, options) => {
   situationOn = options.situation === true
+  renameOn = options.rename !== false
   {
 
     on('command.run', { command: 'session-panel' }, async $ => {
@@ -745,7 +749,7 @@ export const register: Register = (on, options) => {
         await scanPrompt($, text)
         const sid = await $.session.id()
         const t = await read($, titled)
-        if (t.set !== sid && t.reminded !== sid) {
+        if (renameOn && t.set !== sid && t.reminded !== sid) {
           await update($, titled, cur => ({ ...cur, reminded: sid }))
           return next({ ...e, context: [...(e.context ?? []), TITLE_REMINDER] })
         }
@@ -828,6 +832,7 @@ export const register: Register = (on, options) => {
     on('tool.call', { tool: TITLE_TOOL_ID }, async ($, e) => {
       const title = cleanTitle(String((e as unknown as Record<string, unknown>).title ?? ''))
       if (!title) return { deny: 'An empty title: give the overall topic in 3 to 7 words.' }
+      if (!renameOn) return { deny: 'The session-mods rename option is off: another tool names this session.' }
       await update($, topic, () => title)
       const sid = await $.session.id()
       await update($, titled, t => ({ ...t, set: sid }))
@@ -1948,6 +1953,7 @@ export const register: Register = (on, options) => {
           {section('session-mods plugin')}
           {whereSet('Its options: pluginConfigs["session-mods@fundrivendev"].options in settings.json, or /config.')}
           {configRow('situation', 'situation', situationOn ? 'on' : null, 'off', "Shows the Situation section on Main, read from the topic's notes, its terminal session's tabs and GitHub.")}
+          {configRow('rename', 'rename', renameOn ? null : 'off', 'on', "Names the session (/resume, the terminal tab) with the pane's title, and gives the agent the session_title tool and its first-prompt reminder. Off, the title only heads the pane.")}
         </Box>
       )
 

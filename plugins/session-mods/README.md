@@ -40,8 +40,9 @@ How long the session has run, when the prompt cache expires, how full the contex
 |---|---|---|---|
 | `cacheTtl` | `1h`, `5m` | `1h` | The prompt-cache lifetime the bar's countdown starts from; a model switch reports the real one. |
 | `situation` | `true`, `false` | `false` | Shows the Situation section on Main. Off, nothing is read for it. |
+| `rename` | `true`, `false` | `true` | The pane's title also names the session (`/rename`), and the agent gets the `session_title` tool and its reminder. Off, the title only heads the pane, so another tool can own the session's name. |
 
-Besides `situation`, the pane reads Claude Code's `plansDirectory` and the handover plugin's settings. See [Configuration](docs/configuration.md), which also says how to turn Situation on.
+Besides `situation` and `rename`, the pane reads Claude Code's `plansDirectory` and the handover plugin's settings. See [Configuration](docs/configuration.md), which also says how to turn Situation on and renaming off.
 
 ## Documentation
 
