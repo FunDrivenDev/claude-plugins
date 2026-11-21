@@ -418,6 +418,9 @@ class BashGuard(Hook):
             "nice git remote set-url origin /work/repo && git push origin HEAD:main",
             "sh -c 'git -C /tmp/mktemp/src remote set-url origin /work/repo' && git push origin HEAD:main",
             "timeout 9 git config remote.pushDefault up; git push",
+            "git config branch.main.pushRemote https://github.com/x/y; git push",
+            "git config branch.main.remote https://github.com/x/y; git push",
+            "git config --local some.key x; git push origin",
         ):
             self.assertTrue(self.blocks(clone + tail), tail)
 
@@ -456,6 +459,8 @@ class BashGuard(Hook):
             "d=/tmp/x; rm -rf '$d'",
             "d=/tmp/x; rm -rf \\$d",
             "cd /tmp/x; PWD=/work/repo; rm -rf $PWD",
+            'd=$(mktemp -d) && cd "$d" && echo "it\'s" > "$HOME/x" && echo "\'"',
+            'd=$(mktemp -d) && cd "$d" && echo "it\'s" > $HOME/x; echo "\'"',
         ):
             self.assertTrue(self.blocks(c), c)
 

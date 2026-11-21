@@ -60,13 +60,17 @@ OPAQUE = re.compile(
 )
 # What can send a push elsewhere, wherever it sits in the line (a git run through nice, sh -c, …).
 REDIRECTS_PUSH = re.compile(
-    r"\b(?:set-url|rename|insteadOf|pushInsteadOf|pushurl|pushDefault|gitdir|hooksPath|include(?:If)?|remote\.[\w-]+\.\w)"
+    r"\b(?:set-url|rename|insteadOf|pushInsteadOf|pushurl|pushDefault|gitdir|hooksPath|include(?:If)?|remote\.[\w-]+\.\w|branch\.\S+\.(?:remote|pushRemote|merge))"
     r"|--(?:global|system|file)\b",
     re.IGNORECASE,
 )
 DECLARE = {"export", "local", "declare", "readonly", "typeset"}
 SUBSHELL = {"|", "|&", "&", "("}
 LITERAL_DOLLAR = "\x00"
+SAFE_CONFIG = re.compile(
+    r"^(?:user|author|committer|commit|gpg|init|advice|color|tag|log|diff|core\.(?:autocrlf|filemode|quotepath|editor|pager))\.",
+    re.IGNORECASE,
+)
 # Git's options before the verb that leave the repository and its remotes as -C and the folder give them.
 GIT_PLAIN_OPTIONS = {"--no-pager", "-P", "--no-optional-locks", "--literal-pathspecs"}
 # The options of git clone, remote and push that take the next word as their value.
@@ -230,6 +234,22 @@ def temp_path(path, session=None):
     return inside and ".." not in path.split("/")
 
 
+def literal_dollars(text):
+    """The text with each `$` that names no variable (in single quotes, or escaped) replaced by LITERAL_DOLLAR."""
+    out, quote, i = [], None, 0
+    while i < len(text):
+        c = text[i]
+        if quote != "'" and c == "\\" and i + 1 < len(text):
+            out.append(c + (LITERAL_DOLLAR if text[i + 1] == "$" else text[i + 1]))
+            i += 2
+            continue
+        if c in "'\"" and quote in (None, c):
+            quote = None if quote else c
+        out.append(LITERAL_DOLLAR if c == "$" and quote == "'" else c)
+        i += 1
+    return "".join(out)
+
+
 def segments(command):
     """The simple commands of a command line, as token lists, its heredoc bodies and quotes resolved; `mktemp` reads
     /tmp/mktemp and `pwd` reads $PWD, which bash_writes_outside_temp expands. Each comes with whether it runs in the
@@ -238,7 +258,7 @@ def segments(command):
     bare = MKTEMP.sub("/tmp/mktemp", bare)
     bare = PWD.sub("$PWD", bare)
     # A `$` in single quotes or escaped names no variable: hide it from bash_writes_outside_temp's expansion.
-    bare = re.sub(r"'[^']*'", lambda m: m.group(0).replace("$", LITERAL_DOLLAR), bare).replace("\\$", LITERAL_DOLLAR)
+    bare = literal_dollars(bare)
     lex = shlex.shlex(bare, posix=True, punctuation_chars="();<>|&\n")
     lex.whitespace = " \t\r"
     lex.whitespace_split = True
@@ -380,6 +400,11 @@ class Shell:
                 i += 2 if words[i] == "-c" else 1
         plain &= not any(ASSIGN.match(t) for t in seg)  # GIT_DIR=… git push
         verb = words[i] if i < len(words) else ""
+        if verb == "config":
+            # Only an identity or a display setting leaves the remotes alone.
+            key = next((a for a in words[i + 1 :] if not a.startswith("-")), "")
+            self.tainted |= not SAFE_CONFIG.match(key)
+            return None
         if verb == "remote" and not (len(words) > i + 1 and words[i + 1] in ("add", "set-url")):
             self.tainted |= len(words) > i + 1 and words[i + 1] not in ("-v", "show", "get-url")
             return None
