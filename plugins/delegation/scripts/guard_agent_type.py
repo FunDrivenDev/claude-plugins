@@ -4,8 +4,10 @@
   the plugin's typed read-only roles are named instead.
 - Bash: the plugin's own agents (agent_type delegation:*) are read-only, so a command that writes (measure's
   bash_writes, the definition M2 uses) is caught, unless every write lands in a temporary folder (a `mktemp -d`
-  one, $TMPDIR, /tmp): the agents' throwaway reproductions. A push or a gh write is caught even there. The main
-  session's commands (no agent_type) and other agents' are never touched.
+  one, $TMPDIR, /tmp, the session's own scratchpad, or a variable set from one): the agents' throwaway
+  reproductions. A gh write is caught even there, and so is a push, unless its remote is a temporary path or a name
+  this command line's clone or remote add set to one. The main session's commands (no agent_type) and other
+  agents' are never touched.
 
 Mode, from DELEGATION_GUARD_MODE (a session's override), else the plugin's guard_mode option (the hook environment,
 then settings.json), else off. An invalid override is ignored with a one-line warning on stderr (exit 0: Claude Code
@@ -42,10 +44,23 @@ Writing (edits, tests, commits) stays in this session: do it here."""
 BASH_REASON = """Bash write refused: {type} is read-only, and this command changes a file, the repo or a remote.
 Run a throwaway reproduction in a fresh folder: d=$(mktemp -d) && cd "$d" && ..., removed before you report.
 Anything else goes into your report (under Repro or Verify) for the main session to run."""
-# A temporary folder: /tmp, macOS's per-user /var/folders, $TMPDIR; `mktemp -d` and the variables set from it are
-# rewritten to /tmp/mktemp before the check.
+# A temporary folder: /tmp, macOS's per-user /var/folders, $TMPDIR, the session's scratchpad; `mktemp -d` is rewritten
+# to /tmp/mktemp before the check, and a variable set from a temporary path is one.
 TEMP_ROOT = re.compile(r"^(?:/private)?/(?:tmp|var/folders)(?:/|$)")
 MKTEMP = re.compile(r"\$\(\s*mktemp\b[^)]*\)|`\s*mktemp\b[^`]*`")
+PWD = re.compile(r"\$\(\s*pwd(?:\s+-[LP])?\s*\)|`\s*pwd(?:\s+-[LP])?\s*`")
+VAR = re.compile(r"\$(?:\{(\w+)\}|(\w+))")
+ASSIGN = re.compile(r"^(\w+)=(.*)$", re.DOTALL)
+DECLARE = {"export", "local", "declare", "readonly", "typeset"}
+# The options of git clone, remote and push that take the next word as their value.
+GIT_VALUE_OPTIONS = {
+    "clone": {"-b", "--branch", "-o", "--origin", "-c", "--config", "--depth", "-u", "--upload-pack", "-j", "--jobs"}
+    | {"--reference", "--template", "--separate-git-dir", "--filter"},
+    "remote": {"-t", "-m"},
+    "push": {"-o", "--push-option", "--receive-pack", "--exec", "--repo"},
+}
+# A URL or an scp-like host:path: a remote that is no local path.
+URL = re.compile(r"^(?!file://)[\w+.-]+://|^[^/]*:")
 SEPARATORS = {";", "&&", "||", "|", "|&", "&", "(", ")", "\n"}
 REDIRECTS = {">", ">>", ">|", "&>", "&>>"}
 PREFIXES = {"sudo", "env", "command", "nohup", "time", "then", "do", "else", "if", "while", "until", "!", "{"}
@@ -184,21 +199,25 @@ def current_skill(transcript):
     return skill
 
 
-def temp_path(path):
-    """Whether a path sits in a temporary folder, with no `..` to climb out of it."""
+def temp_path(path, session=None):
+    """Whether a path sits in a temporary folder, or in the session's own scratchpad, with no `..` to climb out."""
     path = os.path.expandvars(path)
     tmpdir = os.environ.get("TMPDIR", "").rstrip("/")
     inside = bool(TEMP_ROOT.match(path)) or bool(tmpdir and (path == tmpdir or path.startswith(tmpdir + "/")))
+    if session and not inside:
+        # Claude Code's scratchpad, <tmp>/claude-<uid>/<project>/<session id>/scratchpad: the session ID keeps every
+        # other session's out.
+        scratch = rf"^/.*/claude-{os.getuid()}/[^/]+/{re.escape(session)}/scratchpad(?:/|$)"
+        inside = bool(re.match(scratch, path))
     return inside and ".." not in path.split("/")
 
 
 def segments(command):
-    """The simple commands of a command line, as token lists, its heredoc bodies and quotes resolved."""
+    """The simple commands of a command line, as token lists, its heredoc bodies and quotes resolved; `mktemp` reads
+    /tmp/mktemp and `pwd` reads $PWD, which bash_writes_outside_temp expands."""
     bare = measure.HEREDOC.sub(lambda m: m.group(3) + "\n", command)
-    names = set(re.findall(r"\b(\w+)=[\"']?(?:" + MKTEMP.pattern + ")", bare)) | {"TMPDIR"}
     bare = MKTEMP.sub("/tmp/mktemp", bare)
-    for name in names:
-        bare = re.sub(r"\$\{?" + name + r"\}?(?!\w)", "/tmp/mktemp", bare)
+    bare = PWD.sub("$PWD", bare)
     lex = shlex.shlex(bare, posix=True, punctuation_chars="();<>|&\n")
     lex.whitespace = " \t\r"
     lex.whitespace_split = True
@@ -255,25 +274,138 @@ def targets(seg, writes):
     return out
 
 
-def bash_writes_outside_temp(command, cwd):
+class Shell:
+    """What a command line has set so far, read in order: the folder it runs in when that is a temporary one, the
+    variables that hold a temporary path, and the remotes (repo folder, name) that point into a temporary folder."""
+
+    def __init__(self, cwd, session):
+        self.session = session
+        self.here = os.path.normpath(cwd) if cwd and self.temp(cwd) else None
+        self.vars = {"TMPDIR": "/tmp/mktemp"}
+        self.remotes = set()
+
+    def temp(self, path):
+        return temp_path(path, self.session)
+
+    def expand(self, tok):
+        """The word with the variables known to hold a temporary path (and $PWD in one) replaced; others stay."""
+        known = dict(self.vars, **({"PWD": self.here} if self.here else {}))
+        return VAR.sub(lambda m: known.get(m.group(1) or m.group(2), m.group(0)), tok)
+
+    def resolve(self, path):
+        """The temporary folder a path names, from the one the command runs in when it is relative, else None."""
+        if not path or "$" in path:  # a variable not known to hold a temporary path
+            return None
+        if not path.startswith(("/", "~", "$")):
+            if not self.here or ".." in path.split("/"):
+                return None
+            path = self.here + "/" + path
+        return os.path.normpath(path) if self.temp(path) else None
+
+    def assign(self, words):
+        """A segment of assignments only: each name now holds its temporary path, or no longer holds one."""
+        for w in words:
+            m = ASSIGN.match(w)
+            if m:
+                value = self.resolve(self.expand(m.group(2))) if m.group(2).startswith(("/", "$", "~")) else None
+                if value:
+                    self.vars[m.group(1)] = value
+                else:
+                    self.vars.pop(m.group(1), None)
+
+    def cd(self, words):
+        dest = next((a for a in words[1:] if not a.startswith("-")), "")
+        self.here = self.resolve(dest)
+
+    def git_push_is_temp(self, words):
+        """A git clone, remote add or set-url is recorded; a git push is a temporary write when its remote is a
+        temporary path, or a name a clone or a remote add set to one in this command line. None: not one of those."""
+        repo, i = self.here, 1
+        while i < len(words) and words[i].startswith("-"):
+            if words[i] in ("-C", "-c") and i + 1 < len(words):
+                repo = self.within(repo, words[i + 1]) if words[i] == "-C" else repo
+                i += 2
+            else:
+                i += 1
+        if i >= len(words) or words[i] not in GIT_VALUE_OPTIONS:
+            return None
+        verb, rest = words[i], words[i + 1 :]
+        args = positional(rest, GIT_VALUE_OPTIONS[words[i]])
+        if verb == "clone" and args:
+            name = option(rest, ("-o", "--origin")) or "origin"
+            dest = args[1] if len(args) > 1 else os.path.basename(args[0].rstrip("/")).removesuffix(".git")
+            folder = self.within(repo, dest)
+            if folder:
+                (self.remotes.add if self.local(repo, args[0]) else self.remotes.discard)((folder, name))
+            return None
+        if verb == "remote" and len(args) >= 3 and args[0] in ("add", "set-url"):
+            if repo:
+                (self.remotes.add if self.local(repo, args[2]) else self.remotes.discard)((repo, args[1]))
+            return None
+        if verb != "push":
+            return None
+        remote = args[0] if args else "origin"
+        if repo and (repo, remote) in self.remotes:
+            return True
+        # Any other word is a remote name configured outside this command line: no telling where it points.
+        return remote.startswith(("/", "./", "file://")) and bool(self.local(repo, remote))
+
+    def local(self, repo, url):
+        """The temporary folder a remote's URL names, from the repo folder, else None (a URL, a path elsewhere)."""
+        return None if URL.match(url) else self.within(repo, url.removeprefix("file://"))
+
+    def within(self, repo, path):
+        """resolve, from the repo folder rather than the one the command runs in."""
+        here, self.here = self.here, repo
+        try:
+            return self.resolve(path)
+        finally:
+            self.here = here
+
+
+def positional(args, value_options):
+    """The arguments of a git verb that are not options or their values."""
+    out, skip = [], False
+    for a in args:
+        if skip:
+            skip = False
+        elif a in value_options:
+            skip = True
+        elif not a.startswith("-"):
+            out.append(a)
+    return out
+
+
+def option(args, names):
+    for i, a in enumerate(args[:-1]):
+        if a in names:
+            return args[i + 1]
+    return None
+
+
+def bash_writes_outside_temp(command, cwd, session=None):
     """Whether a command writes, per measure's bash_writes, somewhere other than a temporary folder."""
     if not measure.bash_writes(command):
         return False
-    here = temp_path(cwd or "")
+    sh = Shell(cwd, session)
     for seg in segments(command):
+        seg = [sh.expand(t) for t in seg]
         words = [t for t in seg if not re.match(r"^\w+=", t) and t not in PREFIXES]
+        if not words or (len(words) == 1 and words[0] in DECLARE):
+            sh.assign(seg)
         if words[:1] == ["cd"]:
-            dest = next((a for a in words[1:] if not a.startswith("-")), "")
-            here = temp_path(dest) or (here and not dest.startswith(("/", "~", "$")) and ".." not in dest.split("/"))
+            sh.cd(words)
             continue
+        if words[:1] == ["git"]:
+            pushed = sh.git_push_is_temp(words)
+            if pushed is False:
+                return True
+            if pushed:
+                continue
         out = targets(seg, measure.bash_writes)
         if out is None:
             return True
-        for t in out:
-            if temp_path(t):
-                continue
-            if here and not t.startswith(("/", "~", "$")) and ".." not in t.split("/"):
-                continue
+        if any(not sh.resolve(t) for t in out):
             return True
     return False
 
@@ -312,7 +444,9 @@ def main():
             return 0
         try:
             if not bash_writes_outside_temp(
-                str((payload.get("tool_input") or {}).get("command") or ""), payload.get("cwd")
+                str((payload.get("tool_input") or {}).get("command") or ""),
+                payload.get("cwd"),
+                str(payload.get("session_id") or "") or None,
             ):
                 return 0
         except Exception:  # noqa: BLE001 - an unreadable command never blocks by mistake

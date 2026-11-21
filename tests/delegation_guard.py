@@ -342,6 +342,72 @@ class BashGuard(Hook):
             self.assertFalse(self.blocks(c), c)
         self.assertTrue(self.blocks("git -C ~/Code/fundrivendev/dotfiles merge origin/main"))
 
+    def scratchpad(self, session="s-1"):
+        # Claude Code's scratchpad, the folder its system prompt tells every agent to use.
+        return f"/Users/me/Code/claude/claude-{os.getuid()}/-Users-me-Code-repo/{session}/scratchpad"
+
+    def test_the_sessions_own_scratchpad_is_a_temporary_folder(self):
+        s = self.scratchpad()
+        for c in (
+            f"S={s}; : > $S/empty.toml",
+            f"echo x > {s}/notes.md",
+            f'mkdir -p "{s}/repro" && cd "{s}/repro" && git init -q && touch f && git add f',
+        ):
+            self.assertFalse(self.blocks(c), c)
+
+    def test_another_sessions_scratchpad_or_a_way_out_of_it_is_no_temporary_folder(self):
+        s = self.scratchpad()
+        for c in (
+            f"echo x > {self.scratchpad('s-2')}/notes.md",
+            f"echo x > {s}/../../f",
+            f"echo x > {s}-old/f",
+            f"echo x > /Users/me/Code/claude/claude-{os.getuid() + 1}/-Users-me-Code-repo/s-1/scratchpad/f",
+        ):
+            self.assertTrue(self.blocks(c), c)
+
+    def test_a_push_to_a_bare_repo_in_a_temporary_folder_goes_through(self):
+        # A refused reproduction: the push lands in remote.git, inside $d.
+        repro = (
+            'd=$(mktemp -d) && cd "$d" && git init -q --bare -b main remote.git; git clone -q remote.git src; cd src; '
+            "echo x > f; git add f; git commit -qm x; git push -q origin main"
+        )
+        for c in (
+            repro,
+            'd=$(mktemp -d) && cd "$d" && git init -q src && cd src && git remote add up "$d/remote.git" && git push up',
+            'd=$(mktemp -d) && git -C "$d/src" push -q "$d/remote.git" main',
+            f"cd {self.scratchpad()} && git clone -q remote.git src && git -C src push -u origin HEAD",
+        ):
+            self.assertFalse(self.blocks(c), c)
+
+    def test_a_push_from_a_temporary_folder_to_a_real_remote_is_refused(self):
+        for c in (
+            'd=$(mktemp -d) && cd "$d" && git clone -q https://github.com/o/r src && cd src && git push origin main',
+            'd=$(mktemp -d) && cd "$d" && git clone -q /work/repo src && cd src && git push',
+            'd=$(mktemp -d) && cd "$d" && git init -q && git remote add up /work/repo && git push up main',
+            'd=$(mktemp -d) && cd "$d" && git clone -q remote.git src && cd /work/repo && git push origin main',
+            'd=$(mktemp -d) && cd "$d" && git push /work/repo main',
+        ):
+            self.assertTrue(self.blocks(c), c)
+
+    def test_a_variable_set_from_a_temporary_path_is_one(self):
+        # A refused reproduction: R is set from the temporary folder the command runs in.
+        for c in (
+            'd=$(mktemp -d) && cd "$d" && R=$(pwd -P) && mkdir -p "$R/pins" && printf x > "$R/pins/mise.toml"',
+            'd=$(mktemp -d); S=$d; X=$d/pins; export Y="${X}/sub"; touch "$S/a" $X/b "$Y/c"',
+            'cd $(mktemp -d) && R=`pwd` && touch "$R/a"',
+        ):
+            self.assertFalse(self.blocks(c), c)
+
+    def test_a_variable_set_elsewhere_is_no_temporary_path(self):
+        for c in (
+            'd=$(mktemp -d); R=$(pwd -P); touch "$R/a"',
+            'd=$(mktemp -d); d=/work/repo; touch "$d/x"',
+            'd=$(mktemp -d); S=/work/$d; touch "$S"',
+            'd=$(mktemp -d); touch "$OTHER/f" "$PWD/f"',
+            'd=$(mktemp -d); X=$d/../../work; touch "$X/f"',
+        ):
+            self.assertTrue(self.blocks(c), c)
+
     def test_the_main_session_and_other_agents_are_never_touched(self):
         self.assertIsNone(self.run_bash("git push", agent_type=None, CLAUDE_PLUGIN_OPTION_GUARD_MODE="block"))
         for t in ("Explore", "general-purpose", "other:writer"):
