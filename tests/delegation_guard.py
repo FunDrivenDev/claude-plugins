@@ -333,6 +333,12 @@ class BashGuard(Hook):
         self.assertTrue(self.blocks('echo x > "$TMPDIR/probe.txt"'))
         self.assertFalse(self.blocks('d=$(mktemp -d) && echo x > "$d/probe.txt"'))
 
+    def test_a_tmpdir_outside_tmp_and_var_folders_is_a_temporary_folder(self):
+        # A TMPDIR the TEMP_ROOT pattern does not match (a Linux user's own) counts through its value alone.
+        for c in ('echo x > "$TMPDIR/probe.txt"', "echo x > /home/u/tmp/probe.txt"):
+            self.assertFalse(self.blocks(c, TMPDIR="/home/u/tmp/"), c)
+        self.assertTrue(self.blocks("echo x > /home/u/probe.txt", TMPDIR="/home/u/tmp/"))
+
     def test_a_temporary_folder_does_not_cover_a_push_a_gh_write_or_a_way_out(self):
         for c in (
             'd=$(mktemp -d) && cd "$d" && git push origin main',
