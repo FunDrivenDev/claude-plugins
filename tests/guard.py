@@ -184,6 +184,28 @@ class HandoverCopies(unittest.TestCase):
         inp["cwd"] = os.path.join(HOME, ".claude", "plugins", "cache", "guest-suite")
         self.assertIsNotNone(H.guard_hit(inp))
 
+    def test_an_expansion_or_a_cut_path_after_a_cd_there_is_denied(self):
+        for command in (
+            'cd ~/.claude/plugins/cache/guest-suite && rm -rf "$(dirname $PWD)/fundrivendev"',
+            "D=~/.claude/plugins/ca; rm -rf ${D}che/fundrivendev",
+            "echo x > ~/.claude/plugins/marketplaces/fundrivendev/.git/config",
+            "git -C ~/.claude/plugins/marketplaces/fundrivendev/.git config remote.origin.url https://x",
+        ):
+            self.assertIsNotNone(hit(command), command)
+
+    def test_relative_words_beside_another_plugins_script_pass(self):
+        # Second review: words such as `..`, `handover` or `data` are a script's arguments, not a path from there.
+        q = "~/.claude/plugins/cache/guest-suite/gs-dev-toolkit/4.73.1/scripts/qgate.sh"
+        for command in (
+            f"{q} launch --slug x --repo ../r -- just check",
+            f"{q} launch --slug handover --repo /tmp/r",
+            f"{q} launch --repo . && git diff -- plugins/handover/scripts/handover.py",
+            f"{q} launch -- just check && ls data",
+            f"bash {PROOF} write --head abc --repo ..",
+        ):
+            inp = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": "/tmp/proj"}
+            self.assertIsNone(H.guard_hit(inp), command)
+
     def test_a_marketplace_plugin_root_is_followed(self):
         root = installed("marketplaces", "pr", "plugins", "handover", "hooks", "hooks.json", body="{}")
         installed(

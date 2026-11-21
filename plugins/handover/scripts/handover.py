@@ -2019,7 +2019,8 @@ def plugin_copies():
         entries = listed.get("plugins") if isinstance(listed, dict) else None
         for entry in entries if isinstance(entries, list) else []:
             if isinstance(entry, dict) and entry.get("name") == name:
-                paths.append(catalog)
+                # The clone's .git decides what a marketplace update loads (its remote, its hooks).
+                paths += [catalog, os.path.join(root, ".git")]
                 source = entry.get("source")
                 if isinstance(source, str):
                     # metadata.pluginRoot prefixes a relative source; both readings are guarded.
@@ -2169,10 +2170,11 @@ WORD_END = set(" \t\n;&|()<>")
 LITERAL_NAME = re.compile(r"[A-Za-z0-9._@+-]+")
 
 
-def names_folder(text, folder):
+def names_folder(text, folder, children=()):
     """True when the text names a folder that holds a guarded path as a whole (`rm -rf ~/.claude/plugins`), or
-    a path under it whose next part is not a literal name (a glob, a quote, a variable, `..`): either may reach
-    the guarded path. A literal path into another plugin (`~/.claude/plugins/cache/guest-suite/…`) does not."""
+    a path under it whose next part is not a literal name (a glob, a quote, a variable, `..`) or is the start of
+    a guarded child's name (`~/.claude/plugins/ca`, finished by a variable): each may reach the guarded path.
+    A literal path into another plugin (`~/.claude/plugins/cache/guest-suite/…`) does not."""
     for form in path_forms(folder):
         start = text.find(form)
         while start != -1:
@@ -2185,6 +2187,8 @@ def names_folder(text, folder):
                 part = word[1:].split("/", 1)[0]
                 if not LITERAL_NAME.fullmatch(part) or part in (".", "..") or re.search(r"(^|/)\.\.(/|$)", word):
                     return True
+                if any(c != part and c.startswith(part) for c in children):
+                    return True
             start = text.find(form, start + 1)
     return False
 
@@ -2195,14 +2199,19 @@ def plugins_dirs():
     return {os.path.abspath(plugins), os.path.realpath(plugins)}
 
 
+CD_RE = re.compile(r"(?:^|[;&|(]\s*)(?:cd|pushd)\s+(\S+)")
+
+
 def reaches_relatively(text, cwd, paths):
-    """True when a command that names ~/.claude/plugins, or runs there, holds a relative path that may reach a
-    guarded one from a folder it changed to (`cd …/cache/guest-suite && rm -rf ../fundrivendev`): a `..`
-    part, or a word whose first part is a part of a guarded path under ~/.claude/plugins (`fundrivendev`,
-    `handover`, `cache`)."""
+    """True when a command that runs in ~/.claude/plugins, or changes to a folder there (`cd …/cache/guest-suite
+    && rm -rf ../fundrivendev`), holds a word that may reach a guarded path from there: a `..` part, an
+    expansion (`$PWD`, `$(…)`, a backtick), or a relative word whose first part is a part of a guarded path
+    under ~/.claude/plugins (`fundrivendev`, `handover`, `cache`). A command that only names a script there
+    (`$Q launch --repo ..`) is not concerned."""
     dirs = plugins_dirs()
     inside = bool(cwd) and any(os.path.abspath(cwd) == d or os.path.abspath(cwd).startswith(d + os.sep) for d in dirs)
-    if not inside and not any(names_path(text, d) for d in dirs):
+    moved = any(any(names_path(m.group(1), d) for d in dirs) or "$" in m.group(1) for m in CD_RE.finditer(text))
+    if not inside and not (moved and any(names_path(text, d) for d in dirs)):
         return False
     parts = set()
     for p in paths:
@@ -2211,9 +2220,11 @@ def reaches_relatively(text, cwd, paths):
                 parts |= set(os.path.relpath(p, d).split(os.sep))
     for word in re.split(r"[\s;&|()<>]+", text):
         word = re.sub(r"^[A-Za-z_][A-Za-z0-9_]*=", "", word).strip("'\"")
-        if re.search(r"(^|/)\.\.(/|$)", word):
+        if re.search(r"(^|/)\.\.(/|$)", word) or "`" in word:
             return True
-        if word and word[0] not in "/~$-" and word.split("/", 1)[0] in parts:
+        if "$" in re.sub(r"\$\{?HOME\}?", "", word):
+            return True
+        if word and word[0] not in "/~-" and word.split("/", 1)[0] in parts:
             return True
     return False
 
@@ -2241,7 +2252,8 @@ def guard_hit(inp):
         if names_path(text, p):
             return p
     for d in guarded_folders(paths):
-        if names_folder(text, d):
+        children = {os.path.relpath(p, d).split(os.sep)[0] for p in paths if p.startswith(d + os.sep)}
+        if names_folder(text, d, children):
             return d
     if tool == "Bash" and reaches_relatively(text, inp.get("cwd"), paths):
         return os.path.abspath(os.path.join(os.path.expanduser("~"), ".claude", "plugins"))
