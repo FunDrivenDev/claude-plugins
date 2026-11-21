@@ -206,6 +206,9 @@ class HandoverCopies(unittest.TestCase):
             "rm -rf ~/.claude/plugins/cache/FundrivenDev",
             "rm -rf ~/.claude/plugins/cache/fundrivendev/Handover",
             "rm -rf ~/.CLAUDE/plugins",
+            f"find {QGATE} -execdir rm -rf ../../../../fundrivendev/handover +",
+            f"find {QGATE} -execdir rm -rf ../../../.. ;",
+            f"find {QGATE} -exec sh -c 'cd .. && rm -rf x' ;",
             "cd $(dirname $(dirname $(dirname $(dirname ~/.claude/plugins/cache/guest-suite/gs-dev-toolkit/4.73.1/scripts/qgate.sh)))) && rm -rf fundrivendev",
         ):
             self.assertIsNotNone(hit(command), command)
@@ -221,6 +224,10 @@ class HandoverCopies(unittest.TestCase):
             f"bash {PROOF} write --head abc --repo ..",
             f'cd "$REPO" && {q} launch --slug x --repo .',
             f'Q={q}; cd $WT && $Q launch --slug x --repo "$WT"',
+            f"{q} launch --slug x --repo /tmp/r; printf 'rc=%s\\n' \"$?\"",
+            f"Q={q}; $Q launch --slug x --repo /tmp/r && date +%H:%M",
+            f'{q} launch --slug "run-$(date +%s)" --repo /tmp/r',
+            f"{q} launch --slug dirname-check --repo /tmp/r",
         ):
             inp = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": "/tmp/proj"}
             self.assertIsNone(H.guard_hit(inp), command)

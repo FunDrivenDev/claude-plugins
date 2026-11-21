@@ -2204,9 +2204,9 @@ def plugins_dirs():
 
 def plugins_folder_named(text):
     """True when the command names a folder under ~/.claude/plugins (`cd -P …/cache/guest-suite`, `git -C …`,
-    `find … -execdir`), rather than only files there (a script such as `qgate.sh`), or chops a path
-    (`dirname`, `%`): it may then work from there."""
-    if "dirname" in text or "%" in text:
+    `find … -execdir`), rather than only files there (a script such as `qgate.sh`), runs from a path's folder
+    (`-exec`, `-execdir`, `-C`), or chops a path (a `dirname` call, `${x%…}`): it may then work from there."""
+    if re.search(r"(?:^|[;&|(`]\s*)dirname\b|\$\{[^}]*%|\s-(?:exec|execdir|C)\b|\s--git-dir\b", text):
         return True
     low, home = text.lower(), os.path.expanduser("~")
     for d in plugins_dirs():
@@ -2229,14 +2229,21 @@ def reaches_relatively(text, cwd, paths):
     a guarded path under ~/.claude/plugins (`fundrivendev`, `handover`, `cache`). A command that names only
     files there (`$Q launch --repo ..`, a script's own path) is not concerned."""
     dirs = plugins_dirs()
-    inside = bool(cwd) and any(os.path.abspath(cwd) == d or os.path.abspath(cwd).startswith(d + os.sep) for d in dirs)
-    if not inside and not (any(names_path(text, d) for d in dirs) and plugins_folder_named(text)):
-        return False
     parts = set()
     for p in paths:
         for d in dirs:
             if p.startswith(d + os.sep):
                 parts |= {x.lower() for x in os.path.relpath(p, d).split(os.sep)}
+    inside = bool(cwd) and any(os.path.abspath(cwd) == d or os.path.abspath(cwd).startswith(d + os.sep) for d in dirs)
+    named = any(names_path(text, d) for d in dirs)
+    if named and not inside:
+        # Beside a script's path alone: only a climb that names a part of the plugin's path.
+        for word in re.split(r"[\s;&|()<>{}'\"]+", text):
+            split = word.lower().split("/")
+            if ".." in split and parts & set(split):
+                return True
+    if not inside and not (named and plugins_folder_named(text)):
+        return False
     for word in re.split(r"[\s;&|()<>{}]+", text):
         word = re.sub(r"^[A-Za-z_][A-Za-z0-9_]*=", "", word).strip("'\"")
         if re.search(r"(^|/)\.\.(/|$)", word) or "`" in word:
