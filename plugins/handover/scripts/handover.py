@@ -2242,9 +2242,25 @@ def works_from_plugins(words, cwd):
     if not named:
         return False
     names = [os.path.basename(w) for w in words]
-    finds = [i for i, n in enumerate(names) if n == "find"]
-    from_there = any(under_plugins(w) for i in finds for w in words[i + 1 :])
-    return "dirname" in names or (from_there and any(w in ("-exec", "-execdir", "-ok", "-okdir") for w in words))
+    return "dirname" in names or any(find_runs_there(words[i + 1 :]) for i, n in enumerate(names) if n == "find")
+
+
+FIND_EXECS = ("-exec", "-execdir", "-ok", "-okdir")
+
+
+def find_runs_there(args):
+    """True when a find's own words (up to the end of its command: `;` but the one closing an `-exec`, `&&`,
+    `||`, `|`, `&`) name a path under ~/.claude/plugins and run a command with `-exec` or `-execdir`."""
+    there = runs = opened = False
+    for w in args:
+        if w in ("&&", "||", "|", "&", "(", ")") or (w == ";" and not opened):
+            break
+        if w in FIND_EXECS:
+            runs = opened = True
+        elif w in (";", "+") and opened:
+            opened = False
+        there = there or under_plugins(w)
+    return there and runs
 
 
 def reaches_relatively(text, cwd, paths):
@@ -2269,7 +2285,10 @@ def reaches_relatively(text, cwd, paths):
     # A word may hold a whole command (`sh -c 'cd .. && …'`): its own words count too.
     for w in [x for word in words for x in re.split(r"[\s;&|()<>]+", word) if x]:
         split = w.lower().split("/")
-        if ".." in split and ((parts - SHARED_PARTS) & set(split) or re.search(r"[*?\[]", w)):
+        own = parts - SHARED_PARTS
+        globs = [re.sub(r"\{[^}]*\}", "*", x) for x in split if re.search(r"[*?\[{]", x)]
+        globs = [g for g in globs if g.strip("*")]
+        if ".." in split and (own & set(split) or any(fnmatch.fnmatch(o, g) for g in globs for o in own)):
             return True
         if not strict:
             continue
