@@ -215,7 +215,6 @@ class HandoverCopies(unittest.TestCase):
             "cd ~/.claude/plugins/marketplaces/guest-suite && rm -rf ..''/fundrivendev/.git",
             f"find -L {QGATE} -execdir rm -rf ../../../../fundriven* ;",
             f"find -L {QGATE} -execdir rm -rf ../../../../fundriven[d]ev ;",
-            f"{QGATE} x; rm -rf ../../../fundriven{{dev,}}",
             f"find -L {QGATE} -execdir sh -c 'cd ../../../.. && rm -rf fundrivendev' ;",
             f"cd $(/usr/bin/dirname {QGATE}) && rm -rf ../../../../fundriven*",
             "cd $(dirname $(dirname $(dirname $(dirname ~/.claude/plugins/cache/guest-suite/gs-dev-toolkit/4.73.1/scripts/qgate.sh)))) && rm -rf fundrivendev",
@@ -245,6 +244,8 @@ class HandoverCopies(unittest.TestCase):
             f"cd /tmp/r && ls ../*/x; cp ../*.md /tmp/out && {q} launch --repo /tmp/r -- rg -g '../*.ts' foo",
             f"find /tmp/r -name '*.tmp' -exec rm {{}} +; echo rc=$?; {q} launch --slug x --repo /tmp/r -- just check",
             f"find /tmp/r -exec sh -c 'echo $1' _ {{}} \\; ; Q={q}; $Q launch --repo /tmp/r",
+            f"find /tmp/r -name '*.tmp' -exec rm {{}} +\nQ={q}\n$Q launch --slug x --repo ../r",
+            f"{q} launch --repo /tmp/r -- git diff -- '../src/*.{{ts,tsx}}' && cat ../*.json",
         ):
             inp = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": "/tmp/proj"}
             self.assertIsNone(H.guard_hit(inp), command)

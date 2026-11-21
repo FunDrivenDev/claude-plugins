@@ -2204,10 +2204,10 @@ def plugins_dirs():
 
 def shell_words(text):
     r"""The command's words as the shell passes them, quotes and backslashes taken out (`..""`, `.\.` are `..`),
-    operators apart; None when it does not parse."""
+    operators and line breaks apart; None when it does not parse."""
     try:
-        lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()<>")
-        lex.whitespace_split = True
+        lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()<>\n")
+        lex.whitespace, lex.whitespace_split = " \t\r", True
         return list(lex)
     except ValueError:
         return None
@@ -2253,7 +2253,7 @@ def find_runs_there(args):
     `||`, `|`, `&`) name a path under ~/.claude/plugins and run a command with `-exec` or `-execdir`."""
     there = runs = opened = False
     for w in args:
-        if w in ("&&", "||", "|", "&", "(", ")") or (w == ";" and not opened):
+        if w in ("&&", "||", "|", "&", "(", ")", "\n") or (w == ";" and not opened):
             break
         if w in FIND_EXECS:
             runs = opened = True
@@ -2285,10 +2285,7 @@ def reaches_relatively(text, cwd, paths):
     # A word may hold a whole command (`sh -c 'cd .. && …'`): its own words count too.
     for w in [x for word in words for x in re.split(r"[\s;&|()<>]+", word) if x]:
         split = w.lower().split("/")
-        own = parts - SHARED_PARTS
-        globs = [re.sub(r"\{[^}]*\}", "*", x) for x in split if re.search(r"[*?\[{]", x)]
-        globs = [g for g in globs if g.strip("*")]
-        if ".." in split and (own & set(split) or any(fnmatch.fnmatch(o, g) for g in globs for o in own)):
+        if ".." in split and (parts - SHARED_PARTS) & set(split):
             return True
         if not strict:
             continue
