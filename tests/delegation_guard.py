@@ -268,6 +268,8 @@ class BashGuard(Hook):
     def setUp(self):
         super().setUp()
         self.env["CLAUDE_CODE_TMPDIR"] = "/Users/me/Code/claude"  # where Claude Code puts its scratchpads
+        # macOS's per-user temp folder, set whatever the machine: a CI runner on Linux has no TMPDIR.
+        self.env["TMPDIR"] = "/var/folders/ab/cd/T/"
 
     def run_bash(self, command, agent_type="delegation:investigator", cwd="/work/repo", **env):
         payload = {
@@ -324,6 +326,12 @@ class BashGuard(Hook):
         ):
             self.assertFalse(self.blocks(c), c)
         self.assertFalse(self.blocks("echo x > f && rm f", cwd="/private/var/folders/ab/T/tmp.x1"))
+
+    def test_an_unset_tmpdir_is_no_temporary_folder(self):
+        # Unset, "$TMPDIR/probe.txt" is /probe.txt: a write at the root, not in a temporary folder.
+        del self.env["TMPDIR"]
+        self.assertTrue(self.blocks('echo x > "$TMPDIR/probe.txt"'))
+        self.assertFalse(self.blocks('d=$(mktemp -d) && echo x > "$d/probe.txt"'))
 
     def test_a_temporary_folder_does_not_cover_a_push_a_gh_write_or_a_way_out(self):
         for c in (
