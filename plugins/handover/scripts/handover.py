@@ -2152,7 +2152,8 @@ def own_command(command):
 
 def names_path(text, path):
     """True when the text names the path, spelled from / or from the home folder (path_forms)."""
-    return any(f in text for f in path_forms(path))
+    low = text.lower()
+    return any(f.lower() in low for f in path_forms(path))
 
 
 def path_forms(path):
@@ -2173,9 +2174,11 @@ LITERAL_NAME = re.compile(r"[A-Za-z0-9._@+-]+")
 def names_folder(text, folder, children=()):
     """True when the text names a folder that holds a guarded path as a whole (`rm -rf ~/.claude/plugins`), or
     a path under it whose next part is not a literal name (a glob, a quote, a variable, `..`) or is the start of
-    a guarded child's name (`~/.claude/plugins/ca`, finished by a variable): each may reach the guarded path.
+    a guarded child's name (`~/.claude/plugins/ca`, finished by a variable): each may reach the guarded path. Case is folded, as macOS's
+    file systems do.
     A literal path into another plugin (`~/.claude/plugins/cache/guest-suite/…`) does not."""
-    for form in path_forms(folder):
+    text, children = text.lower(), {c.lower() for c in children}
+    for form in (f.lower() for f in path_forms(folder)):
         start = text.find(form)
         while start != -1:
             rest = text[start + len(form) :]
@@ -2199,32 +2202,48 @@ def plugins_dirs():
     return {os.path.abspath(plugins), os.path.realpath(plugins)}
 
 
-CD_RE = re.compile(r"(?:^|[;&|(]\s*)(?:cd|pushd)\s+(\S+)")
+def plugins_folder_named(text):
+    """True when the command names a folder under ~/.claude/plugins (`cd -P …/cache/guest-suite`, `git -C …`,
+    `find … -execdir`), rather than only files there (a script such as `qgate.sh`), or chops a path
+    (`dirname`, `%`): it may then work from there."""
+    if "dirname" in text or "%" in text:
+        return True
+    low, home = text.lower(), os.path.expanduser("~")
+    for d in plugins_dirs():
+        for form in (f.lower() for f in path_forms(d)):
+            start = low.find(form)
+            while start != -1:
+                rest = text[start:]
+                word = rest[: next((i for i, c in enumerate(rest) if c in WORD_END), len(rest))].strip("'\"")
+                path = re.sub(r"^(~|\$HOME|\$\{HOME\})(?=/)", lambda _m: home, word)
+                if not os.path.isfile(path):
+                    return True
+                start = low.find(form, start + 1)
+    return False
 
 
 def reaches_relatively(text, cwd, paths):
-    """True when a command that runs in ~/.claude/plugins, or changes to a folder there (`cd …/cache/guest-suite
-    && rm -rf ../fundrivendev`), holds a word that may reach a guarded path from there: a `..` part, an
-    expansion (`$PWD`, `$(…)`, a backtick), or a relative word whose first part is a part of a guarded path
-    under ~/.claude/plugins (`fundrivendev`, `handover`, `cache`). A command that only names a script there
-    (`$Q launch --repo ..`) is not concerned."""
+    """True when a command that runs in ~/.claude/plugins, or names a folder there (plugins_folder_named), holds
+    a word that may reach a guarded path from that folder (`cd …/cache/guest-suite && rm -rf ../fundrivendev`):
+    a `..` part, an expansion (`$PWD`, `$(…)`, a backtick), or a relative word whose first part is a part of
+    a guarded path under ~/.claude/plugins (`fundrivendev`, `handover`, `cache`). A command that names only
+    files there (`$Q launch --repo ..`, a script's own path) is not concerned."""
     dirs = plugins_dirs()
     inside = bool(cwd) and any(os.path.abspath(cwd) == d or os.path.abspath(cwd).startswith(d + os.sep) for d in dirs)
-    moved = any(any(names_path(m.group(1), d) for d in dirs) or "$" in m.group(1) for m in CD_RE.finditer(text))
-    if not inside and not (moved and any(names_path(text, d) for d in dirs)):
+    if not inside and not (any(names_path(text, d) for d in dirs) and plugins_folder_named(text)):
         return False
     parts = set()
     for p in paths:
         for d in dirs:
             if p.startswith(d + os.sep):
-                parts |= set(os.path.relpath(p, d).split(os.sep))
-    for word in re.split(r"[\s;&|()<>]+", text):
+                parts |= {x.lower() for x in os.path.relpath(p, d).split(os.sep)}
+    for word in re.split(r"[\s;&|()<>{}]+", text):
         word = re.sub(r"^[A-Za-z_][A-Za-z0-9_]*=", "", word).strip("'\"")
         if re.search(r"(^|/)\.\.(/|$)", word) or "`" in word:
             return True
         if "$" in re.sub(r"\$\{?HOME\}?", "", word):
             return True
-        if word and word[0] not in "/~-" and word.split("/", 1)[0] in parts:
+        if word and word[0] not in "/~-" and word.split("/", 1)[0].lower() in parts:
             return True
     return False
 

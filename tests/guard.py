@@ -193,6 +193,23 @@ class HandoverCopies(unittest.TestCase):
         ):
             self.assertIsNotNone(hit(command), command)
 
+    def test_other_ways_to_work_from_another_plugins_folder_are_denied(self):
+        # Third review: a cd with options or inside a block, git -C, find -execdir, and folded case.
+        for command in (
+            "cd -P ~/.claude/plugins/cache/guest-suite && rm -rf ../fundrivendev",
+            "cd -- ~/.claude/plugins/cache/guest-suite && rm -rf ../fundrivendev",
+            "true\ncd ~/.claude/plugins/cache/guest-suite\nrm -rf ../fundrivendev",
+            "{ cd ~/.claude/plugins/cache/guest-suite; rm -rf ../fundrivendev; }",
+            "if true; then cd ~/.claude/plugins/cache/guest-suite; rm -rf ../fundrivendev; fi",
+            "git -C ~/.claude/plugins/cache/guest-suite rm -rf ../fundrivendev",
+            "find ~/.claude/plugins/cache/guest-suite -maxdepth 0 -execdir rm -rf fundrivendev ;",
+            "rm -rf ~/.claude/plugins/cache/FundrivenDev",
+            "rm -rf ~/.claude/plugins/cache/fundrivendev/Handover",
+            "rm -rf ~/.CLAUDE/plugins",
+            "cd $(dirname $(dirname $(dirname $(dirname ~/.claude/plugins/cache/guest-suite/gs-dev-toolkit/4.73.1/scripts/qgate.sh)))) && rm -rf fundrivendev",
+        ):
+            self.assertIsNotNone(hit(command), command)
+
     def test_relative_words_beside_another_plugins_script_pass(self):
         # Second review: words such as `..`, `handover` or `data` are a script's arguments, not a path from there.
         q = "~/.claude/plugins/cache/guest-suite/gs-dev-toolkit/4.73.1/scripts/qgate.sh"
@@ -202,6 +219,8 @@ class HandoverCopies(unittest.TestCase):
             f"{q} launch --repo . && git diff -- plugins/handover/scripts/handover.py",
             f"{q} launch -- just check && ls data",
             f"bash {PROOF} write --head abc --repo ..",
+            f'cd "$REPO" && {q} launch --slug x --repo .',
+            f'Q={q}; cd $WT && $Q launch --slug x --repo "$WT"',
         ):
             inp = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": "/tmp/proj"}
             self.assertIsNone(H.guard_hit(inp), command)
