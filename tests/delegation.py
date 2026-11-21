@@ -288,6 +288,8 @@ class BashWrites(unittest.TestCase):
         "git -c user.name=x commit -m m",
         "git --no-pager -C r add -A",
         "git checkout -b fix",
+        "git merge-file a base b",
+        "git checkout-index -a -f",
         "git stash",
         "git reset --hard HEAD~1",
         "gh pr create --draft",
@@ -307,6 +309,12 @@ class BashWrites(unittest.TestCase):
         "git -C repo log --oneline -3",
         "git diff main...HEAD",
         "git stash list",
+        # Read as a write, so refused by the delegation guard: `merge-base` was read as `merge`.
+        (
+            "cd ~/Code/fundrivendev/dotfiles && git merge-base --is-ancestor c550570 origin/main && echo on-main; "
+            "git ls-tree -r origin/main --name-only | grep -i prune-dead"
+        ),
+        "git -C ~/Code/fundrivendev/dotfiles rev-parse HEAD origin/main; git -C ~/Code/fundrivendev/dotfiles merge-base HEAD origin/main",
         "sed -n 1,20p f",
         "jq '.a' f",
         "python3 -c 'print(1 if 2 > 1 else 0)'",

@@ -265,6 +265,10 @@ class BashGuard(Hook):
     """The same hook on Bash: a delegation: agent is read-only, so its writing commands are caught, except in a
     temporary folder (the agents' throwaway reproductions)."""
 
+    def setUp(self):
+        super().setUp()
+        self.env["CLAUDE_CODE_TMPDIR"] = "/Users/me/Code/claude"  # where Claude Code puts its scratchpads
+
     def run_bash(self, command, agent_type="delegation:investigator", cwd="/work/repo", **env):
         payload = {
             "hook_event_name": "PreToolUse",
@@ -327,6 +331,225 @@ class BashGuard(Hook):
             "cd $(mktemp -d) && gh pr merge 3",
             'd=$(mktemp -d) && cd "$d" && echo x > ../../work/f',
             "echo x > /tmp/../work/f",
+        ):
+            self.assertTrue(self.blocks(c), c)
+
+    def test_a_git_read_with_a_write_verb_as_a_prefix_goes_through(self):
+        # Refused commands: `merge-base` was read as `merge`; a real merge is still refused.
+        for c in (
+            (
+                "cd ~/Code/fundrivendev/dotfiles && git merge-base --is-ancestor c550570 origin/main && echo on-main; "
+                "git ls-tree -r origin/main --name-only | grep -i prune-dead"
+            ),
+            "git -C ~/Code/fundrivendev/dotfiles rev-parse HEAD origin/main; git -C ~/Code/fundrivendev/dotfiles merge-base HEAD origin/main",
+        ):
+            self.assertFalse(self.blocks(c), c)
+        self.assertTrue(self.blocks("git -C ~/Code/fundrivendev/dotfiles merge origin/main"))
+
+    def scratchpad(self, session="s-1"):
+        # Claude Code's scratchpad, the folder its system prompt tells every agent to use.
+        return f"/Users/me/Code/claude/claude-{os.getuid()}/-Users-me-Code-repo/{session}/scratchpad"
+
+    def test_the_sessions_own_scratchpad_is_a_temporary_folder(self):
+        s = self.scratchpad()
+        for c in (
+            f"S={s}; : > $S/empty.toml",
+            f"echo x > {s}/notes.md",
+            f'mkdir -p "{s}/repro" && cd "{s}/repro" && git init -q && touch f && git add f',
+        ):
+            self.assertFalse(self.blocks(c), c)
+
+    def test_another_sessions_scratchpad_or_a_way_out_of_it_is_no_temporary_folder(self):
+        s = self.scratchpad()
+        for c in (
+            f"echo x > {self.scratchpad('s-2')}/notes.md",
+            f"echo x > {s}/../../f",
+            f"echo x > {s}-old/f",
+            f"echo x > /Users/me/Code/claude/claude-{os.getuid() + 1}/-Users-me-Code-repo/s-1/scratchpad/f",
+            f"mkdir -p /work/repo/claude-{os.getuid()}/x/s-1/scratchpad",
+        ):
+            self.assertTrue(self.blocks(c), c)
+
+    def test_a_push_to_a_bare_repo_in_a_temporary_folder_goes_through(self):
+        # A refused reproduction, chained with && (the `;` form is refused below): the push lands in remote.git.
+        repro = (
+            'd=$(mktemp -d) && cd "$d" && git init -q --bare -b main remote.git && git clone -q remote.git src && cd src'
+            " && echo x > f && git add f && git commit -qm x && git push -q origin main"
+        )
+        for c in (
+            repro,
+            'd=$(mktemp -d) && cd "$d" && git init -q src && cd src && git remote add up "$d/remote.git" && git push up',
+            'd=$(mktemp -d) && git init -q --bare "$d/remote.git" && git init -q "$d/src" && git -C "$d/src" push -q "$d/remote.git" main',
+            (
+                'd=$(mktemp -d) && cd "$d" && git clone -q remote.git src && cd src && git config user.email a@b.c'
+                " && git commit -qm x --allow-empty && git push origin main"
+            ),
+            f"cd {self.scratchpad()} && git clone -q remote.git src && git -C src push -u origin HEAD",
+            (
+                'd=$(mktemp -d) && cd "$d" && git clone -q remote.git src && git -C src config core.pager cat'
+                " && git -C src push -q --force-with-lease origin main"
+            ),
+        ):
+            self.assertFalse(self.blocks(c), c)
+
+    def test_a_push_from_a_temporary_folder_to_a_real_remote_is_refused(self):
+        for c in (
+            'd=$(mktemp -d) && cd "$d" && git clone -q https://github.com/o/r src && cd src && git push origin main',
+            'd=$(mktemp -d) && cd "$d" && git clone -q /work/repo src && cd src && git push',
+            'd=$(mktemp -d) && cd "$d" && git init -q && git remote add up /work/repo && git push up main',
+            'd=$(mktemp -d) && cd "$d" && git clone -q remote.git src && cd /work/repo && git push origin main',
+            'd=$(mktemp -d) && cd "$d" && git push /work/repo main',
+            f"cd {self.scratchpad()}/src && git push origin main",
+        ):
+            self.assertTrue(self.blocks(c), c)
+
+    def test_whatever_can_send_a_temporary_push_elsewhere_refuses_it(self):
+        clone = 'd=$(mktemp -d) && cd "$d" && git init -q --bare r.git && git clone -q r.git src && cd src && '
+        for tail in (
+            "git push --repo=https://github.com/o/r",
+            "git -c remote.origin.pushurl=https://github.com/o/r push origin",
+            "git config remote.origin.url https://github.com/o/r && git push origin",
+            (
+                "git remote add up https://github.com/o/r && git remote rename origin x && git remote rename up origin"
+                " && git push origin"
+            ),
+            "git -c url.https://github.com/o/r.insteadOf=/tmp/mktemp/r.git push /tmp/mktemp/r.git main",
+            "git --git-dir=/work/repo/.git push origin main",
+            "GIT_DIR=/work/repo/.git git push origin main",
+            "export GIT_DIR=/work/repo/.git; git push origin main",
+            "printf '[remote \"origin\"]\\n\\tpushurl = https://github.com/o/r\\n' >> .git/config && git push origin",
+            'ln -s /work/repo "$d/l.git" && git push "$d/l.git" main',
+            "git push --receive-pack='git receive-pack /work/repo' origin",
+            "nice git remote set-url origin /work/repo && git push origin HEAD:main",
+            "sh -c 'git -C /tmp/mktemp/src remote set-url origin /work/repo' && git push origin HEAD:main",
+            "timeout 9 git config remote.pushDefault up; git push",
+            "git config branch.main.pushRemote https://github.com/x/y; git push",
+            "git config branch.main.remote https://github.com/x/y; git push",
+            "git config --local some.key x; git push origin",
+            "git config -f user.x/../.git/config push.recurseSubmodules on-demand; git push origin",
+            "git push --recurse-submodules=on-demand origin HEAD:main",
+            "git push --no-verify origin main",
+            "git submodule update --init; git push origin",
+            (
+                "git init -q ../evil && git -C ../evil remote add origin https://github.com/x/y && cp -R ../evil/.git . "
+                "&& git push origin main"
+            ),
+            "cp -R /tmp/mktemp/evil/. . && git push origin main",
+            "tar -xf /tmp/mktemp/e.tar && git push origin main",
+            "python3 /tmp/mktemp/x.py && git push origin main",
+            'echo "$(printf x >> .git/config)" && git push origin HEAD:main',
+            "echo `cp -R ../evil/.git .` && git push origin main",
+            ': "$(cp -R ../evil/.git .)" && git push origin main',
+            "cd .. && rm -rf src && e=src && git clone -q https://github.com/x/y $e && git -C src push origin main",
+            "cd .. && rm -rf src && git clone -q https://github.com/x/y src/../src && git -C src push origin main",
+            (
+                "cd .. && rm -rf src && git clone -q https://github.com/x/y t && git init -q --template=t/.git src"
+                " && git -C src push origin main"
+            ),
+            (
+                "cd .. && rm -rf src && mkdir src && git clone -q --bare https://github.com/x/y src/.git"
+                " && git -C src push origin main"
+            ),
+            "git worktree add ../w && git push origin main",
+            ": $(mktemp -u $(cp /work/real/.git/config .git/config)) && git push origin main",
+            (
+                "cd .. && git clone -q -o up https://github.com/x/y s2 && git -C s2 remote add origin /tmp/mktemp/r.git"
+                " && git -C s2 push"
+            ),
+            "cd .. && git clone -q r.git src && git -C src push origin main",
+            "git remote add origin /tmp/mktemp/r.git; git push origin main",
+            "git init -q && (cd /work/repo; git push)",
+            "git init -q repo && CDPATH=/work && cd repo && git push",
+        ):
+            self.assertTrue(self.blocks(clone + tail), tail)
+
+    def test_a_variable_set_another_way_no_longer_holds_a_temporary_path(self):
+        for set_it in (
+            "local -x d=/work/repo",
+            "declare -g d=/work/repo",
+            'for d in /work/repo; do touch "$d/f"; done',
+            "read d <<< /work/repo",
+            "printf -v d %s /work/repo",
+            "unset d",
+            "d=/work/repo; echo | d=$(mktemp -d)",
+            "d=/work/repo; (d=$(mktemp -d))",
+        ):
+            self.assertTrue(self.blocks(f'd=$(mktemp -d); {set_it}; touch "$d/f"'), set_it)
+
+    def test_a_variable_that_splits_or_grows_holds_no_temporary_path(self):
+        for c in (
+            'd="/tmp/x /work/repo"; rm -rf $d',
+            "d=/tmp/x\\ /work/repo; rm -rf $d",
+            "IFS=:; d=/tmp/x:/work/repo; rm -rf $d",
+            "d=/tmp/x; d+=/../../work/repo; rm -rf $d",
+            "d=$(mktemp -d); source ./env.sh; rm -rf $d",
+            "d=/tmp/x:/work/repo; IFS=:; rm -rf $d",
+            "IFS+=:; d=/tmp/x:/work/repo; rm -rf $d",
+            "read IFS <<< :; d=/tmp/x:/work/repo; rm -rf $d",
+            "d=/tmp/x; d[0]=/work/repo; rm -rf $d",
+            "d=/tmp/x; builtin eval d=/work/repo; rm -rf $d",
+            "f(){ d=/work/repo; }; d=/tmp/x; f; rm -rf $d",
+            "trap 'd=/work/repo' DEBUG; d=/tmp/x; rm -rf $d",
+            'd=/tmp/x && x=d=/work/repo && command -p eval $x && rm -rf "$d"',
+            'd=/tmp/x; if false; then :; elif eval d=/work/repo; then rm -rf "$d"; fi',
+            "d=/tmp/x; . ./env.sh; rm -rf $d",
+            "d=/tmp/x; declare -n r=d; r=/work/repo; rm -rf $d",
+            "d=/tmp/x; printf -vd /work/repo; rm -rf $d",
+            "d=/tmp/x; read -rad <<< /work/repo; rm -rf $d",
+            "d=/tmp/x; exec {d}>/tmp/f; cp -r src $d",
+            "d=/tmp/x; rm -rf '$d'",
+            "d=/tmp/x; rm -rf \\$d",
+            "cd /tmp/x; PWD=/work/repo; rm -rf $PWD",
+            'd=$(mktemp -d) && cd "$d" && echo "it\'s" > "$HOME/x" && echo "\'"',
+            'd=$(mktemp -d) && cd "$d" && echo "it\'s" > $HOME/x; echo "\'"',
+        ):
+            self.assertTrue(self.blocks(c), c)
+
+    def test_a_hook_written_through_a_relative_path_taints_the_push(self):
+        c = "cd /tmp/b.git && cd hooks && printf x > post-receive && cd /work/repo && git push /tmp/b.git HEAD"
+        self.assertTrue(self.blocks(c))
+
+    def test_a_word_named_like_a_shell_builtin_in_an_argument_keeps_variables_tracked(self):
+        self.assertFalse(self.blocks('d=$(mktemp -d) && cd "$d" && echo x > f && grep -rn read .'))
+
+    def test_a_git_write_named_like_a_read_is_still_refused(self):
+        for c in ("git checkout-index -a -f", "git -C /work/repo commit-tree HEAD^{tree} -m x"):
+            self.assertTrue(self.blocks(c), c)
+            self.assertTrue(self.blocks(c), c)
+
+    def test_a_push_after_a_cd_that_may_fail_from_a_real_folder_is_refused(self):
+        # After a `;`, a cd into the clone may fail if the clone did, and a cd function (zoxide) may then jump to a
+        # real repo of the same name: the refused reproduction's `;` form stays refused.
+        for c in (
+            (
+                'd=$(mktemp -d) && cd "$d" && git init -q --bare -b main remote.git; git clone -q remote.git src; cd src; '
+                "echo x > f; git add f; git commit -qm x; git push -q origin main"
+            ),
+            'd=$(mktemp -d) && cd "$d" && git clone -q /tmp/w/claude-plugins.git claude-plugins; cd claude-plugins; git push',
+            'f=$(mktemp); cd "$f"; git init -q; git push',
+            'cd "$TMPDIR" && git init -q && git push',
+            "touch /tmp/f-guard; git init -q /tmp/f-guard/src; cd /tmp/f-guard/src; git push",
+            "git clone -q /tmp/w-guard/nope.git /tmp/w-guard/src; cd /tmp/w-guard/src; git push",
+        ):
+            self.assertTrue(self.blocks(c), c)
+
+    def test_a_variable_set_from_a_temporary_path_is_one(self):
+        # A refused reproduction: R is set from the temporary folder the command runs in.
+        for c in (
+            'd=$(mktemp -d) && cd "$d" && R=$(pwd -P) && mkdir -p "$R/pins" && printf x > "$R/pins/mise.toml"',
+            'd=$(mktemp -d); S=$d; X=$d/pins; export Y="${X}/sub"; touch "$S/a" $X/b "$Y/c"',
+            'cd $(mktemp -d) && R=`pwd` && touch "$R/a"',
+            'd=$(mktemp -d "$TMPDIR/r.XXXX") && cd "$d" && touch f',
+        ):
+            self.assertFalse(self.blocks(c), c)
+
+    def test_a_variable_set_elsewhere_is_no_temporary_path(self):
+        for c in (
+            'd=$(mktemp -d); R=$(pwd -P); touch "$R/a"',
+            'd=$(mktemp -d); d=/work/repo; touch "$d/x"',
+            'd=$(mktemp -d); S=/work/$d; touch "$S"',
+            'd=$(mktemp -d); touch "$OTHER/f" "$PWD/f"',
+            'd=$(mktemp -d); X=$d/../../work; touch "$X/f"',
         ):
             self.assertTrue(self.blocks(c), c)
 
