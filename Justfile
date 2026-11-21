@@ -1,4 +1,7 @@
-# The entry point to this repo's checks. Tools come from mise.toml.
+# The entry point to this repo's checks. Every recipe runs through mise exec
+# (set shell), so its tools are the ones mise.toml pins, whatever the shell.
+
+set shell := ["mise", "exec", "--", "bash", "-euo", "pipefail", "-c"]
 
 _default:
     @just --list --unsorted
@@ -17,20 +20,15 @@ lint scope="all":
 
 # Run the plugins' smoke tests: every tests/*.sh, then every tests/*.py, in name order, stopping at the first failure; a name starting with _ is a helper, not a test.
 test:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    shopt -s nullglob
-    export LC_ALL=C
-    for t in tests/[!_]*.sh; do echo "== $t"; mise exec -- "$t"; done
-    for t in tests/[!_]*.py; do echo "== $t"; mise exec -- python3 "$t"; done
+    scripts/test.sh
 
 # Raise a plugin's version: `just bump session-mods minor`; `just release` calls it.
 bump plugin level:
-    mise exec -- scripts/bump.sh {{plugin}} {{level}}
+    scripts/bump.sh {{plugin}} {{level}}
 
 # Release each plugin changed since its last tag, from the PR titles, once CI checked <sha> on main: ci.yml's release job.
 release sha:
-    mise exec -- scripts/release.sh {{ quote(sha) }}
+    scripts/release.sh {{ quote(sha) }}
 
 # CI's verdict from the results of the jobs required-checks needs: green when each one succeeded or was skipped.
 ci-verdict *results:
