@@ -2206,6 +2206,7 @@ def shell_words(text):
     r"""The command's words as the shell passes them, quotes and backslashes taken out (`..""`, `.\.` are `..`),
     operators and line breaks apart; None when it does not parse."""
     try:
+        text = text.replace("\\\n", " ")  # a line continuation joins its lines
         lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()<>\n")
         lex.whitespace, lex.whitespace_split = " \t\r", True
         return list(lex)
@@ -2253,8 +2254,8 @@ def find_runs_there(args):
     `||`, `|`, `&`) name a path under ~/.claude/plugins and run a command with `-exec` or `-execdir`."""
     there = runs = opened = False
     for w in args:
-        if w in ("&&", "||", "|", "&", "(", ")", "\n") or (w == ";" and not opened):
-            break
+        if w and set(w) <= set(";&|()<>\n") and not (w == ";" and opened):
+            break  # an operator, line breaks included, ends the find's command, but the `;` closing an -exec
         if w in FIND_EXECS:
             runs = opened = True
         elif w in (";", "+") and opened:
