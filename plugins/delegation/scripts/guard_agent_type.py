@@ -74,6 +74,10 @@ SAFE_CONFIG = re.compile(
 )
 # The options of a push that keep it on the remote and the refs it names: any other one (--recurse-submodules,
 # --repo, --exec, --no-verify, …) refuses it.
+# The commands a line may hold beside a temporary push: none of them can rewrite a repo's remotes unseen (a write
+# into .git, a hook or a config taints the line on its own).
+PUSH_SAFE_COMMANDS = {"cd", "git", "echo", "printf", "cat", "ls", "mkdir", "touch", "rm", "rmdir", "true", "false"}
+PUSH_SAFE_COMMANDS |= {":", "test", "[", "[[", "]]", "pwd", "grep", "head", "tail", "wc", "sleep"}
 PLAIN_PUSH_OPTIONS = re.compile(
     r"^(?:-[qufnvd]+|--(?:quiet|verbose|set-upstream|force|force-with-lease(?:=\S*)?|force-if-includes|tags|all"
     r"|follow-tags|atomic|dry-run|delete|porcelain|progress|no-progress|prune))$"
@@ -379,6 +383,8 @@ class Shell:
             self.tainted |= name.startswith("GIT_")
         words = [t for t in seg if t not in PREFIXES and not ASSIGN.match(t)]
         self.tainted |= bool(words) and os.path.basename(words[0]) == "ln"
+        # A command off this list may rewrite a repo's remotes out of sight (cp -R, tar, a script): no temporary push.
+        self.tainted |= bool(words) and os.path.basename(words[0]) not in PUSH_SAFE_COMMANDS
         # A git run by another command (nice, timeout, sh -c '…') is out of sight: it may redirect a remote.
         self.tainted |= any(re.search(r"(?:^|[\s/])git\b", t) for t in words[1:])
         if words[:1] in (["source"], ["."], ["eval"]):  # sets what it likes
@@ -430,7 +436,9 @@ class Shell:
         if verb == "remote":
             options = [o for o in rest[1:] if o.startswith("-")]
             if repo and len(args) >= 3 and plain and not options:
-                (self.remotes.add if self.local(repo, args[2]) else self.remotes.discard)((repo, args[1]))
+                local = self.local(repo, args[2])
+                (self.remotes.add if local else self.remotes.discard)((repo, args[1]))
+                self.tainted |= not local  # a real remote in some repo of the line, which a copy may carry
             else:
                 self.tainted = True
             return None

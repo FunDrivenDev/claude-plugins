@@ -429,6 +429,13 @@ class BashGuard(Hook):
             "git push --recurse-submodules=on-demand origin HEAD:main",
             "git push --no-verify origin main",
             "git submodule update --init; git push origin",
+            (
+                "git init -q ../evil && git -C ../evil remote add origin https://github.com/x/y && cp -R ../evil/.git . "
+                "&& git push origin main"
+            ),
+            "cp -R /tmp/mktemp/evil/. . && git push origin main",
+            "tar -xf /tmp/mktemp/e.tar && git push origin main",
+            "python3 /tmp/mktemp/x.py && git push origin main",
         ):
             self.assertTrue(self.blocks(clone + tail), tail)
 
