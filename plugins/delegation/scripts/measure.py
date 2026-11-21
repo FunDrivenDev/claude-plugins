@@ -31,17 +31,16 @@ LARGE_RESULT = 20000
 HEAVY_READ = 100000
 # Bash writes, read on the command with its quoted strings and heredoc bodies taken out: a redirection to a
 # file (not /dev/null nor another descriptor), a file command at a command's start, an in-place edit, a git
-# or gh verb that changes the repo or the remote, matched whole (`git merge-base` is a read, `git merge-file` a
-# write).
+# or gh verb that changes the repo or the remote (`git merge-base` is a read, `git merge-file` and
+# `git checkout-index` writes).
 CMD_START = r"(?:^|[;&|(`]|\b(?:xargs|sudo|then|do|else)\b)\s*"
 BASH_WRITE = re.compile(
     r"(?:^|[^-=<>!\d&])(?:\d|&)?>>?(?![&>=])\s*(?!/dev/(?:null|stdout|stderr)\b)[^\s;&|)]"
     r"|\|\s*tee\b(?!\s+/dev/null\b)"
     + rf"|{CMD_START}(?:mv|cp|rm|rmdir|mkdir|touch|ln|chmod|chown|truncate|install|dd)(?:\s|$)"
     + r"|\b(?:g?sed|perl)\s+(?:-[^\si]*\s+|'[^']*'\s+)*-[a-zA-Z]*i"
-    r"|\bgit\b(?:\s+(?:-[Cc]\s+\S+|--\S+))*\s+(?:(?:commit|push|pull|merge|merge-file|rebase|reset|revert"
-    r"|cherry-pick|am|apply|add|rm|mv|restore|clean|checkout|switch)(?![\w-])|tag\s+(?!-l\b)\S"
-    r"|stash(?!\s+(?:list|show)\b)\b)"
+    r"|\bgit\b(?:\s+(?:-[Cc]\s+\S+|--\S+))*\s+(?:commit|push|pull|merge(?!-base\b)|rebase|reset|revert|cherry-pick|am"
+    r"|apply|add|rm|mv|restore|clean|checkout|switch|tag\s+(?!-l\b)\S|stash(?!\s+(?:list|show)\b))\b"
     r"|\bgh\s+(?:pr|issue)\s+(?:create|edit|merge|close|reopen|ready|comment|review)\b"
     r"|\bgh\s+release\s+create\b|\bgh\s+api\b.*(?:-X|--method)\s*(?:POST|PUT|PATCH|DELETE)\b"
 )

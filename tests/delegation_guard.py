@@ -265,6 +265,10 @@ class BashGuard(Hook):
     """The same hook on Bash: a delegation: agent is read-only, so its writing commands are caught, except in a
     temporary folder (the agents' throwaway reproductions)."""
 
+    def setUp(self):
+        super().setUp()
+        self.env["CLAUDE_CODE_TMPDIR"] = "/Users/me/Code/claude"  # where Claude Code puts its scratchpads
+
     def run_bash(self, command, agent_type="delegation:investigator", cwd="/work/repo", **env):
         payload = {
             "hook_event_name": "PreToolUse",
@@ -362,6 +366,7 @@ class BashGuard(Hook):
             f"echo x > {s}/../../f",
             f"echo x > {s}-old/f",
             f"echo x > /Users/me/Code/claude/claude-{os.getuid() + 1}/-Users-me-Code-repo/s-1/scratchpad/f",
+            f"mkdir -p /work/repo/claude-{os.getuid()}/x/s-1/scratchpad",
         ):
             self.assertTrue(self.blocks(c), c)
 
@@ -387,6 +392,44 @@ class BashGuard(Hook):
             'd=$(mktemp -d) && cd "$d" && git clone -q remote.git src && cd /work/repo && git push origin main',
             'd=$(mktemp -d) && cd "$d" && git push /work/repo main',
         ):
+            self.assertTrue(self.blocks(c), c)
+
+    def test_whatever_can_send_a_temporary_push_elsewhere_refuses_it(self):
+        clone = 'd=$(mktemp -d) && cd "$d" && git init -q --bare r.git && git clone -q r.git src && cd src && '
+        for tail in (
+            "git push --repo=https://github.com/o/r",
+            "git -c remote.origin.pushurl=https://github.com/o/r push origin",
+            "git config remote.origin.url https://github.com/o/r && git push origin",
+            (
+                "git remote add up https://github.com/o/r && git remote rename origin x && git remote rename up origin"
+                " && git push origin"
+            ),
+            "git -c url.https://github.com/o/r.insteadOf=/tmp/mktemp/r.git push /tmp/mktemp/r.git main",
+            "git --git-dir=/work/repo/.git push origin main",
+            "GIT_DIR=/work/repo/.git git push origin main",
+            "export GIT_DIR=/work/repo/.git; git push origin main",
+            "printf '[remote \"origin\"]\\n\\tpushurl = https://github.com/o/r\\n' >> .git/config && git push origin",
+            'ln -s /work/repo "$d/l.git" && git push "$d/l.git" main',
+            "git push --receive-pack='git receive-pack /work/repo' origin",
+        ):
+            self.assertTrue(self.blocks(clone + tail), tail)
+
+    def test_a_variable_set_another_way_no_longer_holds_a_temporary_path(self):
+        for set_it in (
+            "local -x d=/work/repo",
+            "declare -g d=/work/repo",
+            'for d in /work/repo; do touch "$d/f"; done',
+            "read d <<< /work/repo",
+            "printf -v d %s /work/repo",
+            "unset d",
+            "d=/work/repo; echo | d=$(mktemp -d)",
+            "d=/work/repo; (d=$(mktemp -d))",
+        ):
+            self.assertTrue(self.blocks(f'd=$(mktemp -d); {set_it}; touch "$d/f"'), set_it)
+
+    def test_a_git_write_named_like_a_read_is_still_refused(self):
+        for c in ("git checkout-index -a -f", "git -C /work/repo commit-tree HEAD^{tree} -m x"):
+            self.assertTrue(self.blocks(c), c)
             self.assertTrue(self.blocks(c), c)
 
     def test_a_variable_set_from_a_temporary_path_is_one(self):

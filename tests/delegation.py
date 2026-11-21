@@ -289,6 +289,7 @@ class BashWrites(unittest.TestCase):
         "git --no-pager -C r add -A",
         "git checkout -b fix",
         "git merge-file a base b",
+        "git checkout-index -a -f",
         "git stash",
         "git reset --hard HEAD~1",
         "gh pr create --draft",
