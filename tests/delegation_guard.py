@@ -379,7 +379,7 @@ class BashGuard(Hook):
         for c in (
             repro,
             'd=$(mktemp -d) && cd "$d" && git init -q src && cd src && git remote add up "$d/remote.git" && git push up',
-            'd=$(mktemp -d) && git -C "$d/src" push -q "$d/remote.git" main',
+            'd=$(mktemp -d) && git init -q --bare "$d/remote.git" && git init -q "$d/src" && git -C "$d/src" push -q "$d/remote.git" main',
             (
                 'd=$(mktemp -d) && cd "$d" && git clone -q remote.git src && cd src && git config user.email a@b.c'
                 " && git commit -qm x --allow-empty && git push origin main"
@@ -399,6 +399,7 @@ class BashGuard(Hook):
             'd=$(mktemp -d) && cd "$d" && git init -q && git remote add up /work/repo && git push up main',
             'd=$(mktemp -d) && cd "$d" && git clone -q remote.git src && cd /work/repo && git push origin main',
             'd=$(mktemp -d) && cd "$d" && git push /work/repo main',
+            f"cd {self.scratchpad()}/src && git push origin main",
         ):
             self.assertTrue(self.blocks(c), c)
 
@@ -450,6 +451,13 @@ class BashGuard(Hook):
                 " && git -C src push origin main"
             ),
             "git worktree add ../w && git push origin main",
+            ": $(mktemp -u $(cp /work/real/.git/config .git/config)) && git push origin main",
+            (
+                "cd .. && git clone -q -o up https://github.com/x/y s2 && git -C s2 remote add origin /tmp/mktemp/r.git"
+                " && git -C s2 push"
+            ),
+            "cd .. && git clone -q r.git src && git -C src push origin main",
+            "git remote add origin /tmp/mktemp/r.git; git push origin main",
         ):
             self.assertTrue(self.blocks(clone + tail), tail)
 
@@ -496,6 +504,9 @@ class BashGuard(Hook):
     def test_a_hook_written_through_a_relative_path_taints_the_push(self):
         c = "cd /tmp/b.git && cd hooks && printf x > post-receive && cd /work/repo && git push /tmp/b.git HEAD"
         self.assertTrue(self.blocks(c))
+
+    def test_a_word_named_like_a_shell_builtin_in_an_argument_keeps_variables_tracked(self):
+        self.assertFalse(self.blocks('d=$(mktemp -d) && cd "$d" && echo x > f && grep -rn read .'))
 
     def test_a_git_write_named_like_a_read_is_still_refused(self):
         for c in ("git checkout-index -a -f", "git -C /work/repo commit-tree HEAD^{tree} -m x"):

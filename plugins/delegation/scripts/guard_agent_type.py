@@ -47,17 +47,16 @@ Anything else goes into your report (under Repro or Verify) for the main session
 # A temporary folder: /tmp, macOS's per-user /var/folders, $TMPDIR, the session's scratchpad; `mktemp -d` is rewritten
 # to /tmp/mktemp before the check, and a variable set from a temporary path is one.
 TEMP_ROOT = re.compile(r"^(?:/private)?/(?:tmp|var/folders)(?:/|$)")
-MKTEMP = re.compile(r"\$\(\s*mktemp\b[^)]*\)|`\s*mktemp\b[^`]*`")
+MKTEMP = re.compile(r"\$\(\s*mktemp\b[\w\s./%=-]*\)|`\s*mktemp\b[\w\s./%=-]*`")
 PWD = re.compile(r"\$\(\s*pwd(?:\s+-[LP])?\s*\)|`\s*pwd(?:\s+-[LP])?\s*`")
 VAR = re.compile(r"\$(?:\{(\w+)\}|(\w+))")
 ASSIGN = re.compile(r"^(\w+)=(.*)$", re.DOTALL)
 APPEND = re.compile(r"^(\w+)(?:\+=|\[)")
 # What can change a variable or how it splits out of sight: IFS, sourced or evaluated code, a function, a trap. A
 # command line holding one gets no variable tracked.
-OPAQUE = re.compile(
-    r"\bIFS\b|\bPWD=|\b(?:source|eval|builtin|trap|function|alias|read|readonly|exec|mapfile|readarray|getopts)\b"
-    r"|\bprintf\s+-\w*v|\b(?:declare|local|typeset)\s+-\w*[nr]|(?:^|[;&|({]\s*)\.\s|\(\s*\)\s*\{"
-)
+OPAQUE = re.compile(r"\bIFS\b|\bPWD\+?=|\w\s*\(\s*\)\s*\{|\bprintf\s+-\w*v")
+OPAQUE_WORDS = {"source", ".", "eval", "builtin", "trap", "function", "alias", "read", "readonly", "exec", "mapfile"}
+OPAQUE_WORDS |= {"readarray", "getopts", "declare", "local", "typeset"}
 # What can send a push elsewhere, wherever it sits in the line (a git run through nice, sh -c, …).
 REDIRECTS_PUSH = re.compile(
     r"\b(?:set-url|rename|insteadOf|pushInsteadOf|pushurl|pushDefault|gitdir|hooksPath|include(?:If)?|remote\.[\w-]+\.\w|branch\.\S+\.(?:remote|pushRemote|merge)|submodule|recurse)"
@@ -333,14 +332,15 @@ def targets(seg, writes):
 class Shell:
     """What a command line has set so far, read in order: the folder it runs in when that is a temporary one, the
     variables that hold a temporary path, and the remotes (repo folder, name) that point into a temporary folder.
-    Anything that can send a push elsewhere (git config, a remote renamed or removed, a GIT_ variable, a link, a
+    A push passes only from a repo the line made itself (git init or a clone of a temporary path, into a folder
+    that was not there), and a remote added with a real URL taints the line. Anything that can send a push elsewhere (git config, a remote renamed or removed, a GIT_ variable, a link, a
     write into a .git folder or a hook) taints the line: no push in it is a temporary write after that."""
 
     def __init__(self, cwd, session):
         self.session = session
         self.here = os.path.normpath(cwd) if cwd and self.temp(cwd) else None
         self.vars = {"TMPDIR": "/tmp/mktemp"}
-        self.remotes = set()
+        self.remotes = {}  # repo folder made by this command line: the names of its remotes, all temporary
         self.tainted = False
         self.split = False  # no variable is tracked: something in the line may change one or how it splits
 
@@ -430,39 +430,44 @@ class Shell:
                 rest = words[i + 1 :]
                 args = positional(rest, set())
                 folder = self.within(repo, args[0]) if args else repo
-                self.tainted |= not folder or ".git" in folder.split("/") or any("template" in o for o in rest)
-                self.remotes = {r for r in self.remotes if r[0] != folder}
+                self.tainted |= any("template" in o or "separate" in o for o in rest)
+                self.made(folder, set())
             return None
         rest = words[i + 1 :]
         args = positional(rest, GIT_VALUE_OPTIONS[verb])
         if verb == "clone" and args:
             name = option(rest, ("-o", "--origin")) or "origin"
             dest = args[1] if len(args) > 1 else os.path.basename(args[0].rstrip("/")).removesuffix(".git")
-            folder = self.within(repo, dest)
             odd = ("-c", "--config", "--template", "--bare", "--mirror", "--separate-git-dir", "--reference")
-            own = plain and not any(o.startswith(odd) for o in rest)
-            # A clone into a folder out of sight or into a .git, or an odd one, may carry a real remote anywhere.
-            self.tainted |= not folder or ".git" in folder.split("/") or not own
-            self.remotes = {r for r in self.remotes if r[0] != folder}
-            if folder and own and self.local(repo, args[0]):
-                self.remotes.add((folder, name))
+            # A clone of a real URL, or an odd one, may carry a real remote anywhere.
+            self.tainted |= not plain or any(o.startswith(odd) for o in rest) or not self.local(repo, args[0])
+            self.made(self.within(repo, dest), {name})
             return None
         if verb == "remote":
             options = [o for o in rest[1:] if o.startswith("-")]
-            if repo and len(args) >= 3 and plain and not options:
-                local = self.local(repo, args[2])
-                (self.remotes.add if local else self.remotes.discard)((repo, args[1]))
-                self.tainted |= not local  # a real remote in some repo of the line, which a copy may carry
-            else:
+            names = self.remotes.get(repo)
+            fails = names is None or (args[1] in names) == (args[0] == "add") if len(args) >= 3 else True
+            # Out of a repo the line made, with a real URL, an option, or a name that fails (add: taken; set-url: none).
+            if not plain or options or fails or not self.local(repo, args[2]):
                 self.tainted = True
+            else:
+                names.add(args[1])
             return None
         if self.tainted or not plain or any(o.startswith("-") and not PLAIN_PUSH_OPTIONS.match(o) for o in rest):
             return False
-        remote = args[0] if args else "origin"
-        if repo and (repo, remote) in self.remotes:
+        names = self.remotes.get(repo)
+        if names is None:  # a repo made before this line: its remotes and upstreams are out of sight
+            return False
+        if not args or args[0] in names:  # with no remote, the upstream: one of its remotes, all temporary
             return True
-        # Any other word is a remote name configured outside this command line: no telling where it points.
-        return remote.startswith(("/", "./", "file://")) and bool(self.local(repo, remote))
+        return args[0].startswith(("/", "./", "file://")) and bool(self.local(repo, args[0]))
+
+    def made(self, folder, names):
+        """A repo this line makes: a folder out of sight, in a .git, already made or already on disk taints it."""
+        if not folder or ".git" in folder.split("/") or folder in self.remotes or os.path.lexists(folder):
+            self.tainted = True
+        if folder:
+            self.remotes[folder] = names
 
     def local(self, repo, url):
         """The temporary folder a remote's URL names, from the repo folder, else None (a URL, a path elsewhere)."""
@@ -502,7 +507,8 @@ def bash_writes_outside_temp(command, cwd, session=None):
     if not measure.bash_writes(command):
         return False
     sh = Shell(cwd, session)
-    sh.split = bool(OPAQUE.search(command))
+    first = [next((t for t in seg if t not in PREFIXES and not ASSIGN.match(t)), "") for seg, _ in segments(command)]
+    sh.split = bool(OPAQUE.search(command)) or any(w in OPAQUE_WORDS for w in first)
     # A command substitution (beyond mktemp and pwd) runs out of sight: it may rewrite a remote.
     sh.tainted = bool(
         REDIRECTS_PUSH.search(command) or re.search(r"\$\(|`|[<>]\(", PWD.sub("", MKTEMP.sub("", command)))
