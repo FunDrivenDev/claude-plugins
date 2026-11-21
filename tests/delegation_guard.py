@@ -427,6 +427,20 @@ class BashGuard(Hook):
         ):
             self.assertTrue(self.blocks(f'd=$(mktemp -d); {set_it}; touch "$d/f"'), set_it)
 
+    def test_a_variable_that_splits_or_grows_holds_no_temporary_path(self):
+        for c in (
+            'd="/tmp/x /work/repo"; rm -rf $d',
+            "d=/tmp/x\\ /work/repo; rm -rf $d",
+            "IFS=:; d=/tmp/x:/work/repo; rm -rf $d",
+            "d=/tmp/x; d+=/../../work/repo; rm -rf $d",
+            "d=$(mktemp -d); source ./env.sh; rm -rf $d",
+        ):
+            self.assertTrue(self.blocks(c), c)
+
+    def test_a_hook_written_through_a_relative_path_taints_the_push(self):
+        c = "cd /tmp/b.git && cd hooks && printf x > post-receive && cd /work/repo && git push /tmp/b.git HEAD"
+        self.assertTrue(self.blocks(c))
+
     def test_a_git_write_named_like_a_read_is_still_refused(self):
         for c in ("git checkout-index -a -f", "git -C /work/repo commit-tree HEAD^{tree} -m x"):
             self.assertTrue(self.blocks(c), c)

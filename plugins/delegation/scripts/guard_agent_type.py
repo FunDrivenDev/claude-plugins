@@ -51,6 +51,7 @@ MKTEMP = re.compile(r"\$\(\s*mktemp\b[^)]*\)|`\s*mktemp\b[^`]*`")
 PWD = re.compile(r"\$\(\s*pwd(?:\s+-[LP])?\s*\)|`\s*pwd(?:\s+-[LP])?\s*`")
 VAR = re.compile(r"\$(?:\{(\w+)\}|(\w+))")
 ASSIGN = re.compile(r"^(\w+)=(.*)$", re.DOTALL)
+APPEND = re.compile(r"^(\w+)\+=")
 DECLARE = {"export", "local", "declare", "readonly", "typeset"}
 SUBSHELL = {"|", "|&", "&", "("}
 # Git's options before the verb that leave the repository and its remotes as -C and the folder give them.
@@ -292,6 +293,7 @@ class Shell:
         self.vars = {"TMPDIR": "/tmp/mktemp"}
         self.remotes = set()
         self.tainted = False
+        self.split = False  # IFS was set: an unquoted variable may split anywhere
 
     def temp(self, path):
         return temp_path(path, self.session)
@@ -318,8 +320,10 @@ class Shell:
             m = ASSIGN.match(w)
             if m:
                 self.tainted |= m.group(1).startswith("GIT_")
+                self.split |= m.group(1) == "IFS"
                 value = self.resolve(self.expand(m.group(2))) if m.group(2).startswith(("/", "$", "~")) else None
-                if value and lasting:
+                # An unquoted use splits a value with a blank, or any value once IFS is set, into several paths.
+                if value and lasting and not self.split and not re.search(r"\s", value):
                     self.vars[m.group(1)] = value
                 else:
                     self.vars.pop(m.group(1), None)
@@ -328,12 +332,15 @@ class Shell:
         """Any other segment that names a variable (for, read, printf -v, unset, local -x, …) may set it: it no
         longer holds a temporary path. A GIT_ variable or a link taints the line."""
         for t in seg:
-            m = ASSIGN.match(t)
+            m = ASSIGN.match(t) or APPEND.match(t)
             name = m.group(1) if m else t
             self.vars.pop(name, None)
             self.tainted |= name.startswith("GIT_")
         words = [t for t in seg if t not in PREFIXES and not ASSIGN.match(t)]
         self.tainted |= bool(words) and os.path.basename(words[0]) == "ln"
+        if words[:1] in (["source"], ["."], ["eval"]):  # sets what it likes
+            self.vars = {}
+            self.split = self.tainted = True
 
     def wrote(self, path):
         """A write into a .git folder, a bare repo's config or a hook can send a push elsewhere: it taints the line."""
@@ -446,9 +453,10 @@ def bash_writes_outside_temp(command, cwd, session=None):
         if out is None:
             return True
         for t in out:
-            sh.wrote(t)
-            if not sh.resolve(t):
+            where = sh.resolve(t)
+            if not where:
                 return True
+            sh.wrote(where)
     return False
 
 
