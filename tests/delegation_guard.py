@@ -434,6 +434,14 @@ class BashGuard(Hook):
             "IFS=:; d=/tmp/x:/work/repo; rm -rf $d",
             "d=/tmp/x; d+=/../../work/repo; rm -rf $d",
             "d=$(mktemp -d); source ./env.sh; rm -rf $d",
+            "d=/tmp/x:/work/repo; IFS=:; rm -rf $d",
+            "IFS+=:; d=/tmp/x:/work/repo; rm -rf $d",
+            "read IFS <<< :; d=/tmp/x:/work/repo; rm -rf $d",
+            "d=/tmp/x; d[0]=/work/repo; rm -rf $d",
+            "d=/tmp/x; builtin eval d=/work/repo; rm -rf $d",
+            "f(){ d=/work/repo; }; d=/tmp/x; f; rm -rf $d",
+            "trap 'd=/work/repo' DEBUG; d=/tmp/x; rm -rf $d",
+            "d=/tmp/x; . ./env.sh; rm -rf $d",
         ):
             self.assertTrue(self.blocks(c), c)
 

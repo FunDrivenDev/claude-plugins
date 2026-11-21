@@ -51,7 +51,10 @@ MKTEMP = re.compile(r"\$\(\s*mktemp\b[^)]*\)|`\s*mktemp\b[^`]*`")
 PWD = re.compile(r"\$\(\s*pwd(?:\s+-[LP])?\s*\)|`\s*pwd(?:\s+-[LP])?\s*`")
 VAR = re.compile(r"\$(?:\{(\w+)\}|(\w+))")
 ASSIGN = re.compile(r"^(\w+)=(.*)$", re.DOTALL)
-APPEND = re.compile(r"^(\w+)\+=")
+APPEND = re.compile(r"^(\w+)(?:\+=|\[)")
+# What can change a variable or how it splits out of sight: IFS, sourced or evaluated code, a function, a trap. A
+# command line holding one gets no variable tracked.
+OPAQUE = re.compile(r"\bIFS\b|\b(?:source|eval|builtin|trap|function|alias)\b|(?:^|[;&|({]\s*)\.\s|\(\s*\)\s*\{")
 DECLARE = {"export", "local", "declare", "readonly", "typeset"}
 SUBSHELL = {"|", "|&", "&", "("}
 # Git's options before the verb that leave the repository and its remotes as -C and the folder give them.
@@ -293,7 +296,7 @@ class Shell:
         self.vars = {"TMPDIR": "/tmp/mktemp"}
         self.remotes = set()
         self.tainted = False
-        self.split = False  # IFS was set: an unquoted variable may split anywhere
+        self.split = False  # no variable is tracked: something in the line may change one or how it splits
 
     def temp(self, path):
         return temp_path(path, self.session)
@@ -320,9 +323,8 @@ class Shell:
             m = ASSIGN.match(w)
             if m:
                 self.tainted |= m.group(1).startswith("GIT_")
-                self.split |= m.group(1) == "IFS"
                 value = self.resolve(self.expand(m.group(2))) if m.group(2).startswith(("/", "$", "~")) else None
-                # An unquoted use splits a value with a blank, or any value once IFS is set, into several paths.
+                # An unquoted use splits a value with a blank into several paths.
                 if value and lasting and not self.split and not re.search(r"\s", value):
                     self.vars[m.group(1)] = value
                 else:
@@ -433,6 +435,7 @@ def bash_writes_outside_temp(command, cwd, session=None):
     if not measure.bash_writes(command):
         return False
     sh = Shell(cwd, session)
+    sh.split = bool(OPAQUE.search(command))
     for seg, lasting in segments(command):
         seg = [sh.expand(t) for t in seg]
         words = [t for t in seg if not ASSIGN.match(t) and t not in PREFIXES]
