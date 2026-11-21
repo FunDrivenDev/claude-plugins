@@ -2022,7 +2022,12 @@ def plugin_copies():
                 paths.append(catalog)
                 source = entry.get("source")
                 if isinstance(source, str):
+                    # metadata.pluginRoot prefixes a relative source; both readings are guarded.
+                    meta = listed.get("metadata")
+                    prefix = meta.get("pluginRoot") if isinstance(meta, dict) else None
                     paths.append(os.path.normpath(os.path.join(root, source)))
+                    if isinstance(prefix, str):
+                        paths.append(os.path.normpath(os.path.join(root, prefix, source)))
     return paths
 
 
@@ -2184,6 +2189,35 @@ def names_folder(text, folder):
     return False
 
 
+def plugins_dirs():
+    """~/.claude/plugins, as spelled and as resolved."""
+    plugins = os.path.join(os.path.expanduser("~"), ".claude", "plugins")
+    return {os.path.abspath(plugins), os.path.realpath(plugins)}
+
+
+def reaches_relatively(text, cwd, paths):
+    """True when a command that names ~/.claude/plugins, or runs there, holds a relative path that may reach a
+    guarded one from a folder it changed to (`cd …/cache/guest-suite && rm -rf ../fundrivendev`): a `..`
+    part, or a word whose first part is a part of a guarded path under ~/.claude/plugins (`fundrivendev`,
+    `handover`, `cache`)."""
+    dirs = plugins_dirs()
+    inside = bool(cwd) and any(os.path.abspath(cwd) == d or os.path.abspath(cwd).startswith(d + os.sep) for d in dirs)
+    if not inside and not any(names_path(text, d) for d in dirs):
+        return False
+    parts = set()
+    for p in paths:
+        for d in dirs:
+            if p.startswith(d + os.sep):
+                parts |= set(os.path.relpath(p, d).split(os.sep))
+    for word in re.split(r"[\s;&|()<>]+", text):
+        word = re.sub(r"^[A-Za-z_][A-Za-z0-9_]*=", "", word).strip("'\"")
+        if re.search(r"(^|/)\.\.(/|$)", word):
+            return True
+        if word and word[0] not in "/~$-" and word.split("/", 1)[0] in parts:
+            return True
+    return False
+
+
 # Tools that act on nothing the guard protects: the reading tools, and StructuredOutput, which only returns a
 # subagent's answer.
 UNGUARDED_TOOLS = {"Read", "Glob", "Grep", "LS", "StructuredOutput"}
@@ -2209,6 +2243,8 @@ def guard_hit(inp):
     for d in guarded_folders(paths):
         if names_folder(text, d):
             return d
+    if tool == "Bash" and reaches_relatively(text, inp.get("cwd"), paths):
+        return os.path.abspath(os.path.join(os.path.expanduser("~"), ".claude", "plugins"))
     m = GUARD_WORDS.search(text) if tool == "Bash" else None
     return m.group(0) if m else None
 

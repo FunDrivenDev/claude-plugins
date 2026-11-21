@@ -171,6 +171,31 @@ class HandoverCopies(unittest.TestCase):
         ):
             self.assertIsNotNone(hit(command), command)
 
+    def test_a_relative_path_from_another_plugins_folder_is_denied(self):
+        # Review finding: a cd by a literal path into a sibling, then a relative path to the plugin.
+        for command in (
+            "cd ~/.claude/plugins/cache/guest-suite && rm -rf ../fundrivendev",
+            "cd ~/.claude/plugins/marketplaces/fundrivendev/plugins/delegation && rm -rf ../handover",
+            "cd ~/.claude/plugins/cache/guest-suite/gs-dev-toolkit; cd ../../fundrivendev; rm -rf handover",
+            "cd ~/.claude/plugins && rm -rf cache/fundrivendev",
+        ):
+            self.assertIsNotNone(hit(command), command)
+        inp = {"tool_name": "Bash", "tool_input": {"command": "rm -rf ../fundrivendev"}}
+        inp["cwd"] = os.path.join(HOME, ".claude", "plugins", "cache", "guest-suite")
+        self.assertIsNotNone(H.guard_hit(inp))
+
+    def test_a_marketplace_plugin_root_is_followed(self):
+        root = installed("marketplaces", "pr", "plugins", "handover", "hooks", "hooks.json", body="{}")
+        installed(
+            "marketplaces",
+            "pr",
+            ".claude-plugin",
+            "marketplace.json",
+            body='{"metadata": {"pluginRoot": "./plugins"}, "plugins": [{"name": "handover", "source": "handover"}]}',
+        )
+        self.assertIsNotNone(hit(root, tool="Edit"))
+        self.assertIsNotNone(hit("rm -rf ~/.claude/plugins/marketplaces/pr/plugins/handover"))
+
     def test_the_other_plugins_of_the_same_marketplace_are_free(self):
         self.assertIsNone(hit(f"rm -rf {os.path.dirname(os.path.dirname(NEIGHBOUR))}"))
         self.assertIsNone(hit("ls ~/.claude/plugins/cache/fundrivendev/delegation"))
