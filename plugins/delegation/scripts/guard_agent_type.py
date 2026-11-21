@@ -78,6 +78,9 @@ SAFE_CONFIG = re.compile(
 # into .git, a hook or a config taints the line on its own).
 PUSH_SAFE_COMMANDS = {"cd", "git", "echo", "printf", "cat", "ls", "mkdir", "touch", "rm", "rmdir", "true", "false"}
 PUSH_SAFE_COMMANDS |= {":", "test", "[", "[[", "]]", "pwd", "grep", "head", "tail", "wc", "sleep"}
+PUSH_SAFE_GIT_VERBS = {"init", "add", "commit", "status", "log", "diff", "show", "checkout", "switch", "branch", "tag"}
+PUSH_SAFE_GIT_VERBS |= {"merge", "rebase", "reset", "rm", "mv", "restore", "stash", "rev-parse", "ls-files", "ls-tree"}
+PUSH_SAFE_GIT_VERBS |= {"cat-file", "fetch", "pull", "cherry-pick", "revert", "describe", "merge-base", "config"}
 PLAIN_PUSH_OPTIONS = re.compile(
     r"^(?:-[qufnvd]+|--(?:quiet|verbose|set-upstream|force|force-with-lease(?:=\S*)?|force-if-includes|tags|all"
     r"|follow-tags|atomic|dry-run|delete|porcelain|progress|no-progress|prune))$"
@@ -422,6 +425,13 @@ class Shell:
             self.tainted |= len(words) > i + 1 and words[i + 1] not in ("-v", "show", "get-url")
             return None
         if verb not in GIT_VALUE_OPTIONS:
+            self.tainted |= verb not in PUSH_SAFE_GIT_VERBS
+            if verb == "init":
+                rest = words[i + 1 :]
+                args = positional(rest, set())
+                folder = self.within(repo, args[0]) if args else repo
+                self.tainted |= not folder or ".git" in folder.split("/") or any("template" in o for o in rest)
+                self.remotes = {r for r in self.remotes if r[0] != folder}
             return None
         rest = words[i + 1 :]
         args = positional(rest, GIT_VALUE_OPTIONS[verb])
@@ -429,9 +439,13 @@ class Shell:
             name = option(rest, ("-o", "--origin")) or "origin"
             dest = args[1] if len(args) > 1 else os.path.basename(args[0].rstrip("/")).removesuffix(".git")
             folder = self.within(repo, dest)
-            own = plain and not any(o.startswith(("-c", "--config", "--template")) for o in rest)
-            if folder:
-                (self.remotes.add if own and self.local(repo, args[0]) else self.remotes.discard)((folder, name))
+            odd = ("-c", "--config", "--template", "--bare", "--mirror", "--separate-git-dir", "--reference")
+            own = plain and not any(o.startswith(odd) for o in rest)
+            # A clone into a folder out of sight or into a .git, or an odd one, may carry a real remote anywhere.
+            self.tainted |= not folder or ".git" in folder.split("/") or not own
+            self.remotes = {r for r in self.remotes if r[0] != folder}
+            if folder and own and self.local(repo, args[0]):
+                self.remotes.add((folder, name))
             return None
         if verb == "remote":
             options = [o for o in rest[1:] if o.startswith("-")]
@@ -489,7 +503,10 @@ def bash_writes_outside_temp(command, cwd, session=None):
         return False
     sh = Shell(cwd, session)
     sh.split = bool(OPAQUE.search(command))
-    sh.tainted = bool(REDIRECTS_PUSH.search(command))
+    # A command substitution (beyond mktemp and pwd) runs out of sight: it may rewrite a remote.
+    sh.tainted = bool(
+        REDIRECTS_PUSH.search(command) or re.search(r"\$\(|`|[<>]\(", PWD.sub("", MKTEMP.sub("", command)))
+    )
     for seg, lasting in segments(command):
         seg = [sh.expand(t) for t in seg]
         words = [t for t in seg if not ASSIGN.match(t) and t not in PREFIXES]

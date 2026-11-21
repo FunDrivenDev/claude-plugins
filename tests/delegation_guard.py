@@ -436,6 +436,20 @@ class BashGuard(Hook):
             "cp -R /tmp/mktemp/evil/. . && git push origin main",
             "tar -xf /tmp/mktemp/e.tar && git push origin main",
             "python3 /tmp/mktemp/x.py && git push origin main",
+            'echo "$(printf x >> .git/config)" && git push origin HEAD:main',
+            "echo `cp -R ../evil/.git .` && git push origin main",
+            ': "$(cp -R ../evil/.git .)" && git push origin main',
+            "cd .. && rm -rf src && e=src && git clone -q https://github.com/x/y $e && git -C src push origin main",
+            "cd .. && rm -rf src && git clone -q https://github.com/x/y src/../src && git -C src push origin main",
+            (
+                "cd .. && rm -rf src && git clone -q https://github.com/x/y t && git init -q --template=t/.git src"
+                " && git -C src push origin main"
+            ),
+            (
+                "cd .. && rm -rf src && mkdir src && git clone -q --bare https://github.com/x/y src/.git"
+                " && git -C src push origin main"
+            ),
+            "git worktree add ../w && git push origin main",
         ):
             self.assertTrue(self.blocks(clone + tail), tail)
 
