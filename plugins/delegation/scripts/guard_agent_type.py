@@ -47,7 +47,9 @@ Anything else goes into your report (under Repro or Verify) for the main session
 # A temporary folder: /tmp, macOS's per-user /var/folders, $TMPDIR, the session's scratchpad; `mktemp -d` is rewritten
 # to /tmp/mktemp before the check, and a variable set from a temporary path is one.
 TEMP_ROOT = re.compile(r"^(?:/private)?/(?:tmp|var/folders)(?:/|$)")
-MKTEMP = re.compile(r"\$\(\s*mktemp\b[\w\s./%=-]*\)|`\s*mktemp\b[\w\s./%=-]*`")
+# mktemp's arguments may hold quotes and variables, never a command of their own.
+MKTEMP = re.compile(r"\$\(\s*mktemp\b(?:[^()`$]|\$(?!\())*\)|`\s*mktemp\b(?:[^()`$]|\$(?!\())*`")
+FRESH = "/tmp/mktemp"  # what `mktemp -d` reads as: a folder just made, empty, in no repo
 PWD = re.compile(r"\$\(\s*pwd(?:\s+-[LP])?\s*\)|`\s*pwd(?:\s+-[LP])?\s*`")
 VAR = re.compile(r"\$(?:\{(\w+)\}|(\w+))")
 ASSIGN = re.compile(r"^(\w+)=(.*)$", re.DOTALL)
@@ -59,7 +61,7 @@ OPAQUE_WORDS = {"source", ".", "eval", "builtin", "trap", "function", "alias", "
 OPAQUE_WORDS |= {"readarray", "getopts", "declare", "local", "typeset"}
 # What can send a push elsewhere, wherever it sits in the line (a git run through nice, sh -c, …).
 REDIRECTS_PUSH = re.compile(
-    r"\b(?:set-url|rename|insteadOf|pushInsteadOf|pushurl|pushDefault|gitdir|hooksPath|include(?:If)?|remote\.[\w-]+\.\w|branch\.\S+\.(?:remote|pushRemote|merge)|submodule|recurse)"
+    r"\b(?:CDPATH|set-url|rename|insteadOf|pushInsteadOf|pushurl|pushDefault|gitdir|hooksPath|include(?:If)?|remote\.[\w-]+\.\w|branch\.\S+\.(?:remote|pushRemote|merge)|submodule|recurse)"
     r"|--(?:global|system|file)\b",
     re.IGNORECASE,
 )
@@ -97,7 +99,7 @@ GIT_VALUE_OPTIONS = {
 URL = re.compile(r"^(?!file://)[\w+.-]+://|^[^/]*:")
 SEPARATORS = {";", "&&", "||", "|", "|&", "&", "(", ")", "\n"}
 REDIRECTS = {">", ">>", ">|", "&>", "&>>"}
-PREFIXES = {"sudo", "env", "command", "nohup", "time", "then", "do", "else", "if", "while", "until", "!", "{"}
+PREFIXES = {"sudo", "env", "command", "nohup", "time", "then", "do", "else", "elif", "if", "while", "until", "!", "{"}
 FILE_COMMANDS = {"mv", "rm", "rmdir", "mkdir", "touch", "truncate", "tee"}
 MODE_COMMANDS = {"chmod", "chown"}
 COPY_COMMANDS = {"cp", "install", "ln"}
@@ -339,6 +341,8 @@ class Shell:
     def __init__(self, cwd, session):
         self.session = session
         self.here = os.path.normpath(cwd) if cwd and self.temp(cwd) else None
+        # The other folders the line may run in by now, a cd having failed or run in a subshell; None: a real one.
+        self.alts = set()
         self.vars = {"TMPDIR": "/tmp/mktemp"}
         self.remotes = {}  # repo folder made by this command line: the names of its remotes, all temporary
         self.tainted = False
@@ -399,9 +403,19 @@ class Shell:
         parts = path.split("/")
         self.tainted |= ".git" in parts or "hooks" in parts or parts[-1] in ("config", ".gitconfig")
 
-    def cd(self, words):
+    def cd(self, words, lasting):
         dest = next((a for a in words[1:] if not a.startswith("-")), "")
-        self.here = self.resolve(dest)
+        cdpath = "CDPATH" in os.environ or any("CDPATH" in w for w in words)
+        to = None if cdpath and not dest.startswith("/") else self.resolve(dest)
+        if not lasting:  # a subshell's cd: what follows in it runs there
+            self.alts.add(to)
+            return
+        # Only a cd into a fresh mktemp folder, the scratchpad or a folder on disk surely succeeds; after any other,
+        # the line may go on where it was.
+        sure = to and (to == FRESH or os.path.isdir(to) or self.temp(to) and to.endswith("/scratchpad"))
+        if not sure:
+            self.alts.add(self.here)
+        self.here = to
 
     def git_push_is_temp(self, words, seg):
         """A git clone, remote add or set-url is recorded; a git push is a temporary write when its remote is a
@@ -455,6 +469,24 @@ class Shell:
             return None
         if self.tainted or not plain or any(o.startswith("-") and not PLAIN_PUSH_OPTIONS.match(o) for o in rest):
             return False
+        # Each folder the push may run in must be a repo the line made, or a fresh mktemp one (no repo: it fails).
+        main = self.pushes_to_temp(self.repo_of(words, self.here), args, fresh=False)
+        return main and all(self.pushes_to_temp(self.repo_of(words, here), args) for here in self.alts)
+
+    def repo_of(self, words, here):
+        """The repo folder a git command acts on, run from here (None: a real one)."""
+        repo, i = here, 1
+        while i < len(words) and words[i].startswith("-"):
+            if words[i] == "-C" and i + 1 < len(words):
+                repo, i = self.within(repo, words[i + 1]), i + 2
+            else:
+                i += 2 if words[i] == "-c" else 1
+        return repo
+
+    def pushes_to_temp(self, repo, args, fresh=True):
+        """Whether a push from repo stays temporary; fresh: a fresh mktemp folder, in no repo, makes it fail."""
+        if fresh and repo == FRESH and FRESH not in self.remotes:
+            return True
         names = self.remotes.get(repo)
         if names is None:  # a repo made before this line: its remotes and upstreams are out of sight
             return False
@@ -507,7 +539,10 @@ def bash_writes_outside_temp(command, cwd, session=None):
     if not measure.bash_writes(command):
         return False
     sh = Shell(cwd, session)
-    first = [next((t for t in seg if t not in PREFIXES and not ASSIGN.match(t)), "") for seg, _ in segments(command)]
+    first = [
+        next((t for t in seg if t not in PREFIXES and not ASSIGN.match(t) and not t.startswith("-")), "")
+        for seg, _ in segments(command)
+    ]
     sh.split = bool(OPAQUE.search(command)) or any(w in OPAQUE_WORDS for w in first)
     # A command substitution (beyond mktemp and pwd) runs out of sight: it may rewrite a remote.
     sh.tainted = bool(
@@ -521,7 +556,7 @@ def bash_writes_outside_temp(command, cwd, session=None):
         else:
             sh.forget(seg)
         if words[:1] == ["cd"]:
-            sh.cd(words) if lasting else None
+            sh.cd(words, lasting)
             continue
         if words[:1] == ["git"]:
             pushed = sh.git_push_is_temp(words, seg)

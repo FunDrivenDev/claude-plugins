@@ -458,6 +458,8 @@ class BashGuard(Hook):
             ),
             "cd .. && git clone -q r.git src && git -C src push origin main",
             "git remote add origin /tmp/mktemp/r.git; git push origin main",
+            "git init -q && (cd /work/repo; git push)",
+            "git init -q repo && CDPATH=/work && cd repo && git push",
         ):
             self.assertTrue(self.blocks(clone + tail), tail)
 
@@ -488,6 +490,8 @@ class BashGuard(Hook):
             "d=/tmp/x; builtin eval d=/work/repo; rm -rf $d",
             "f(){ d=/work/repo; }; d=/tmp/x; f; rm -rf $d",
             "trap 'd=/work/repo' DEBUG; d=/tmp/x; rm -rf $d",
+            'd=/tmp/x && x=d=/work/repo && command -p eval $x && rm -rf "$d"',
+            'd=/tmp/x; if false; then :; elif eval d=/work/repo; then rm -rf "$d"; fi',
             "d=/tmp/x; . ./env.sh; rm -rf $d",
             "d=/tmp/x; declare -n r=d; r=/work/repo; rm -rf $d",
             "d=/tmp/x; printf -vd /work/repo; rm -rf $d",
@@ -513,12 +517,20 @@ class BashGuard(Hook):
             self.assertTrue(self.blocks(c), c)
             self.assertTrue(self.blocks(c), c)
 
+    def test_a_push_after_a_cd_that_may_fail_from_a_real_folder_is_refused(self):
+        for c in (
+            "touch /tmp/f-guard; git init -q /tmp/f-guard/src; cd /tmp/f-guard/src; git push",
+            "git clone -q /tmp/w-guard/nope.git /tmp/w-guard/src; cd /tmp/w-guard/src; git push",
+        ):
+            self.assertTrue(self.blocks(c), c)
+
     def test_a_variable_set_from_a_temporary_path_is_one(self):
         # A refused reproduction: R is set from the temporary folder the command runs in.
         for c in (
             'd=$(mktemp -d) && cd "$d" && R=$(pwd -P) && mkdir -p "$R/pins" && printf x > "$R/pins/mise.toml"',
             'd=$(mktemp -d); S=$d; X=$d/pins; export Y="${X}/sub"; touch "$S/a" $X/b "$Y/c"',
             'cd $(mktemp -d) && R=`pwd` && touch "$R/a"',
+            'd=$(mktemp -d "$TMPDIR/r.XXXX") && cd "$d" && touch f',
         ):
             self.assertFalse(self.blocks(c), c)
 
