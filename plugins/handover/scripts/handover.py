@@ -2250,19 +2250,17 @@ FIND_EXECS = ("-exec", "-execdir", "-ok", "-okdir")
 
 
 def find_runs_there(args):
-    """True when a find's own words (up to the end of its command: `;` but the one closing an `-exec`, `&&`,
-    `||`, `|`, `&`) name a path under ~/.claude/plugins and run a command with `-exec` or `-execdir`."""
-    there = runs = opened = False
-    for w in args:
-        if w and set(w) <= set(";&|()\n") and not (w == ";" and opened):
-            break  # an operator, line breaks included, ends the find's command, but the `;` closing an -exec;
-            # a redirection (`2>/dev/null`) does not
-        if w in FIND_EXECS:
-            runs = opened = True
-        elif w in (";", "+") and opened:
-            opened = False
-        there = there or under_plugins(w)
-    return there and runs
+    r"""True when a find starts from a path under ~/.claude/plugins (its words before the first expression, past
+    `-H`, `-L`, `-P`, `-D …` and `-O…`) and a later word runs a command (`-exec`, `-execdir`, `-ok`,
+    `-okdir`). Operators are not looked for: quoted, `\(` and `'&'` read like them."""
+    i = 0
+    while i < len(args) and (args[i] in ("-H", "-L", "-P") or re.fullmatch(r"-O\d*", args[i]) or args[i] == "-D"):
+        i += 2 if args[i] == "-D" else 1
+    starts = []
+    while i < len(args) and args[i] and args[i][0] not in "-(!" and args[i] not in (";", "&&", "||", "|", "&", "\n"):
+        starts.append(args[i])
+        i += 1
+    return any(under_plugins(s) for s in starts) and any(w in FIND_EXECS for w in args[i:])
 
 
 def reaches_relatively(text, cwd, paths):
