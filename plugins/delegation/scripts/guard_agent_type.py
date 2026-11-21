@@ -54,9 +54,19 @@ ASSIGN = re.compile(r"^(\w+)=(.*)$", re.DOTALL)
 APPEND = re.compile(r"^(\w+)(?:\+=|\[)")
 # What can change a variable or how it splits out of sight: IFS, sourced or evaluated code, a function, a trap. A
 # command line holding one gets no variable tracked.
-OPAQUE = re.compile(r"\bIFS\b|\b(?:source|eval|builtin|trap|function|alias)\b|(?:^|[;&|({]\s*)\.\s|\(\s*\)\s*\{")
+OPAQUE = re.compile(
+    r"\bIFS\b|\bPWD=|\b(?:source|eval|builtin|trap|function|alias|read|readonly|exec|mapfile|readarray|getopts)\b"
+    r"|\bprintf\s+-\w*v|\b(?:declare|local|typeset)\s+-\w*[nr]|(?:^|[;&|({]\s*)\.\s|\(\s*\)\s*\{"
+)
+# What can send a push elsewhere, wherever it sits in the line (a git run through nice, sh -c, …).
+REDIRECTS_PUSH = re.compile(
+    r"\b(?:set-url|rename|insteadOf|pushInsteadOf|pushurl|pushDefault|gitdir|hooksPath|include(?:If)?|remote\.[\w-]+\.\w)"
+    r"|--(?:global|system|file)\b",
+    re.IGNORECASE,
+)
 DECLARE = {"export", "local", "declare", "readonly", "typeset"}
 SUBSHELL = {"|", "|&", "&", "("}
+LITERAL_DOLLAR = "\x00"
 # Git's options before the verb that leave the repository and its remotes as -C and the folder give them.
 GIT_PLAIN_OPTIONS = {"--no-pager", "-P", "--no-optional-locks", "--literal-pathspecs"}
 # The options of git clone, remote and push that take the next word as their value.
@@ -227,6 +237,8 @@ def segments(command):
     bare = measure.HEREDOC.sub(lambda m: m.group(3) + "\n", command)
     bare = MKTEMP.sub("/tmp/mktemp", bare)
     bare = PWD.sub("$PWD", bare)
+    # A `$` in single quotes or escaped names no variable: hide it from bash_writes_outside_temp's expansion.
+    bare = re.sub(r"'[^']*'", lambda m: m.group(0).replace("$", LITERAL_DOLLAR), bare).replace("\\$", LITERAL_DOLLAR)
     lex = shlex.shlex(bare, posix=True, punctuation_chars="();<>|&\n")
     lex.whitespace = " \t\r"
     lex.whitespace_split = True
@@ -303,7 +315,7 @@ class Shell:
 
     def expand(self, tok):
         """The word with the variables known to hold a temporary path (and $PWD in one) replaced; others stay."""
-        known = dict(self.vars, **({"PWD": self.here} if self.here else {}))
+        known = dict(self.vars, **({"PWD": self.here} if self.here and not self.split else {}))
         return VAR.sub(lambda m: known.get(m.group(1) or m.group(2), m.group(0)), tok)
 
     def resolve(self, path):
@@ -340,6 +352,8 @@ class Shell:
             self.tainted |= name.startswith("GIT_")
         words = [t for t in seg if t not in PREFIXES and not ASSIGN.match(t)]
         self.tainted |= bool(words) and os.path.basename(words[0]) == "ln"
+        # A git run by another command (nice, timeout, sh -c '…') is out of sight: it may redirect a remote.
+        self.tainted |= any(re.search(r"(?:^|[\s/])git\b", t) for t in words[1:])
         if words[:1] in (["source"], ["."], ["eval"]):  # sets what it likes
             self.vars = {}
             self.split = self.tainted = True
@@ -366,8 +380,8 @@ class Shell:
                 i += 2 if words[i] == "-c" else 1
         plain &= not any(ASSIGN.match(t) for t in seg)  # GIT_DIR=… git push
         verb = words[i] if i < len(words) else ""
-        if verb == "config" or verb == "remote" and not (len(words) > i + 1 and words[i + 1] in ("add", "set-url")):
-            self.tainted |= verb == "config" or len(words) > i + 1 and words[i + 1] not in ("-v", "show", "get-url")
+        if verb == "remote" and not (len(words) > i + 1 and words[i + 1] in ("add", "set-url")):
+            self.tainted |= len(words) > i + 1 and words[i + 1] not in ("-v", "show", "get-url")
             return None
         if verb not in GIT_VALUE_OPTIONS:
             return None
@@ -436,6 +450,7 @@ def bash_writes_outside_temp(command, cwd, session=None):
         return False
     sh = Shell(cwd, session)
     sh.split = bool(OPAQUE.search(command))
+    sh.tainted = bool(REDIRECTS_PUSH.search(command))
     for seg, lasting in segments(command):
         seg = [sh.expand(t) for t in seg]
         words = [t for t in seg if not ASSIGN.match(t) and t not in PREFIXES]

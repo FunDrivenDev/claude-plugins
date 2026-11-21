@@ -380,6 +380,10 @@ class BashGuard(Hook):
             repro,
             'd=$(mktemp -d) && cd "$d" && git init -q src && cd src && git remote add up "$d/remote.git" && git push up',
             'd=$(mktemp -d) && git -C "$d/src" push -q "$d/remote.git" main',
+            (
+                'd=$(mktemp -d) && cd "$d" && git clone -q remote.git src && cd src && git config user.email a@b.c'
+                " && git commit -qm x --allow-empty && git push origin main"
+            ),
             f"cd {self.scratchpad()} && git clone -q remote.git src && git -C src push -u origin HEAD",
         ):
             self.assertFalse(self.blocks(c), c)
@@ -411,6 +415,9 @@ class BashGuard(Hook):
             "printf '[remote \"origin\"]\\n\\tpushurl = https://github.com/o/r\\n' >> .git/config && git push origin",
             'ln -s /work/repo "$d/l.git" && git push "$d/l.git" main',
             "git push --receive-pack='git receive-pack /work/repo' origin",
+            "nice git remote set-url origin /work/repo && git push origin HEAD:main",
+            "sh -c 'git -C /tmp/mktemp/src remote set-url origin /work/repo' && git push origin HEAD:main",
+            "timeout 9 git config remote.pushDefault up; git push",
         ):
             self.assertTrue(self.blocks(clone + tail), tail)
 
@@ -442,6 +449,13 @@ class BashGuard(Hook):
             "f(){ d=/work/repo; }; d=/tmp/x; f; rm -rf $d",
             "trap 'd=/work/repo' DEBUG; d=/tmp/x; rm -rf $d",
             "d=/tmp/x; . ./env.sh; rm -rf $d",
+            "d=/tmp/x; declare -n r=d; r=/work/repo; rm -rf $d",
+            "d=/tmp/x; printf -vd /work/repo; rm -rf $d",
+            "d=/tmp/x; read -rad <<< /work/repo; rm -rf $d",
+            "d=/tmp/x; exec {d}>/tmp/f; cp -r src $d",
+            "d=/tmp/x; rm -rf '$d'",
+            "d=/tmp/x; rm -rf \\$d",
+            "cd /tmp/x; PWD=/work/repo; rm -rf $PWD",
         ):
             self.assertTrue(self.blocks(c), c)
 
