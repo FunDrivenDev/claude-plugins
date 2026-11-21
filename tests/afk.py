@@ -1,6 +1,6 @@
-"""Unit tests of the handover plugin's AFK relay past the suggestion (scripts/handover.py): a subagent refused
-in an AFK run hands the session over, with the refused call as the next session's focus, and an
-`AFK blocked:` that only the refusal caused does not end the run."""
+"""Unit tests of the handover plugin's subagent refusal (scripts/handover.py, D51): past the suggestion alone a
+subagent still starts; once the session winds down it is refused, and in an AFK run the refused call becomes
+the next session's focus; an `AFK blocked:` that only the refusal caused does not end the run."""
 
 import json
 import os
@@ -40,11 +40,19 @@ def state(sid):
     return S.read(sid)
 
 
-def refuse(sid, tool="Workflow", ti=REVIEW):
-    out = H.on_pre_tool_use(
+def call(sid, tool="Workflow", ti=REVIEW):
+    return H.on_pre_tool_use(
         {"session_id": sid, "tool_name": tool, "tool_input": ti, "transcript_path": TRANSCRIPT, "cwd": HOME}
     )
-    return out["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def refuse(sid, tool="Workflow", ti=REVIEW):
+    return call(sid, tool, ti)["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def wind_down(sid):
+    with S.locked(sid) as st:
+        S.wind_down(st, "trigger", 260_000)
 
 
 def stop(sid, reply):
@@ -58,26 +66,46 @@ def requested(sid):
 
 
 class RefusedSubagent(unittest.TestCase):
-    def test_an_afk_run_hands_over_with_the_refused_call_as_focus(self):
+    def test_past_the_suggestion_alone_the_review_before_a_push_still_starts(self):
+        for afk in (True, False):
+            with self.subTest(afk=afk):
+                sid = f"a0-{afk}"
+                session(sid, afk=afk)
+                self.assertIsNone(call(sid))
+                self.assertIsNone(call(sid, "Agent", {"subagent_type": "delegation:reviewer", "description": "r"}))
+                st = state(sid)
+                self.assertNotIn("agents_refused", st)
+                self.assertFalse(S.wound_down(st))
+                self.assertEqual(requested(sid), [])
+
+    def test_an_afk_run_winding_down_gives_the_refused_call_to_the_next_session(self):
         session("a1")
+        wind_down("a1")
         self.assertEqual(refuse("a1"), H.AFK_AGENT_HANDOVER)
         st = state("a1")
-        self.assertTrue(S.wound_down(st))
         self.assertIn("Workflow gs-dev-toolkit:review", st["focus"])
         self.assertIn("/tmp/wt", st["focus"])
-        self.assertEqual(requested("a1"), ["agent_refused"])
+        self.assertEqual(st["agents_refused"], 1)
 
-    def test_a_second_refusal_requests_no_second_handover(self):
+    def test_a_second_refusal_keeps_the_first_focus(self):
         session("a2")
+        wind_down("a2")
         refuse("a2")
         self.assertEqual(refuse("a2", "Agent", {"subagent_type": "Explore", "description": "find x"}), H.NO_NEW_AGENT)
-        self.assertEqual(requested("a2"), ["agent_refused"])
+        self.assertIn("Workflow gs-dev-toolkit:review", state("a2")["focus"])
         self.assertEqual(state("a2")["agents_refused"], 2)
+
+    def test_a_focus_the_session_set_is_kept(self):
+        session("a5", focus="Push the branch first.")
+        wind_down("a5")
+        self.assertEqual(refuse("a5"), H.NO_NEW_AGENT)
+        self.assertEqual(state("a5")["focus"], "Push the branch first.")
 
     def test_outside_afk_the_refusal_only_tells_the_session(self):
         session("a3", afk=False)
+        wind_down("a3")
         self.assertEqual(refuse("a3"), H.NO_NEW_AGENT)
-        self.assertFalse(S.wound_down(state("a3")))
+        self.assertNotIn("focus", state("a3"))
 
     def test_past_the_afk_deadline_no_handover_starts(self):
         session("a4")
