@@ -330,6 +330,18 @@ class BashGuard(Hook):
         ):
             self.assertTrue(self.blocks(c), c)
 
+    def test_a_git_read_with_a_write_verb_as_a_prefix_goes_through(self):
+        # Refused commands: `merge-base` was read as `merge`; a real merge is still refused.
+        for c in (
+            (
+                "cd ~/Code/fundrivendev/dotfiles && git merge-base --is-ancestor c550570 origin/main && echo on-main; "
+                "git ls-tree -r origin/main --name-only | grep -i prune-dead"
+            ),
+            "git -C ~/Code/fundrivendev/dotfiles rev-parse HEAD origin/main; git -C ~/Code/fundrivendev/dotfiles merge-base HEAD origin/main",
+        ):
+            self.assertFalse(self.blocks(c), c)
+        self.assertTrue(self.blocks("git -C ~/Code/fundrivendev/dotfiles merge origin/main"))
+
     def test_the_main_session_and_other_agents_are_never_touched(self):
         self.assertIsNone(self.run_bash("git push", agent_type=None, CLAUDE_PLUGIN_OPTION_GUARD_MODE="block"))
         for t in ("Explore", "general-purpose", "other:writer"):
