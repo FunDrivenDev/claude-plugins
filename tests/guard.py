@@ -213,6 +213,10 @@ class HandoverCopies(unittest.TestCase):
             'cd ~/.claude/plugins/cache/guest-suite && rm -rf ..""/fundrivendev/handover',
             "cd ~/.claude/plugins/cache/guest-suite && rm -rf .\\./fundrivendev/handover",
             "cd ~/.claude/plugins/marketplaces/guest-suite && rm -rf ..''/fundrivendev/.git",
+            f"find -L {QGATE} -execdir rm -rf ../../../../fundriven* ;",
+            f"find -L {QGATE} -execdir rm -rf ../../../../fundriven[d]ev ;",
+            f"find -L {QGATE} -execdir sh -c 'cd ../../../.. && rm -rf fundrivendev' ;",
+            f"cd $(/usr/bin/dirname {QGATE}) && rm -rf ../../../../fundriven*",
             "cd $(dirname $(dirname $(dirname $(dirname ~/.claude/plugins/cache/guest-suite/gs-dev-toolkit/4.73.1/scripts/qgate.sh)))) && rm -rf fundrivendev",
         ):
             self.assertIsNotNone(hit(command), command)

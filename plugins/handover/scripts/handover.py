@@ -2241,9 +2241,10 @@ def works_from_plugins(words, cwd):
             return True
     if not named:
         return False
-    finds = [i for i, w in enumerate(words) if os.path.basename(w) == "find"]
-    from_there = any(i + 1 < len(words) and under_plugins(words[i + 1]) for i in finds)
-    return "dirname" in words or (from_there and any(w in ("-exec", "-execdir", "-ok", "-okdir") for w in words))
+    names = [os.path.basename(w) for w in words]
+    finds = [i for i, n in enumerate(names) if n == "find"]
+    from_there = any(under_plugins(w) for i in finds for w in words[i + 1 :])
+    return "dirname" in names or (from_there and any(w in ("-exec", "-execdir", "-ok", "-okdir") for w in words))
 
 
 def reaches_relatively(text, cwd, paths):
@@ -2268,7 +2269,7 @@ def reaches_relatively(text, cwd, paths):
     # A word may hold a whole command (`sh -c 'cd .. && …'`): its own words count too.
     for w in [x for word in words for x in re.split(r"[\s;&|()<>]+", word) if x]:
         split = w.lower().split("/")
-        if ".." in split and (parts - SHARED_PARTS) & set(split):
+        if ".." in split and ((parts - SHARED_PARTS) & set(split) or re.search(r"[*?\[]", w)):
             return True
         if not strict:
             continue
