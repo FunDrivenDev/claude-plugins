@@ -2000,14 +2000,47 @@ def plugin_sha(root=None):
     return h.hexdigest()[:16]
 
 
+def plugin_copies():
+    """Every copy of this plugin Claude Code may load from ~/.claude/plugins, and the files that pick one: the
+    cache's versions (`cache/<marketplace>/handover`), the source folder in each marketplace clone that lists
+    it, with that marketplace's catalog, and installed_plugins.json and known_marketplaces.json. Another plugin's
+    files are not among them."""
+    name = plugin_json().get("name") or "handover"
+    plugins = os.path.join(os.path.expanduser("~"), ".claude", "plugins")
+    paths = [os.path.join(plugins, "installed_plugins.json"), os.path.join(plugins, "known_marketplaces.json")]
+    paths += glob.glob(os.path.join(plugins, "cache", "*", name))
+    data = os.path.basename(os.path.normpath(data_dir()))
+    if data.startswith(name + "-"):
+        # Not installed yet, or under a marketplace the cache does not hold: where it would land.
+        paths.append(os.path.join(plugins, "cache", data[len(name) + 1 :], name))
+    for catalog in glob.glob(os.path.join(plugins, "marketplaces", "*", ".claude-plugin", "marketplace.json")):
+        root = os.path.dirname(os.path.dirname(catalog))
+        listed = read_json(catalog, {})
+        entries = listed.get("plugins") if isinstance(listed, dict) else None
+        for entry in entries if isinstance(entries, list) else []:
+            if isinstance(entry, dict) and entry.get("name") == name:
+                # The clone's .git decides what a marketplace update loads (its remote, its hooks).
+                paths += [catalog, os.path.join(root, ".git")]
+                source = entry.get("source")
+                if isinstance(source, str):
+                    # metadata.pluginRoot prefixes a relative source; both readings are guarded.
+                    meta = listed.get("metadata")
+                    prefix = meta.get("pluginRoot") if isinstance(meta, dict) else None
+                    paths.append(os.path.normpath(os.path.join(root, source)))
+                    if isinstance(prefix, str):
+                        paths.append(os.path.normpath(os.path.join(root, prefix, source)))
+    return paths
+
+
 def guarded_paths(project=None):
-    """What a YOLO run must not write: the plugin, its data (audit log included), the settings that load
-    them, and the user's own `yolo_guard_paths`. Its own memory and worktrees under ~/.claude stay writable."""
+    """What a YOLO run must not write: the plugin (plugin_copies: each installed copy), its data (audit log
+    included), the settings that load them, and the user's own `yolo_guard_paths`. Other plugins' files, the
+    run's own memory and worktrees under ~/.claude stay writable."""
     home = os.path.expanduser("~")
     paths = [
         plugin_root(),
         data_dir(),
-        os.path.join(home, ".claude", "plugins"),
+        *plugin_copies(),
         os.path.join(home, ".claude", "settings.json"),
         os.path.join(home, ".claude", "settings.local.json"),
         os.path.join(home, ".claude", "hooks"),
@@ -2019,6 +2052,20 @@ def guarded_paths(project=None):
             os.path.join(project, ".claude", "settings.local.json"),
         ]
     return sorted({os.path.realpath(p) for p in paths} | {os.path.abspath(p) for p in paths})
+
+
+def guarded_folders(paths):
+    """The folders under ~/.claude that hold a guarded path (~/.claude itself, ~/.claude/plugins,
+    ~/.claude/plugins/cache/<marketplace>…): naming one whole, or through a glob or `..`, reaches the plugin."""
+    home = os.path.expanduser("~")
+    roots = {os.path.abspath(os.path.join(home, ".claude")), os.path.realpath(os.path.join(home, ".claude"))}
+    found = set()
+    for p in paths:
+        d = os.path.dirname(p)
+        while any(d == r or d.startswith(r + os.sep) for r in roots):
+            found.add(d)
+            d = os.path.dirname(d)
+    return sorted(found)
 
 
 def cmd_yolo_settings(args):
@@ -2103,124 +2150,219 @@ def own_command(command):
     return bool(rest) and rest[0] in OWN_COMMANDS
 
 
-# Interpreters an installed plugin script may be run with; none of their own flags (`bash -c`) is let through.
-SCRIPT_RUNNERS = {"bash", "sh", "zsh", "python3", "python"}
-
-
-def plain_command(command):
-    """True when the command is one simple command whose words expand to nothing but themselves: no chaining,
-    redirection, subshell, glob, brace or line break outside quotes, and no `$` or backtick outside single ones.
-    Single quotes keep anything literal, so a JSON argument with `$` or line breaks in it passes."""
-    quote, escaped = None, False
-    for c in command:
-        if escaped:
-            escaped = False
-        elif quote == "'":
-            quote = None if c == "'" else quote
-        elif quote == '"':
-            if c in "$`\\":
-                return False
-            quote = None if c == '"' else quote
-        elif c == "\\":
-            escaped = True
-        elif c in "'\"":
-            quote = c
-        elif c in ";&|<>()$`\n*?[]{}":
-            return False
-    return quote is None and not escaped
-
-
-def installed_script(command):
-    """The arguments of a Bash command that is one plain call of a script installed under
-    ~/.claude/plugins/cache or ~/.claude/plugins/marketplaces (gs-dev-toolkit's `qgate.sh`), run directly or
-    through an interpreter; None for anything else, this plugin's own scripts included. The script's path is
-    the guarded part of such a call: the guard still checks its arguments."""
-    if not plain_command(command):
-        return None
-    try:
-        argv = shlex.split(command)
-    except ValueError:
-        return None
-    if argv and argv[0] in SCRIPT_RUNNERS:
-        argv = argv[1:]
-    if not argv or argv[0].startswith("-"):
-        return None
-    script = os.path.expanduser(argv[0])
-    if not os.path.isabs(script):
-        return None
-    script = os.path.realpath(script)
-    plugins = os.path.realpath(os.path.join(os.path.expanduser("~"), ".claude", "plugins"))
-    rel = os.path.relpath(script, plugins).split(os.sep)
-    own = plugin_json().get("name") or "handover"
-    if rel[0] not in ("cache", "marketplaces") or own in rel or not os.path.isfile(script):
-        return None
-    if script.startswith(os.path.realpath(plugin_root()) + os.sep):
-        return None
-    return argv[1:]
-
-
 def names_path(text, path):
-    """True when the text names the path, spelled from / or from the home folder (`~`, `$HOME`, `${HOME}`)."""
+    """True when the text names the path, spelled from / or from the home folder (path_forms)."""
+    low = text.lower()
+    return any(f.lower() in low for f in path_forms(path))
+
+
+def path_forms(path):
+    """The spellings of a path a command may use: from /, or from the home folder (`~`, `$HOME`, `${HOME}`)."""
     home = os.path.expanduser("~")
     forms = {path}
     if path.startswith(home + os.sep):
         rest = path[len(home) :]
         forms |= {"~" + rest, "$HOME" + rest, "${HOME}" + rest}
-    return any(f in text for f in forms)
+    return forms
+
+
+# What ends a word of a command, and the characters of a literal path component.
+WORD_END = set(" \t\n;&|()<>")
+LITERAL_NAME = re.compile(r"[A-Za-z0-9._@+-]+")
+
+
+def names_folder(text, folder, children=()):
+    """True when the text names a folder that holds a guarded path as a whole (`rm -rf ~/.claude/plugins`), or
+    a path under it whose next part is not a literal name (a glob, a quote, a variable, `..`) or is the start of
+    a guarded child's name (`~/.claude/plugins/ca`, finished by a variable): each may reach the guarded path. Case is folded, as macOS's
+    file systems do.
+    A literal path into another plugin (`~/.claude/plugins/cache/guest-suite/…`) does not."""
+    text, children = text.lower(), {c.lower() for c in children}
+    for form in (f.lower() for f in path_forms(folder)):
+        start = text.find(form)
+        while start != -1:
+            rest = text[start + len(form) :]
+            word = rest[: next((i for i, c in enumerate(rest) if c in WORD_END), len(rest))]
+            if not word.startswith("/"):
+                if not word or word[0] in "'\"`":
+                    return True
+            else:
+                part = word[1:].split("/", 1)[0]
+                if not LITERAL_NAME.fullmatch(part) or part in (".", "..") or re.search(r"(^|/)\.\.(/|$)", word):
+                    return True
+                if any(c != part and c.startswith(part) for c in children):
+                    return True
+            start = text.find(form, start + 1)
+    return False
+
+
+def plugins_dirs():
+    """~/.claude/plugins, as spelled and as resolved."""
+    plugins = os.path.join(os.path.expanduser("~"), ".claude", "plugins")
+    return {os.path.abspath(plugins), os.path.realpath(plugins)}
+
+
+def shell_words(text):
+    r"""The command's words as the shell passes them, quotes and backslashes taken out (`..""`, `.\.` are `..`),
+    operators and line breaks apart; None when it does not parse."""
+    try:
+        text = re.sub(r"(?<!\\)((?:\\\\)*)\\\n", r"\1 ", text)  # a line continuation joins its lines
+        lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()<>\n")
+        lex.whitespace, lex.whitespace_split = " \t\r", True
+        return list(lex)
+    except ValueError:
+        return None
+
+
+# Parts of the plugin's path every plugin shares: a climb naming one (`--repo ../data`) says nothing.
+SHARED_PARTS = {"cache", "data", "plugins", "marketplaces", ".git", ".claude-plugin"}
+
+
+def under_plugins(word):
+    """True when a word is a path under ~/.claude/plugins (`~`, `$HOME` or absolute, case folded)."""
+    return any(names_path(word, d) for d in plugins_dirs())
+
+
+def works_from_plugins(words, cwd):
+    """True when the command may run from a folder under ~/.claude/plugins: the hook's cwd is there, a word names
+    a folder there rather than a file (`cd -P …/cache/guest-suite`), a `find` there runs `-exec` or
+    `-execdir`, `-C` or `--git-dir` is given a path there, or it calls `dirname`."""
+    dirs = plugins_dirs()
+    if cwd and any(os.path.abspath(cwd) == d or os.path.abspath(cwd).startswith(d + os.sep) for d in dirs):
+        return True
+    home = os.path.expanduser("~")
+    named = False
+    for i, w in enumerate(words):
+        w = re.sub(r"^[A-Za-z_][A-Za-z0-9_]*=", "", w)
+        if not under_plugins(w):
+            continue
+        named = True
+        path = re.sub(r"^(~|\$HOME|\$\{HOME\})(?=/)", lambda _m: home, w)
+        if not os.path.isfile(path) or (i and words[i - 1] in ("-C", "--git-dir", "--work-tree")):
+            return True
+    if not named:
+        return False
+    names = [os.path.basename(w) for w in words]
+    return "dirname" in names or any(find_runs_there(words[i + 1 :]) for i, n in enumerate(names) if n == "find")
+
+
+FIND_EXECS = ("-exec", "-execdir", "-ok", "-okdir")
+# find's options before its start paths that take no value: GNU's -H -L -P, BSD's -E -X -d -s -x, and --.
+FIND_FLAGS = ("-H", "-L", "-P", "-E", "-X", "-d", "-s", "-x", "--")
+
+
+def find_runs_there(args):
+    r"""True when a find starts from a path under ~/.claude/plugins (its words before the first expression, past
+    its options: GNU's and BSD's flags, `-D …`, `-O…`, `--`; BSD's `-f <path>` is one) and a later word runs a command (`-exec`, `-execdir`, `-ok`,
+    `-okdir`). Operators are not looked for: quoted, `\(` and `'&'` read like them."""
+    i, starts = 0, []
+    while i < len(args) and (args[i] in FIND_FLAGS or re.fullmatch(r"-O\d*", args[i]) or args[i] in ("-D", "-f")):
+        if args[i] == "-f" and i + 1 < len(args):
+            starts.append(args[i + 1])  # BSD find's -f names a start path
+        i += 2 if args[i] in ("-D", "-f") else 1
+    while i < len(args) and args[i] and args[i][0] not in "-(!" and args[i] not in (";", "&&", "||", "|", "&", "\n"):
+        starts.append(args[i])
+        i += 1
+    return any(under_plugins(s) for s in starts) and any(w in FIND_EXECS for w in args[i:])
+
+
+def reaches_relatively(text, cwd, paths):
+    """True when a command that names ~/.claude/plugins or runs there holds a word that may reach a guarded path
+    from a folder there (`cd …/cache/guest-suite && rm -rf ../fundrivendev`). Once it may run from such a folder
+    (works_from_plugins), any `..` part, expansion but `$HOME` (`$PWD`, `$(…)`) or relative word starting
+    with a part of a guarded path counts. Beside files there alone (`$Q launch --repo ..`, a script's own path),
+    only a climb that names a part of the plugin's own path (`../fundrivendev`) does. Words are read as the
+    shell passes them, quotes and backslashes taken out."""
+    dirs = plugins_dirs()
+    words = shell_words(text)
+    if words is None:
+        return any(names_path(text, d) for d in dirs) or bool(cwd and under_plugins(os.path.abspath(cwd)))
+    parts = set()
+    for p in paths:
+        for d in dirs:
+            if p.startswith(d + os.sep):
+                parts |= {x.lower() for x in os.path.relpath(p, d).split(os.sep)}
+    strict = works_from_plugins(words, cwd)
+    if not strict and not any(under_plugins(w) for w in words):
+        return False
+    # A word may hold a whole command (`sh -c 'cd .. && …'`): its own words count too.
+    for w in [x for word in words for x in re.split(r"[\s;&|()<>]+", word) if x]:
+        split = w.lower().split("/")
+        if ".." in split and (parts - SHARED_PARTS) & set(split):
+            return True
+        if not strict:
+            continue
+        w = re.sub(r"^[A-Za-z_][A-Za-z0-9_]*=", "", w)
+        if ".." in split or "`" in w or "$" in re.sub(r"\$\{?HOME\}?", "", w):
+            return True
+        if w and w[0] not in "/~-" and w.split("/", 1)[0].lower() in parts:
+            return True
+    return False
+
+
+# Tools that act on nothing the guard protects: the reading tools, and StructuredOutput, which only returns a
+# subagent's answer.
+UNGUARDED_TOOLS = {"Read", "Glob", "Grep", "LS", "StructuredOutput"}
 
 
 def guard_hit(inp):
-    """The guarded path or word a tool call names, if any. Bash commands are matched as text, so a path
-    spelled `~/.claude/plugins` or `$HOME/.claude/plugins` counts too; reading tools and the plugin's own
-    commands (own_command) stay free, and a plain call of an installed plugin script (installed_script) is
-    matched on its arguments alone."""
+    """The guarded path, folder or word a tool call names, if any. Bash commands are matched as text, so a path
+    spelled `~/.claude/plugins/cache/…/handover` or `$HOME/…` counts too, and so does a folder that holds one,
+    named whole or through a glob (guarded_folders); reading tools, StructuredOutput and the plugin's own
+    commands (own_command) stay free. Other plugins' files are not guarded."""
     tool, ti = inp.get("tool_name") or "", inp.get("tool_input") or {}
-    if tool in ("Read", "Glob", "Grep", "LS"):
+    if tool in UNGUARDED_TOOLS:
         return None
     if tool == "Bash" and own_command(str(ti.get("command") or "")):
         return None
     text = " ".join(str(ti.get(k) or "") for k in ("command", "file_path", "notebook_path", "path"))
-    args = installed_script(str(ti.get("command") or "")) if tool == "Bash" else None
-    if args is not None:
-        text = " ".join(args)
     if not text.strip():
         return None
-    for p in guarded_paths(project_of(inp)):
+    paths = guarded_paths(project_of(inp))
+    for p in paths:
         if names_path(text, p):
             return p
+    for d in guarded_folders(paths):
+        children = {os.path.relpath(p, d).split(os.sep)[0] for p in paths if p.startswith(d + os.sep)}
+        if names_folder(text, d, children):
+            return d
+    if tool == "Bash" and reaches_relatively(text, inp.get("cwd"), paths):
+        return os.path.abspath(os.path.join(os.path.expanduser("~"), ".claude", "plugins"))
     m = GUARD_WORDS.search(text) if tool == "Bash" else None
     return m.group(0) if m else None
 
 
 GUARD_DENIED = (
     "Denied: this YOLO run must leave {0} alone (the handover plugin, its audit log and the settings that load "
-    "them). Do the work another way, or note it for the user."
+    "them; other plugins' files are not guarded). Do the work another way, or note it for the user."
 )
 
-PLUGINS_READ_HINT = (
-    "Denied: a Bash command may not name {0} in a YOLO run. To read files there, use the Read, Glob or Grep "
-    "tool: the guard lets them through. To run a script installed there, make it one plain call: nothing "
-    "chained, redirected or substituted, and no `$` outside single quotes. Writes stay refused."
+PLUGIN_READ_HINT = (
+    "Denied: a Bash command may not name {0} in a YOLO run: it is, or holds, the handover plugin. To read files "
+    "there, use the Read, Glob or Grep tool: the guard lets them through. To reach another plugin's files, name "
+    "them by their own literal path (`~/.claude/plugins/cache/<marketplace>/<plugin>/…`), without a glob: they "
+    "are not guarded. Writes stay refused."
 )
 
 
 def guard_reason(inp, hit):
-    """Why the guard refuses a call that names `hit`. A Bash command that names other plugins' files under
-    ~/.claude/plugins, and nothing else the guard protects, is told how to read them with the reading tools."""
+    """Why the guard refuses a call that names `hit`. A Bash command that names only the plugin's installed
+    copies or a folder that holds them, nothing else the guard protects, is told how to read them with the
+    reading tools and how to reach another plugin's files."""
     tool, ti = inp.get("tool_name") or "", inp.get("tool_input") or {}
     command = str(ti.get("command") or "")
     own = own_call_attempt(command) if tool == "Bash" else None
     if own:
         return OWN_COMMAND_ALONE.format(own)
-    plugins = os.path.join(os.path.expanduser("~"), ".claude", "plugins")
-    dirs = {os.path.abspath(plugins), os.path.realpath(plugins)}
-    if (
-        tool == "Bash"
-        and hit in dirs
-        and not GUARD_WORDS.search(command)
-        and not any(names_path(command, p) for p in guarded_paths(project_of(inp)) if p not in dirs)
-    ):
-        return PLUGINS_READ_HINT.format(hit)
+    paths = guarded_paths(project_of(inp))
+    home = os.path.expanduser("~")
+    readable = {os.path.realpath(p) for p in plugin_copies() + [plugin_root()]}
+    readable |= {os.path.abspath(p) for p in plugin_copies() + [plugin_root()]}
+    readable |= set(guarded_folders(paths))
+    readable -= {os.path.abspath(os.path.join(home, ".claude")), os.path.realpath(os.path.join(home, ".claude"))}
+    others = [p for p in paths if p not in readable and names_path(command, p)]
+    if tool == "Bash" and hit in readable and not GUARD_WORDS.search(command) and not others:
+        return PLUGIN_READ_HINT.format(hit)
     return GUARD_DENIED.format(hit)
 
 
