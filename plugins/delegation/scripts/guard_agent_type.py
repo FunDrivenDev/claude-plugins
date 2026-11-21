@@ -266,11 +266,12 @@ def literal_dollars(text):
 
 
 def segments(command):
-    """The simple commands of a command line, as token lists, its heredoc bodies and quotes resolved; `mktemp` reads
-    /tmp/mktemp and `pwd` reads $PWD, which bash_writes_outside_temp expands. Each comes with whether it runs in the
-    shell itself, so that a variable it sets lasts: not in a pipeline, a subshell or the background."""
+    """The simple commands of a command line, as token lists, its heredoc bodies and quotes resolved; `mktemp -d` reads
+    /tmp/mktemp (a plain `mktemp`, /tmp/mktemp-file) and `pwd` reads $PWD, which bash_writes_outside_temp expands.
+    Each comes with whether it runs in the shell itself, so that a variable it sets lasts (not in a pipeline, a
+    subshell or the background), and the separator before it."""
     bare = measure.HEREDOC.sub(lambda m: m.group(3) + "\n", command)
-    bare = MKTEMP.sub("/tmp/mktemp", bare)
+    bare = MKTEMP.sub(lambda m: FRESH if re.search(r"\s-\w*d|--directory", m.group(0)) else FRESH + "-file", bare)
     bare = PWD.sub("$PWD", bare)
     # A `$` in single quotes or escaped names no variable: hide it from bash_writes_outside_temp's expansion.
     bare = literal_dollars(bare)
@@ -281,13 +282,13 @@ def segments(command):
     for tok in lex:
         if tok in SEPARATORS:
             if seg:
-                yield seg, depth == 0 and before not in SUBSHELL and tok not in SUBSHELL
+                yield seg, depth == 0 and before not in SUBSHELL and tok not in SUBSHELL, before
             seg, before = [], tok
             depth += {"(": 1, ")": -1}.get(tok, 0)
         else:
             seg.append(tok)
     if seg:
-        yield seg, depth == 0 and before not in SUBSHELL
+        yield seg, depth == 0 and before not in SUBSHELL, before
 
 
 def targets(seg, writes):
@@ -343,7 +344,9 @@ class Shell:
         self.here = os.path.normpath(cwd) if cwd and self.temp(cwd) else None
         # The other folders the line may run in by now, a cd having failed or run in a subshell; None: a real one.
         self.alts = set()
-        self.vars = {"TMPDIR": "/tmp/mktemp"}
+        tmpdir = os.environ.get("TMPDIR", "").rstrip("/")
+        self.vars = {"TMPDIR": tmpdir} if tmpdir and self.temp(tmpdir) else {}
+        self.chain = set()  # the repos made since the last separator other than &&: a cd into one surely succeeds
         self.remotes = {}  # repo folder made by this command line: the names of its remotes, all temporary
         self.tainted = False
         self.split = False  # no variable is tracked: something in the line may change one or how it splits
@@ -410,11 +413,13 @@ class Shell:
         if not lasting:  # a subshell's cd: what follows in it runs there
             self.alts.add(to)
             return
-        # Only a cd into a fresh mktemp folder, the scratchpad or a folder on disk surely succeeds; after any other,
-        # the line may go on where it was.
-        sure = to and (to == FRESH or os.path.isdir(to) or self.temp(to) and to.endswith("/scratchpad"))
+        # Only a cd into a fresh mktemp folder, the scratchpad, a folder on disk or one made in an unbroken && chain
+        # surely succeeds. Any other may fail and leave the line anywhere: where it was, or where a cd function
+        # (zoxide) jumps for a name it does not find.
+        scratch = to and self.temp(to) and to.endswith("/scratchpad")
+        sure = to and (to == FRESH or os.path.isdir(to) or scratch or to in self.chain)
         if not sure:
-            self.alts.add(self.here)
+            self.alts.add(None)
         self.here = to
 
     def git_push_is_temp(self, words, seg):
@@ -500,6 +505,7 @@ class Shell:
             self.tainted = True
         if folder:
             self.remotes[folder] = names
+            self.chain.add(folder)
 
     def local(self, repo, url):
         """The temporary folder a remote's URL names, from the repo folder, else None (a URL, a path elsewhere)."""
@@ -541,14 +547,16 @@ def bash_writes_outside_temp(command, cwd, session=None):
     sh = Shell(cwd, session)
     first = [
         next((t for t in seg if t not in PREFIXES and not ASSIGN.match(t) and not t.startswith("-")), "")
-        for seg, _ in segments(command)
+        for seg, _, _ in segments(command)
     ]
     sh.split = bool(OPAQUE.search(command)) or any(w in OPAQUE_WORDS for w in first)
     # A command substitution (beyond mktemp and pwd) runs out of sight: it may rewrite a remote.
     sh.tainted = bool(
         REDIRECTS_PUSH.search(command) or re.search(r"\$\(|`|[<>]\(", PWD.sub("", MKTEMP.sub("", command)))
     )
-    for seg, lasting in segments(command):
+    for seg, lasting, before in segments(command):
+        if before not in (None, "&&"):  # a step after it runs even when one before failed
+            sh.chain.clear()
         seg = [sh.expand(t) for t in seg]
         words = [t for t in seg if not ASSIGN.match(t) and t not in PREFIXES]
         if not words or (len(words) == 1 and words[0] in DECLARE):

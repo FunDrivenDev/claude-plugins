@@ -371,10 +371,10 @@ class BashGuard(Hook):
             self.assertTrue(self.blocks(c), c)
 
     def test_a_push_to_a_bare_repo_in_a_temporary_folder_goes_through(self):
-        # A refused reproduction: the push lands in remote.git, inside $d.
+        # A refused reproduction, chained with && (the `;` form is refused below): the push lands in remote.git.
         repro = (
-            'd=$(mktemp -d) && cd "$d" && git init -q --bare -b main remote.git; git clone -q remote.git src; cd src; '
-            "echo x > f; git add f; git commit -qm x; git push -q origin main"
+            'd=$(mktemp -d) && cd "$d" && git init -q --bare -b main remote.git && git clone -q remote.git src && cd src'
+            " && echo x > f && git add f && git commit -qm x && git push -q origin main"
         )
         for c in (
             repro,
@@ -518,7 +518,16 @@ class BashGuard(Hook):
             self.assertTrue(self.blocks(c), c)
 
     def test_a_push_after_a_cd_that_may_fail_from_a_real_folder_is_refused(self):
+        # After a `;`, a cd into the clone may fail if the clone did, and a cd function (zoxide) may then jump to a
+        # real repo of the same name: the refused reproduction's `;` form stays refused.
         for c in (
+            (
+                'd=$(mktemp -d) && cd "$d" && git init -q --bare -b main remote.git; git clone -q remote.git src; cd src; '
+                "echo x > f; git add f; git commit -qm x; git push -q origin main"
+            ),
+            'd=$(mktemp -d) && cd "$d" && git clone -q /tmp/w/claude-plugins.git claude-plugins; cd claude-plugins; git push',
+            'f=$(mktemp); cd "$f"; git init -q; git push',
+            'cd "$TMPDIR" && git init -q && git push',
             "touch /tmp/f-guard; git init -q /tmp/f-guard/src; cd /tmp/f-guard/src; git push",
             "git clone -q /tmp/w-guard/nope.git /tmp/w-guard/src; cd /tmp/w-guard/src; git push",
         ):
