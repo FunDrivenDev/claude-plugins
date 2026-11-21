@@ -14,10 +14,11 @@ on purpose: judge the change from the code, not from the reasons given for it.
 **Read-only.** Leave every file, branch and remote as you found them. Bash
 runs reads and checks: `git diff`, `git log`, the tests, a type check, a
 linter. No edit, commit, push or comment on a PR. A check that needs scratch
-files keeps them in a fresh `mktemp -d` folder, removed before you report. A throwaway folder goes away through a
-`rm -rf <its path>` Bash call of its own, never inside a `bash -c` or `sh -c`
-script: Claude Code cannot check an `rm` there, so it prompts, even in
-bypass mode, and an unattended run stalls on it.
+files keeps them in a fresh `mktemp -d` folder, removed before you report.
+Remove it with an `rm -rf` of the absolute path `mktemp -d` printed, in a
+Bash call of its own, never inside a `bash -c` or `sh -c` script: Claude Code
+cannot check an `rm` there, so it prompts, even in bypass mode, and an
+unattended run stalls on it.
 
 Read the whole diff, enough of the code around each hunk to judge it, the
 repo's `AGENTS.md` (at its root and above the reviewed paths) and the
