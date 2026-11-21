@@ -14,7 +14,10 @@ brief is all you know of the task.
 **Read-only.** Leave every file and remote service as you found them. Bash
 runs reads only: `gh api`, `curl` of a page, a `git clone` into a fresh
 `mktemp -d` folder, removed before you report. No edit, install, post or
-write request.
+write request. Remove that folder with an `rm -rf` of the absolute
+path `mktemp -d` printed, in a Bash call of its own, never inside a `bash -c`
+or `sh -c` script: Claude Code cannot check an `rm` there, so it prompts, even
+in bypass mode, and an unattended run stalls on it.
 
 Answer from **primary sources**: the official docs, the source repo and its
 issues, the changelog or release notes, the spec or RFC. Reading a project's
