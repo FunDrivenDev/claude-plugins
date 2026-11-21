@@ -2202,55 +2202,80 @@ def plugins_dirs():
     return {os.path.abspath(plugins), os.path.realpath(plugins)}
 
 
-def plugins_folder_named(text):
-    """True when the command names a folder under ~/.claude/plugins (`cd -P …/cache/guest-suite`, `git -C …`,
-    `find … -execdir`), rather than only files there (a script such as `qgate.sh`), runs from a path's folder
-    (`-exec`, `-execdir`, `-C`), or chops a path (a `dirname` call, `${x%…}`): it may then work from there."""
-    if re.search(r"(?:^|[;&|(`]\s*)dirname\b|\$\{[^}]*%|\s-(?:exec|execdir|C)\b|\s--git-dir\b", text):
+def shell_words(text):
+    r"""The command's words as the shell passes them, quotes and backslashes taken out (`..""`, `.\.` are `..`),
+    operators apart; None when it does not parse."""
+    try:
+        lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()<>")
+        lex.whitespace_split = True
+        return list(lex)
+    except ValueError:
+        return None
+
+
+# Parts of the plugin's path every plugin shares: a climb naming one (`--repo ../data`) says nothing.
+SHARED_PARTS = {"cache", "data", "plugins", "marketplaces", ".git", ".claude-plugin"}
+
+
+def under_plugins(word):
+    """True when a word is a path under ~/.claude/plugins (`~`, `$HOME` or absolute, case folded)."""
+    return any(names_path(word, d) for d in plugins_dirs())
+
+
+def works_from_plugins(words, cwd):
+    """True when the command may run from a folder under ~/.claude/plugins: the hook's cwd is there, a word names
+    a folder there rather than a file (`cd -P …/cache/guest-suite`), a `find` there runs `-exec` or
+    `-execdir`, `-C` or `--git-dir` is given a path there, or it calls `dirname`."""
+    dirs = plugins_dirs()
+    if cwd and any(os.path.abspath(cwd) == d or os.path.abspath(cwd).startswith(d + os.sep) for d in dirs):
         return True
-    low, home = text.lower(), os.path.expanduser("~")
-    for d in plugins_dirs():
-        for form in (f.lower() for f in path_forms(d)):
-            start = low.find(form)
-            while start != -1:
-                rest = text[start:]
-                word = rest[: next((i for i, c in enumerate(rest) if c in WORD_END), len(rest))].strip("'\"")
-                path = re.sub(r"^(~|\$HOME|\$\{HOME\})(?=/)", lambda _m: home, word)
-                if not os.path.isfile(path):
-                    return True
-                start = low.find(form, start + 1)
-    return False
+    home = os.path.expanduser("~")
+    named = False
+    for i, w in enumerate(words):
+        w = re.sub(r"^[A-Za-z_][A-Za-z0-9_]*=", "", w)
+        if not under_plugins(w):
+            continue
+        named = True
+        path = re.sub(r"^(~|\$HOME|\$\{HOME\})(?=/)", lambda _m: home, w)
+        if not os.path.isfile(path) or (i and words[i - 1] in ("-C", "--git-dir", "--work-tree")):
+            return True
+    if not named:
+        return False
+    finds = [i for i, w in enumerate(words) if os.path.basename(w) == "find"]
+    from_there = any(i + 1 < len(words) and under_plugins(words[i + 1]) for i in finds)
+    return "dirname" in words or (from_there and any(w in ("-exec", "-execdir", "-ok", "-okdir") for w in words))
 
 
 def reaches_relatively(text, cwd, paths):
-    """True when a command that runs in ~/.claude/plugins, or names a folder there (plugins_folder_named), holds
-    a word that may reach a guarded path from that folder (`cd …/cache/guest-suite && rm -rf ../fundrivendev`):
-    a `..` part, an expansion (`$PWD`, `$(…)`, a backtick), or a relative word whose first part is a part of
-    a guarded path under ~/.claude/plugins (`fundrivendev`, `handover`, `cache`). A command that names only
-    files there (`$Q launch --repo ..`, a script's own path) is not concerned."""
+    """True when a command that names ~/.claude/plugins or runs there holds a word that may reach a guarded path
+    from a folder there (`cd …/cache/guest-suite && rm -rf ../fundrivendev`). Once it may run from such a folder
+    (works_from_plugins), any `..` part, expansion but `$HOME` (`$PWD`, `$(…)`) or relative word starting
+    with a part of a guarded path counts. Beside files there alone (`$Q launch --repo ..`, a script's own path),
+    only a climb that names a part of the plugin's own path (`../fundrivendev`) does. Words are read as the
+    shell passes them, quotes and backslashes taken out."""
     dirs = plugins_dirs()
+    words = shell_words(text)
+    if words is None:
+        return any(names_path(text, d) for d in dirs) or bool(cwd and under_plugins(os.path.abspath(cwd)))
     parts = set()
     for p in paths:
         for d in dirs:
             if p.startswith(d + os.sep):
                 parts |= {x.lower() for x in os.path.relpath(p, d).split(os.sep)}
-    inside = bool(cwd) and any(os.path.abspath(cwd) == d or os.path.abspath(cwd).startswith(d + os.sep) for d in dirs)
-    named = any(names_path(text, d) for d in dirs)
-    if named and not inside:
-        # Beside a script's path alone: only a climb that names a part of the plugin's path.
-        for word in re.split(r"[\s;&|()<>{}'\"]+", text):
-            split = word.lower().split("/")
-            if ".." in split and parts & set(split):
-                return True
-    if not inside and not (named and plugins_folder_named(text)):
+    strict = works_from_plugins(words, cwd)
+    if not strict and not any(under_plugins(w) for w in words):
         return False
-    for word in re.split(r"[\s;&|()<>{}]+", text):
-        word = re.sub(r"^[A-Za-z_][A-Za-z0-9_]*=", "", word).strip("'\"")
-        if re.search(r"(^|/)\.\.(/|$)", word) or "`" in word:
+    # A word may hold a whole command (`sh -c 'cd .. && …'`): its own words count too.
+    for w in [x for word in words for x in re.split(r"[\s;&|()<>]+", word) if x]:
+        split = w.lower().split("/")
+        if ".." in split and (parts - SHARED_PARTS) & set(split):
             return True
-        if "$" in re.sub(r"\$\{?HOME\}?", "", word):
+        if not strict:
+            continue
+        w = re.sub(r"^[A-Za-z_][A-Za-z0-9_]*=", "", w)
+        if ".." in split or "`" in w or "$" in re.sub(r"\$\{?HOME\}?", "", w):
             return True
-        if word and word[0] not in "/~-" and word.split("/", 1)[0].lower() in parts:
+        if w and w[0] not in "/~-" and w.split("/", 1)[0].lower() in parts:
             return True
     return False
 

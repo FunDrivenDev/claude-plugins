@@ -209,6 +209,10 @@ class HandoverCopies(unittest.TestCase):
             f"find {QGATE} -execdir rm -rf ../../../../fundrivendev/handover +",
             f"find {QGATE} -execdir rm -rf ../../../.. ;",
             f"find {QGATE} -exec sh -c 'cd .. && rm -rf x' ;",
+            f'find {QGATE} -execdir rm -rf ..""/..""/..""/..""/fundrivendev/handover ;',
+            'cd ~/.claude/plugins/cache/guest-suite && rm -rf ..""/fundrivendev/handover',
+            "cd ~/.claude/plugins/cache/guest-suite && rm -rf .\\./fundrivendev/handover",
+            "cd ~/.claude/plugins/marketplaces/guest-suite && rm -rf ..''/fundrivendev/.git",
             "cd $(dirname $(dirname $(dirname $(dirname ~/.claude/plugins/cache/guest-suite/gs-dev-toolkit/4.73.1/scripts/qgate.sh)))) && rm -rf fundrivendev",
         ):
             self.assertIsNotNone(hit(command), command)
@@ -228,6 +232,10 @@ class HandoverCopies(unittest.TestCase):
             f"Q={q}; $Q launch --slug x --repo /tmp/r && date +%H:%M",
             f'{q} launch --slug "run-$(date +%s)" --repo /tmp/r',
             f"{q} launch --slug dirname-check --repo /tmp/r",
+            f"Q={q}; $Q launch --slug x --repo /tmp/r -- just check && git -C /tmp/r status",
+            f"Q={q}; $Q launch --repo /tmp/r | grep -C 3 FAIL; ls -C /tmp/r; make -C /tmp/r test",
+            f"Q={q}; $Q launch --repo /tmp/r; find /tmp/r -name '*.log' -exec cat {{}} ;; s=${{name%-dev}}",
+            f"{q} launch --repo ../data && {q} launch --repo ../cache --base /tmp/data/../r",
         ):
             inp = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": "/tmp/proj"}
             self.assertIsNone(H.guard_hit(inp), command)
