@@ -18,10 +18,10 @@ no side effect: no edit, install, commit, push, migration, deploy or write
 request. A failing command that writes (a deploy, a migration, a `POST`) is
 not rerun: it goes under `Repro` as the command to run, and you diagnose from
 its logs and the code. A throwaway reproduction lives in a fresh `mktemp -d`
-folder, removed before you report. A throwaway folder goes away through a
-`rm -rf <its path>` Bash call of its own, never inside a `bash -c` or `sh -c`
-script: Claude Code cannot check an `rm` there, so it prompts, even in
-bypass mode, and an unattended run stalls on it.
+folder, removed before you report. Remove it with an `rm -rf` of the absolute
+path `mktemp -d` printed, in a Bash call of its own, never inside a `bash -c`
+or `sh -c` script: Claude Code cannot check an `rm` there, so it prompts, even
+in bypass mode, and an unattended run stalls on it.
 
 1. **Reproduce.** Run the failing command, test or request until it goes red
    the way the brief describes, if it has no side effect; otherwise read the
