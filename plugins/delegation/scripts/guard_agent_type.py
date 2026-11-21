@@ -60,7 +60,7 @@ OPAQUE = re.compile(
 )
 # What can send a push elsewhere, wherever it sits in the line (a git run through nice, sh -c, …).
 REDIRECTS_PUSH = re.compile(
-    r"\b(?:set-url|rename|insteadOf|pushInsteadOf|pushurl|pushDefault|gitdir|hooksPath|include(?:If)?|remote\.[\w-]+\.\w|branch\.\S+\.(?:remote|pushRemote|merge))"
+    r"\b(?:set-url|rename|insteadOf|pushInsteadOf|pushurl|pushDefault|gitdir|hooksPath|include(?:If)?|remote\.[\w-]+\.\w|branch\.\S+\.(?:remote|pushRemote|merge)|submodule|recurse)"
     r"|--(?:global|system|file)\b",
     re.IGNORECASE,
 )
@@ -68,8 +68,15 @@ DECLARE = {"export", "local", "declare", "readonly", "typeset"}
 SUBSHELL = {"|", "|&", "&", "("}
 LITERAL_DOLLAR = "\x00"
 SAFE_CONFIG = re.compile(
-    r"^(?:user|author|committer|commit|gpg|init|advice|color|tag|log|diff|core\.(?:autocrlf|filemode|quotepath|editor|pager))\.",
+    r"^(?:(?:user|author|committer|commit|gpg|init|advice|color|tag|log|diff)\.\S+"
+    r"|core\.(?:autocrlf|filemode|quotepath|editor|pager))$",
     re.IGNORECASE,
+)
+# The options of a push that keep it on the remote and the refs it names: any other one (--recurse-submodules,
+# --repo, --exec, --no-verify, …) refuses it.
+PLAIN_PUSH_OPTIONS = re.compile(
+    r"^(?:-[qufnvd]+|--(?:quiet|verbose|set-upstream|force|force-with-lease(?:=\S*)?|force-if-includes|tags|all"
+    r"|follow-tags|atomic|dry-run|delete|porcelain|progress|no-progress|prune))$"
 )
 # Git's options before the verb that leave the repository and its remotes as -C and the folder give them.
 GIT_PLAIN_OPTIONS = {"--no-pager", "-P", "--no-optional-locks", "--literal-pathspecs"}
@@ -402,8 +409,8 @@ class Shell:
         verb = words[i] if i < len(words) else ""
         if verb == "config":
             # Only an identity or a display setting leaves the remotes alone.
-            key = next((a for a in words[i + 1 :] if not a.startswith("-")), "")
-            self.tainted |= not SAFE_CONFIG.match(key)
+            rest = words[i + 1 :]
+            self.tainted |= not rest or rest[0].startswith("-") or not SAFE_CONFIG.match(rest[0])
             return None
         if verb == "remote" and not (len(words) > i + 1 and words[i + 1] in ("add", "set-url")):
             self.tainted |= len(words) > i + 1 and words[i + 1] not in ("-v", "show", "get-url")
@@ -427,8 +434,7 @@ class Shell:
             else:
                 self.tainted = True
             return None
-        # push: --repo, --receive-pack and --exec send it or run it elsewhere.
-        if self.tainted or not plain or any(o.startswith(("--repo", "--receive-pack", "--exec")) for o in rest):
+        if self.tainted or not plain or any(o.startswith("-") and not PLAIN_PUSH_OPTIONS.match(o) for o in rest):
             return False
         remote = args[0] if args else "origin"
         if repo and (repo, remote) in self.remotes:

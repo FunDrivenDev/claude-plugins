@@ -385,6 +385,10 @@ class BashGuard(Hook):
                 " && git commit -qm x --allow-empty && git push origin main"
             ),
             f"cd {self.scratchpad()} && git clone -q remote.git src && git -C src push -u origin HEAD",
+            (
+                'd=$(mktemp -d) && cd "$d" && git clone -q remote.git src && git -C src config core.pager cat'
+                " && git -C src push -q --force-with-lease origin main"
+            ),
         ):
             self.assertFalse(self.blocks(c), c)
 
@@ -421,6 +425,10 @@ class BashGuard(Hook):
             "git config branch.main.pushRemote https://github.com/x/y; git push",
             "git config branch.main.remote https://github.com/x/y; git push",
             "git config --local some.key x; git push origin",
+            "git config -f user.x/../.git/config push.recurseSubmodules on-demand; git push origin",
+            "git push --recurse-submodules=on-demand origin HEAD:main",
+            "git push --no-verify origin main",
+            "git submodule update --init; git push origin",
         ):
             self.assertTrue(self.blocks(clone + tail), tail)
 
