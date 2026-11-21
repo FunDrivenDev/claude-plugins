@@ -15,6 +15,8 @@ run() { # run <pattern> <command…>: the command on the files in scope, if any
 }
 
 run '\.sh$' shellcheck
+# Every recipe runs the tools mise.toml pins (fundrivenOS rules/ci/just.md).
+run '^Justfile$' scripts/check-justfile.sh
 run '^\.github/workflows/.*\.ya?ml$' actionlint
 run '^plugins/.*\.tsx?$' biome lint --error-on-warnings --no-errors-on-unmatched
 run '\.py$' ruff format --check --quiet
