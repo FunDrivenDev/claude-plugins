@@ -2247,16 +2247,19 @@ def works_from_plugins(words, cwd):
 
 
 FIND_EXECS = ("-exec", "-execdir", "-ok", "-okdir")
+# find's options before its start paths that take no value: GNU's -H -L -P, BSD's -E -X -d -s -x, and --.
+FIND_FLAGS = ("-H", "-L", "-P", "-E", "-X", "-d", "-s", "-x", "--")
 
 
 def find_runs_there(args):
     r"""True when a find starts from a path under ~/.claude/plugins (its words before the first expression, past
-    `-H`, `-L`, `-P`, `-D …` and `-O…`) and a later word runs a command (`-exec`, `-execdir`, `-ok`,
+    its options: GNU's and BSD's flags, `-D …`, `-O…`, `--`; BSD's `-f <path>` is one) and a later word runs a command (`-exec`, `-execdir`, `-ok`,
     `-okdir`). Operators are not looked for: quoted, `\(` and `'&'` read like them."""
-    i = 0
-    while i < len(args) and (args[i] in ("-H", "-L", "-P") or re.fullmatch(r"-O\d*", args[i]) or args[i] == "-D"):
-        i += 2 if args[i] == "-D" else 1
-    starts = []
+    i, starts = 0, []
+    while i < len(args) and (args[i] in FIND_FLAGS or re.fullmatch(r"-O\d*", args[i]) or args[i] in ("-D", "-f")):
+        if args[i] == "-f" and i + 1 < len(args):
+            starts.append(args[i + 1])  # BSD find's -f names a start path
+        i += 2 if args[i] in ("-D", "-f") else 1
     while i < len(args) and args[i] and args[i][0] not in "-(!" and args[i] not in (";", "&&", "||", "|", "&", "\n"):
         starts.append(args[i])
         i += 1
