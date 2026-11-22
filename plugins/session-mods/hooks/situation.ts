@@ -17,9 +17,11 @@ export const isTopic = (s: string | null | undefined): s is string => typeof s =
  * candidates, and only those get their head checked: a `head | grep` per note forked hundreds of processes per read,
  * in every session, every 30 s.
  */
-export const TOPIC_NOTES = `d="$HOME/Notes/claude"; fl=\${FACTORY_LOG:-$(factory log path 2>/dev/null)}; found=1
+export const TOPIC_NOTES = `d="$HOME/Notes/claude"; fl=$FACTORY_LOG; [ -n "$fl" ] || fl=$(factory log path 2>/dev/null); found=1
 t=$(printf '%s' "$1" | sed 's/[.]/[.]/g'); re="topic: *[\\"']?$t[\\"']? *"; rt="title: *[\\"']?Merge plan: $t[\\"']? *"
-l=$(grep -lxE -e "$re" -e "$rt" -- "$d"/plans/*.md "$d"/decisions-register/*.md \${fl:+"$fl"/documents/registers/*.md "$fl"/documents/20*/*/*.md} 2>/dev/null); IFS='
+set -- "$d"/plans/*.md "$d"/decisions-register/*.md
+[ -n "$fl" ] && set -- "$@" "$fl"/documents/registers/*.md "$fl"/documents/20*/*/*.md
+l=$(grep -lxE -e "$re" -e "$rt" -- "$@" 2>/dev/null); IFS='
 '; set -f
 for f in $l; do
   [ -f "$f" ] || continue

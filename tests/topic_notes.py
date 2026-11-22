@@ -32,8 +32,14 @@ class TopicNotes(unittest.TestCase):
         with open(full, "w") as f:
             f.write(text)
 
+    def put_log(self, path, text):
+        full = os.path.join(self.home, "log", "documents", path)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w") as f:
+            f.write(text)
+
     def run_for(self, topic):
-        env = dict(os.environ, HOME=self.home)
+        env = dict(os.environ, HOME=self.home, FACTORY_LOG=os.path.join(self.home, "log"))
         return subprocess.run(["sh", "-c", script(), "sh", topic], env=env, capture_output=True, text=True, check=False)
 
     def paths(self, out):
@@ -50,6 +56,20 @@ class TopicNotes(unittest.TestCase):
             self.paths(out.stdout), ["/Notes/claude/decisions-register/r.md", "/Notes/claude/plans/a brief.md"]
         )
         self.assertIn("- **D01**", out.stdout)
+
+    def test_factory_log_gives_the_register_and_the_merge_plan(self):
+        self.put_log("registers/26-11-16-spj.md", "---\nkind: decision-register\ntopic: spj\n---\n- **D02**\n")
+        self.put_log("2026/11/D-AAAA-merge-plan-spj.md", "---\nid: D-AAAA\nkind: plan\ntitle: Merge plan: spj\n---\n")
+        self.put_log(
+            "2026/11/D-BBBB-merge-plan-spj-2.md", "---\nid: D-BBBB\nkind: plan\ntitle: Merge plan: spj-2\n---\n"
+        )
+        self.put_log("2026/11/D-CCCC-a-report.md", "---\nid: D-CCCC\nkind: report\ntitle: About spj\n---\n")
+        out = self.run_for("spj")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(
+            self.paths(out.stdout),
+            ["/log/documents/2026/11/D-AAAA-merge-plan-spj.md", "/log/documents/registers/26-11-16-spj.md"],
+        )
 
     def test_a_dot_in_the_topic_is_literal(self):
         self.put("plans/a.md", "---\ntopic: v1x2\n---\n")
