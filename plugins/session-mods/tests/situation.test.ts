@@ -172,8 +172,14 @@ test("factory's merge plan, titled for its topic, wins over an older notes one; 
   const done = note('/log/documents/2026/11/D-AAAA-merge-plan-x.md', factory('D-AAAA', 'done', '2026-11-23T10:00:00.000Z'))
   expect(fromNotes([open, older, done]).mergePlan?.path).toBe(open.path)
   expect(fromNotes([older, done]).mergePlan?.path).toBe(done.path)
-  const register = note('/log/documents/registers/26-11-16-x.md', '---\nkind: decision-register\ntopic: x\n---\n')
+  const register = note(
+    '/log/documents/registers/26-11-16-x.md',
+    '---\nkind: decision-register\ntopic: x\n---\n\n- <a id="d15"></a> **D15** `proposed` — Pin it.\n  Why: y.\n- <a id="d16"></a> **D16** `approved` — Other.\n',
+  )
   expect(fromNotes([register]).register).toBe(register.path)
+  expect(fromNotes([register]).proposed).toEqual([{ id: 'D15', text: 'Pin it.', why: 'y.' }])
+  const imported = note('/log/documents/2026/11/D-P3N6-x-merge-plan.md', factory('D-P3N6', 'doing', '2026-11-01T00:00:00.000Z').replace('title: Merge plan: x', 'title: x (merge plan)'))
+  expect(fromNotes([imported]).mergePlan?.path).toBe(imported.path)
 })
 
 test('Rex answers its sessions, windows and their blocks; anything else reads as none', () => {

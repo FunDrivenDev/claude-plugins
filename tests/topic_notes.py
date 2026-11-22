@@ -63,12 +63,20 @@ class TopicNotes(unittest.TestCase):
         self.put_log(
             "2026/11/D-BBBB-merge-plan-spj-2.md", "---\nid: D-BBBB\nkind: plan\ntitle: Merge plan: spj-2\n---\n"
         )
-        self.put_log("2026/11/D-CCCC-a-report.md", "---\nid: D-CCCC\nkind: report\ntitle: About spj\n---\n")
+        self.put_log("2026/11/D-CCCC-a-report.md", "---\nid: D-CCCC\nkind: report\ntitle: About spj\ntopic: spj\n---\n")
+        self.put_log(
+            "2026/11/D-DDDD-spj-merge-plan.md",
+            "---\nid: D-DDDD\nkind: plan\ntitle: spj (merge plan)\ntopic: spj\n---\n",
+        )
         out = self.run_for("spj")
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(
             self.paths(out.stdout),
-            ["/log/documents/2026/11/D-AAAA-merge-plan-spj.md", "/log/documents/registers/26-11-16-spj.md"],
+            [
+                "/log/documents/2026/11/D-AAAA-merge-plan-spj.md",
+                "/log/documents/2026/11/D-DDDD-spj-merge-plan.md",
+                "/log/documents/registers/26-11-16-spj.md",
+            ],
         )
 
     def test_a_dot_in_the_topic_is_literal(self):
