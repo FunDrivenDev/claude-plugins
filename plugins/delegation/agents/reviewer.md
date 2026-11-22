@@ -34,6 +34,11 @@ Report in this format, nothing else:
 
 - **Status**: `done`, `partial` or `blocked`, and why in one line when not
   done.
+- **Reviewed**: for each worktree reviewed, the full hash of the head you read
+  (`git rev-parse HEAD` there) and the base you diffed against, as `<path>:
+  <hash> against <base>` (the path left out for a single one), or `none: not
+  a git worktree` for files outside one; the session records its review round
+  at that head.
 - **Findings**, most severe first, one line each:
   `<blocking|major|minor> <file>:<line> — <defect>; <inputs or state → wrong result>`.
   With none: `No findings.`
