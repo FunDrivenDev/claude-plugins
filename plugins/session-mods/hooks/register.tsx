@@ -4,7 +4,7 @@ import type { EngineInterface, Hook, Register, RenderElement, ToolCallInput, Too
 import type { Agent, Config, Doc, Entry, Handover, HandoverFile, Info, Picker, Prompt, Quota, Repo, RepoChanges, Situation, Step, Tab, TrackedIssue, TrackedPr, Ttl } from '../types'
 
 import { duration, HERDR_BUNDLE, herdrScheme, prettyModel, recolor, type Scheme } from './appearance'
-import { ACTION, barRuns, cacheColor, contextOf, effortColor, effortLabel, EFFORTS, minutesLeft, modelColor, modelId, MODELS, quotaOf, RESERVE, span, TONE, ttlMs, whole, WINDOW, type Limit } from './bar'
+import { ACTION, barRuns, cacheColor, contextOf, effortColor, effortLabel, EFFORTS, minutesLeft, modelColor, modelId, MODELS, quotaOf, relayLimitOf, RESERVE, span, TONE, ttlMs, whole, WINDOW, type Limit } from './bar'
 import { changesOf, treeRows } from './files'
 import { HANDOVER_STATE, handoverOf } from './handover'
 import { ARTIFACTS, DOC_CONTEXT, HANDOVER_DIR, PLANS_DIR, WRITTEN_SINCE, artifactOf, type DocContext, docContextOf, docGroups, docOf, docPaths, tilde, writtenSpots } from './documents'
@@ -64,19 +64,27 @@ const info = atom({ plugin: 'session-mods', key: 'info' } as const, {
 } as Info)
 const picking = atom({ plugin: 'session-mods', key: 'picking' } as const, null as Picker)
 const quotasOpen = atom({ plugin: 'session-mods', key: 'quotasOpen' } as const, false)
+/** How long the bar waits for `factory relay show`, so a stalled factory costs it one fallback read. */
+const RELAY_TIMEOUT_MS = 3000
+
 /**
- * The auto-compact trigger as the engine sets it (/context's figures); where
- * the engine gives none, as the status line reckons it: CC_TOKEN_LIMIT, else
- * `autoCompactWindow`, else 200k; less CC_TOKEN_RESERVE.
+ * The relay's trigger and suggested point, as factory gives them for the
+ * session's folder (`factory relay show`); without factory, the auto-compact
+ * trigger as the engine sets it (/context's figures), else as the status line
+ * reckons it: CC_TOKEN_LIMIT, else `autoCompactWindow`, else 200k; less
+ * CC_TOKEN_RESERVE.
  */
-async function readLimit($: EngineInterface): Promise<Limit> {
+async function readLimit($: EngineInterface, cwd: string): Promise<Limit> {
+  const shown = await $.process.run(['factory', 'relay', 'show', '--json'], { cwd, timeoutMs: RELAY_TIMEOUT_MS }).catch(() => null)
+  const relay = shown && shown.exitCode === 0 ? relayLimitOf(shown.stdout) : null
+  if (relay) return relay
+  const compact = (n: number): Limit => ({ limit: n, suggest: null, source: 'compact' })
   const b = (await $.session.usage({ breakdown: 'summary' })).context.breakdown
-  if (b?.autoCompactThreshold && b.autoCompactThreshold > 0)
-    return { limit: b.autoCompactThreshold, window: Math.max(b.rawMaxTokens, b.autoCompactThreshold) }
-  if (b && !b.isAutoCompactEnabled && b.rawMaxTokens > 0) return { limit: b.rawMaxTokens, window: b.rawMaxTokens }
+  if (b?.autoCompactThreshold && b.autoCompactThreshold > 0) return compact(b.autoCompactThreshold)
+  if (b && !b.isAutoCompactEnabled && b.rawMaxTokens > 0) return compact(b.rawMaxTokens)
   const window = whole(await $.env.get('CC_TOKEN_LIMIT')) ?? whole((await $.settings.read()).autoCompactWindow) ?? WINDOW
   const limit = window - (whole(await $.env.get('CC_TOKEN_RESERVE')) ?? RESERVE)
-  return { limit: limit > 0 ? limit : window, window }
+  return compact(limit > 0 ? limit : window)
 }
 
 /**
@@ -96,21 +104,30 @@ async function seedModel($: EngineInterface) {
 type StartArgs = Parameters<Hook<'session.start'>>
 type StepArgs = Parameters<Hook<'turn.step'>>
 
-/** The bar's tick and auto-compact trigger, shared by its session start and its drawing. */
+/** The bar's tick and what its context counter counts against, shared by its session start and its drawing. */
 let barTicker: { cancel: () => void } | null = null
-let limit: Limit = { limit: WINDOW - RESERVE, window: WINDOW }
+let limit: Limit = { limit: WINDOW - RESERVE, suggest: null, source: 'compact' }
+/** The reads of `limit` started, so a slow one resolving late never overwrites a newer one. */
+let limitReads = 0
+const refreshLimit = ($: EngineInterface, cwd: string): Promise<void> => {
+  const read = ++limitReads
+  return readLimit($, cwd).then(n => {
+    if (read === limitReads) limit = n
+  })
+}
 
 /** The bar's work at session start, before `register` lets the chain go on. */
-export async function startBar($: StartArgs[0], _e: StartArgs[1]): Promise<void> {
+export async function startBar($: StartArgs[0], e: StartArgs[1]): Promise<void> {
   await update($, picking, () => null)
   barTicker?.cancel()
   let ticks = 0
   barTicker = $.clock.every(1000, () => {
     ticks++
-    if (ticks % 30 === 0) void readLimit($).then(n => (limit = n))
+    if (ticks % 30 === 0) void refreshLimit($, e.cwd)
     $.ui.invalidate('ui.render')
   })
-  limit = await readLimit($)
+  // Not awaited: the session's start never waits on factory.
+  void refreshLimit($, e.cwd)
   await seedModel($)
 }
 
@@ -2067,7 +2084,7 @@ export const register: Register = (on, options) => {
               </Text>
               <Text wrap="truncate-end">
                 <Text dimColor>context </Text>
-                <Text bold color={context.color} inverse={context.isCompacting}>
+                <Text bold color={context.color} inverse={context.isPast}>
                   {context.text}
                 </Text>
               </Text>
