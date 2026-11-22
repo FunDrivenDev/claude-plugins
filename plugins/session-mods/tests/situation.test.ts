@@ -163,6 +163,19 @@ test('the notes give the latest open merge plan, the open questions of open plan
   expect(fromNotes([])).toEqual({ mergePlan: null, questions: [], proposed: [], register: null })
 })
 
+test("factory's merge plan, titled for its topic, wins over an older notes one; a done one only when no other is open", () => {
+  const note = (path: string, text: string) => ({ path, modifiedAt: 5, text })
+  const factory = (id: string, state: string, created: string) =>
+    PLAN.replace(/^---\n[\s\S]*?\n---/, `---\nid: ${id}\nkind: plan\ntitle: Merge plan: x\nstate: ${state}\ncreated: ${created}\n---`)
+  const older = note('/n/plans/26-11-16-x-merge-plan.md', PLAN.replace('status: doing', 'status: done'))
+  const open = note('/log/documents/2026/11/D-ZZZZ-merge-plan-x.md', factory('D-ZZZZ', 'doing', '2026-11-22T10:00:00.000Z'))
+  const done = note('/log/documents/2026/11/D-AAAA-merge-plan-x.md', factory('D-AAAA', 'done', '2026-11-23T10:00:00.000Z'))
+  expect(fromNotes([open, older, done]).mergePlan?.path).toBe(open.path)
+  expect(fromNotes([older, done]).mergePlan?.path).toBe(done.path)
+  const register = note('/log/documents/registers/26-11-16-x.md', '---\nkind: decision-register\ntopic: x\n---\n')
+  expect(fromNotes([register]).register).toBe(register.path)
+})
+
 test('Rex answers its sessions, windows and their blocks; anything else reads as none', () => {
   const ls = JSON.stringify({
     session_id: 'session:1',
