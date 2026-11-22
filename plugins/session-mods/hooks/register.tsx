@@ -1719,7 +1719,7 @@ export const register: Register = (on, options) => {
                     <Text dimColor>3  </Text>⏳ <Text color="#e5c890">stale: merged</Text> <Text color={PR_COLOR.merged} underline>claude-plugins#91</Text>
                   </Text>
                 </Box>,
-                "The topic's merge plan (factory's plan titled Merge plan: <topic>, or an older *-merge-plan.md), one row per line: wave, status, pull requests in their live state's colour with ! on a red check (GitHub, every minute), note. Its age turns yellow past an hour. A yellow stale: open, merged or closed follows a status GitHub contradicts (✅ on an open or closed PR; 🔧 ⏳ 👤 ⚠️ once all are merged or closed; 🗑️ once merged or closed): the file needs a refresh.",
+                "The topic's merge plan (factory's plan titled Merge plan: <topic> or an imported plan of the topic with merge plan in its title, or an older *-merge-plan.md), one row per line: wave, status, pull requests in their live state's colour with ! on a red check (GitHub, every minute), note. Its age turns yellow past an hour. A yellow stale: open, merged or closed follows a status GitHub contradicts (✅ on an open or closed PR; 🔧 ⏳ 👤 ⚠️ once all are merged or closed; 🗑️ once merged or closed): the file needs a refresh.",
               ),
               helpRow(
                 'sit:workers',
