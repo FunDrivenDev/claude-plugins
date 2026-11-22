@@ -52,8 +52,11 @@ export const RESERVE = 33_000
 /** Where the context counter turns yellow, orange and red, as shares of the limit (CC_TOKEN_WARN, _DANGER, _ALERT). */
 const STAGES = [0.5, 0.75, 0.9] as const
 
-/** The auto-compact trigger (`limit`) and the window it sits a margin below. */
-export type Limit = { limit: number; window: number }
+/**
+ * What the context counter counts against: the relay's trigger and suggested
+ * point (`factory relay show`), else the auto-compact trigger alone.
+ */
+export type Limit = { limit: number; suggest: number | null; source: 'relay' | 'compact' }
 
 /** `78234` → `78.2k`, `934` → `934`, as the status line counts tokens. */
 export const kfmt = (n: number): string => (n < 1000 ? String(n) : `${Math.floor(n / 1000)}.${Math.floor((n % 1000) / 100)}k`)
@@ -61,17 +64,34 @@ export const kfmt = (n: number): string => (n < 1000 ? String(n) : `${Math.floor
 const cap = (n: number): string => (n % 1000 === 0 ? `${n / 1000}k` : kfmt(n))
 
 /**
- * The context counter: tokens against the auto-compact trigger, how it is
- * reckoned in brackets (`250k − 33k`), green to half of the trigger, yellow to
- * three quarters, orange to nine tenths, then red, and compacting once reached.
+ * The context counter: tokens against the trigger, the suggested point in
+ * brackets. With one, green below it, yellow to halfway to the trigger, then
+ * orange; without, green to half of the trigger, yellow to three quarters,
+ * orange to nine tenths; then red, and `⚠ handing over` (`⚠ compacting`
+ * against auto-compaction) once reached.
  */
-export const contextOf = (tokens: number | undefined, { limit, window }: Limit): { text: string; color: string; isCompacting: boolean } => {
-  const sum = window > limit ? ` (${cap(window)} − ${cap(window - limit)})` : ''
-  if (tokens === undefined) return { text: `0/${cap(limit)}${sum}`, color: '#8a8a8a', isCompacting: false }
-  const text = `${kfmt(tokens)}/${cap(limit)}${sum} ${Math.floor((tokens * 100) / limit)}%`
-  if (tokens >= limit) return { text: `${text} ⚠ compacting`, color: '#ff0000', isCompacting: true }
-  const stage = STAGES.findIndex(share => tokens <= limit * share)
-  return { text, color: ['#5fff00', '#ffff00', '#ffaf00'][stage] ?? '#ff0000', isCompacting: false }
+export const contextOf = (tokens: number | undefined, { limit, suggest, source }: Limit): { text: string; color: string; isPast: boolean } => {
+  const point = suggest ? ` (${cap(suggest)})` : ''
+  if (tokens === undefined) return { text: `0/${cap(limit)}${point}`, color: '#8a8a8a', isPast: false }
+  const text = `${kfmt(tokens)}/${cap(limit)}${point} ${Math.floor((tokens * 100) / limit)}%`
+  if (tokens >= limit) return { text: `${text} ⚠ ${source === 'relay' ? 'handing over' : 'compacting'}`, color: '#ff0000', isPast: true }
+  const stage = suggest
+    ? [suggest, (suggest + limit) / 2, limit].findIndex(bound => tokens < bound)
+    : STAGES.findIndex(share => tokens <= limit * share)
+  return { text, color: ['#5fff00', '#ffff00', '#ffaf00'][stage] ?? '#ff0000', isPast: false }
+}
+
+/** `factory relay show --json`'s answer → the relay's thresholds; null when it gives no trigger. */
+export const relayLimitOf = (stdout: string): Limit | null => {
+  try {
+    const shown = JSON.parse(stdout) as { trigger?: unknown; suggest?: unknown }
+    const limit = whole(shown.trigger)
+    if (limit === null) return null
+    const suggest = whole(shown.suggest)
+    return { limit, suggest: suggest !== null && suggest < limit ? suggest : null, source: 'relay' }
+  } catch {
+    return null
+  }
 }
 
 /** A whole positive number, from a number or its digits; null otherwise. */

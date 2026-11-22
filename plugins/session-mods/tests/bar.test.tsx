@@ -29,22 +29,26 @@ describe('helpers', () => {
     expect([cacheColor(1_800_000, 3_600_000), cacheColor(720_000, 3_600_000), cacheColor(700_000, 3_600_000)]).toEqual(['#5fff00', '#ffff00', '#ffaf00'])
   })
 
-  test('count the context against the auto-compact trigger, graded as the status line', () => {
+  test('count the context against the relay trigger, its suggested point in brackets', () => {
     expect(kfmt(78_234)).toBe('78.2k')
     expect(kfmt(934)).toBe('934')
-    const window = { limit: 167_000, window: 200_000 }
-    expect(contextOf(undefined, window)).toEqual({ text: '0/167k (200k − 33k)', color: '#8a8a8a', isCompacting: false })
-    expect(contextOf(78_234, window)).toEqual({ text: '78.2k/167k (200k − 33k) 46%', color: '#5fff00', isCompacting: false })
-    expect(contextOf(100_000, window).color).toBe('#ffff00')
-    expect(contextOf(140_000, window).color).toBe('#ffaf00')
-    expect(contextOf(160_000, window).color).toBe('#ff0000')
-    expect(contextOf(170_000, window)).toEqual({ text: '170.0k/167k (200k − 33k) 101% ⚠ compacting', color: '#ff0000', isCompacting: true })
-    expect(contextOf(78_234, { limit: 200_000, window: 200_000 }).text).toBe('78.2k/200k 39%')
-    const set = { limit: 217_000, window: 250_000 }
-    expect(contextOf(108_000, set).color).toBe('#5fff00')
-    expect(contextOf(109_000, set).color).toBe('#ffff00')
-    expect(contextOf(163_000, set).color).toBe('#ffaf00')
-    expect(contextOf(196_000, set).color).toBe('#ff0000')
+    const relay = { limit: 400_000, suggest: 300_000, source: 'relay' } as const
+    expect(contextOf(undefined, relay)).toEqual({ text: '0/400k (300k)', color: '#8a8a8a', isPast: false })
+    expect(contextOf(123_456, relay)).toEqual({ text: '123.4k/400k (300k) 30%', color: '#5fff00', isPast: false })
+    expect(contextOf(299_999, relay).color).toBe('#5fff00')
+    expect(contextOf(300_000, relay).color).toBe('#ffff00')
+    expect(contextOf(350_000, relay).color).toBe('#ffaf00')
+    expect(contextOf(400_000, relay)).toEqual({ text: '400.0k/400k (300k) 100% ⚠ handing over', color: '#ff0000', isPast: true })
+    expect(contextOf(123_456, { limit: 400_000, suggest: null, source: 'relay' }).text).toBe('123.4k/400k 30%')
+  })
+
+  test('without the relay, count against the auto-compact trigger, graded as the status line', () => {
+    const compact = { limit: 167_000, suggest: null, source: 'compact' } as const
+    expect(contextOf(78_234, compact)).toEqual({ text: '78.2k/167k 46%', color: '#5fff00', isPast: false })
+    expect(contextOf(100_000, compact).color).toBe('#ffff00')
+    expect(contextOf(140_000, compact).color).toBe('#ffaf00')
+    expect(contextOf(160_000, compact).color).toBe('#ff0000')
+    expect(contextOf(170_000, compact)).toEqual({ text: '170.0k/167k 101% ⚠ compacting', color: '#ff0000', isPast: true })
   })
 
 })
@@ -88,7 +92,7 @@ test('the bar shows the running time, cache and context, and the model and effor
   const ui = await $.ui.mount({ ...BAR, surface: 'terminal' })
   expect(await ui.find({ text: /running 1h02m/ })).toBeDefined()
   expect(await ui.find({ text: /no request yet/ })).toBeDefined()
-  expect(await ui.find({ text: /50\.0k\/167k \(200k − 33k\) 29%/ })).toBeDefined()
+  expect(await ui.find({ text: /50\.0k\/167k 29%/ })).toBeDefined()
   expect((await ui.find({ key: 'pick:model' }))?.props.label).toBe('Opus 5.5')
   expect((await ui.find({ key: 'pick:effort' }))?.props.label).toBe('medium')
   await ui.unmount()
@@ -140,6 +144,31 @@ test('the quota chips show both windows and unfold their bars side by side', asy
   await ui.unmount()
 })
 
+test('the context counter shows the relay thresholds factory gives for the session folder', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  const breakdown = { autoCompactThreshold: 567_000, rawMaxTokens: 600_000, isAutoCompactEnabled: true }
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 123_456, window: 1_000_000, breakdown } as never, rateLimits: [] } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.model', () => ({ value: 'opus' }))
+  on('env.get', () => ({ value: undefined }))
+  on('settings.read', () => ({ value: {} }))
+  const asked: (readonly string[])[] = []
+  on('process.run', (_, e) => {
+    if (e.argv.some(a => a.includes('relay show'))) {
+      asked.push(e.argv)
+      return ok(JSON.stringify({ repository: 'rlvdx/x', suggest: 300_000, trigger: 400_000, handover_tokens: 400_000, auto_compact_window: 600_000 }))
+    }
+    return ok('Dark')
+  })
+
+  engineHint(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...BAR, surface: 'terminal' })
+  expect(JSON.stringify(await ui.find({ text: /context/ }))).toContain('"children":["123.4k/400k (300k) 30%"]')
+  expect(asked[0]).toContain('/repo')
+  await ui.unmount()
+})
+
 test('the context counter shows the engine trigger, in light colours on a light macOS', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   const breakdown = { autoCompactThreshold: 217_000, rawMaxTokens: 250_000, isAutoCompactEnabled: true }
@@ -156,7 +185,7 @@ test('the context counter shows the engine trigger, in light colours on a light 
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ ...BAR, surface: 'terminal' })
   const bar = JSON.stringify(await ui.find({ text: /context/ }))
-  expect(bar).toContain('"color":"#9a6700","inverse":false},"children":["120.0k/217k (250k − 33k) 55%"]')
+  expect(bar).toContain('"color":"#9a6700","inverse":false},"children":["120.0k/217k 55%"]')
   await ui.unmount()
 })
 
