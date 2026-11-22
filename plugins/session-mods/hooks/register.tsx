@@ -64,8 +64,8 @@ const info = atom({ plugin: 'session-mods', key: 'info' } as const, {
 } as Info)
 const picking = atom({ plugin: 'session-mods', key: 'picking' } as const, null as Picker)
 const quotasOpen = atom({ plugin: 'session-mods', key: 'quotasOpen' } as const, false)
-/** Runs `factory relay show --json` in the session's folder, for the relay's thresholds of its repository. */
-const RELAY_SHOW = 'cd "$1" 2>/dev/null; exec factory relay show --json'
+/** How long the bar waits for `factory relay show`, so a stalled factory costs it one fallback read. */
+const RELAY_TIMEOUT_MS = 3000
 
 /**
  * The relay's trigger and suggested point, as factory gives them for the
@@ -74,8 +74,8 @@ const RELAY_SHOW = 'cd "$1" 2>/dev/null; exec factory relay show --json'
  * reckons it: CC_TOKEN_LIMIT, else `autoCompactWindow`, else 200k; less
  * CC_TOKEN_RESERVE.
  */
-async function readLimit($: EngineInterface, cwd: string | null): Promise<Limit> {
-  const shown = await $.process.run(['sh', '-c', RELAY_SHOW, 'sh', cwd ?? '.']).catch(() => null)
+async function readLimit($: EngineInterface, cwd: string): Promise<Limit> {
+  const shown = await $.process.run(['factory', 'relay', 'show', '--json'], { cwd, timeoutMs: RELAY_TIMEOUT_MS }).catch(() => null)
   const relay = shown && shown.exitCode === 0 ? relayLimitOf(shown.stdout) : null
   if (relay) return relay
   const compact = (n: number): Limit => ({ limit: n, suggest: null, source: 'compact' })
@@ -107,6 +107,14 @@ type StepArgs = Parameters<Hook<'turn.step'>>
 /** The bar's tick and what its context counter counts against, shared by its session start and its drawing. */
 let barTicker: { cancel: () => void } | null = null
 let limit: Limit = { limit: WINDOW - RESERVE, suggest: null, source: 'compact' }
+/** The reads of `limit` started, so a slow one resolving late never overwrites a newer one. */
+let limitReads = 0
+const refreshLimit = ($: EngineInterface, cwd: string): Promise<void> => {
+  const read = ++limitReads
+  return readLimit($, cwd).then(n => {
+    if (read === limitReads) limit = n
+  })
+}
 
 /** The bar's work at session start, before `register` lets the chain go on. */
 export async function startBar($: StartArgs[0], e: StartArgs[1]): Promise<void> {
@@ -115,10 +123,11 @@ export async function startBar($: StartArgs[0], e: StartArgs[1]): Promise<void> 
   let ticks = 0
   barTicker = $.clock.every(1000, () => {
     ticks++
-    if (ticks % 30 === 0) void readLimit($, e.cwd ?? null).then(n => (limit = n))
+    if (ticks % 30 === 0) void refreshLimit($, e.cwd)
     $.ui.invalidate('ui.render')
   })
-  limit = await readLimit($, e.cwd ?? null)
+  // Not awaited: the session's start never waits on factory.
+  void refreshLimit($, e.cwd)
   await seedModel($)
 }
 

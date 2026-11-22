@@ -152,10 +152,10 @@ test('the context counter shows the relay thresholds factory gives for the sessi
   on('session.model', () => ({ value: 'opus' }))
   on('env.get', () => ({ value: undefined }))
   on('settings.read', () => ({ value: {} }))
-  const asked: (readonly string[])[] = []
+  const asked: (string | undefined)[] = []
   on('process.run', (_, e) => {
-    if (e.argv.some(a => a.includes('relay show'))) {
-      asked.push(e.argv)
+    if (e.argv.join(' ') === 'factory relay show --json') {
+      asked.push(e.init?.cwd)
       return ok(JSON.stringify({ repository: 'rlvdx/x', suggest: 300_000, trigger: 400_000, handover_tokens: 400_000, auto_compact_window: 600_000 }))
     }
     return ok('Dark')
@@ -165,7 +165,7 @@ test('the context counter shows the relay thresholds factory gives for the sessi
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ ...BAR, surface: 'terminal' })
   expect(JSON.stringify(await ui.find({ text: /context/ }))).toContain('"children":["123.4k/400k (300k) 30%"]')
-  expect(asked[0]).toContain('/repo')
+  expect(asked[0]).toBe('/repo')
   await ui.unmount()
 })
 
