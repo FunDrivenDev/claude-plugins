@@ -162,8 +162,9 @@ class Contract(unittest.TestCase):
         self.start()
         bin_dir = self.tmp / "bin"
         bin_dir.mkdir()
-        for tool in ("env", "python3", "cat"):
-            os.symlink(shutil.which(tool), bin_dir / tool)
+        # python3 is this test's own interpreter: a mise shim on PATH would run mise, which finds nothing on this PATH.
+        for tool, path in (("env", shutil.which("env")), ("python3", sys.executable), ("cat", shutil.which("cat"))):
+            os.symlink(path, bin_dir / tool)
         for curl in (None, "#!/bin/sh\nexit 2\n"):  # none, then one too old for --fail-with-body
             with self.subTest(curl=curl):
                 if curl:

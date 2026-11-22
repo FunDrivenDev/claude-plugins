@@ -11,16 +11,23 @@ export const isTopic = (s: string | null | undefined): s is string => typeof s =
 
 /**
  * Prints each plan and register whose front matter names topic `$1`: a `\x1e` line holding its path, a tab and its
- * last change (epoch seconds), then the file. Exits 1 when none does. One `grep -l` over every note picks the
+ * last change (epoch seconds), then the file. Exits 1 when none does. Read from the older notes and from factory's
+ * log (`$FACTORY_LOG`, else `factory log path`): its registers by `topic:`, and of its other documents only the
+ * topic's merge plans, titled `Merge plan: <topic>` (the `merge-plan` skill) or, imported from the notes, a
+ * `merge plan` title beside its `topic:`: the topic's briefs and reports are no part of the Situation. One `grep -l` over every file picks the
  * candidates, and only those get their head checked: a `head | grep` per note forked hundreds of processes per read,
  * in every session, every 30 s.
  */
-export const TOPIC_NOTES = `d="$HOME/Notes/claude"; found=1; t=$(printf '%s' "$1" | sed 's/[.]/[.]/g'); re="topic: *[\\"']?$t[\\"']? *"
-l=$(grep -lxE -- "$re" "$d"/plans/*.md "$d"/decisions-register/*.md 2>/dev/null); IFS='
+export const TOPIC_NOTES = `d="$HOME/Notes/claude"; fl=$FACTORY_LOG; [ -n "$fl" ] || fl=$(factory log path 2>/dev/null); found=1
+t=$(printf '%s' "$1" | sed 's/[.]/[.]/g'); re="topic: *[\\"']?$t[\\"']? *"; rt="title: *[\\"']?Merge plan: $t[\\"']? *"
+set -- "$d"/plans/*.md "$d"/decisions-register/*.md
+[ -n "$fl" ] && set -- "$@" "$fl"/documents/registers/*.md "$fl"/documents/20*/*/*.md
+l=$(grep -lxE -e "$re" -e "$rt" -- "$@" 2>/dev/null); IFS='
 '; set -f
 for f in $l; do
   [ -f "$f" ] || continue
-  head -20 "$f" | grep -qxE -- "$re" || continue
+  head -20 "$f" | grep -qxE -e "$re" -e "$rt" || continue
+  case $f in "$fl"/documents/20*) head -20 "$f" | grep -qiE '^title: .*merge plan' || continue ;; esac
   printf '\\036%s\\t%s\\n' "$f" "$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f")"; cat "$f"; found=0
 done
 exit $found`
@@ -97,19 +104,31 @@ export const questionsOf = (text: string): Question[] =>
 /** A decision register's entries still `proposed`: the ones awaiting Raphaël, each with its `Why:` clause. */
 export const proposedOf = (text: string): Proposed[] =>
   // A struck-through entry (`- ~~**D10** …~~`) starts a chunk of its own, so its Why: stays its own.
-  text.split(/^(?=- (?:~~)?\*\*D\d+\*\*)/m).flatMap(entry => {
-    const m = /^- \*\*(D\d+)\*\* `proposed` —\s*(.+)$/m.exec(entry)
+  // Factory's registers put an anchor first: `- <a id="d15"></a> **D15** …`.
+  text.split(/^(?=- (?:<a id="[^"]*"><\/a> )?(?:~~)?\*\*D\d+\*\*)/m).flatMap(entry => {
+    const m = /^- (?:<a id="[^"]*"><\/a> )?\*\*(D\d+)\*\* `proposed` —\s*(.+)$/m.exec(entry)
     if (!m) return []
     const why = /^\s+Why:\s*(.+?)(?:\s+By:.*)?$/m.exec(entry)?.[1]?.trim() ?? null
     return [{ id: m[1]!, text: m[2]!.trim(), why }]
   })
 
-const isOpen = (n: Note) => !/^(done|cancelled|canceled)$/i.test(frontMatterOf(n.text).status ?? '')
+const isOpen = (n: Note) => {
+  const fm = frontMatterOf(n.text)
+  return !/^(done|cancelled|canceled)$/i.test(fm.status ?? fm.state ?? '')
+}
 const byPath = (a: Note, b: Note) => a.path.localeCompare(b.path)
+/** A factory document's `created:` orders it after every older note, whose files sort by their dated names. */
+const byAge = (a: Note, b: Note) =>
+  (frontMatterOf(a.text).created ?? '').localeCompare(frontMatterOf(b.text).created ?? '') || byPath(a, b)
+/** A notes file `*-merge-plan.md`, or a factory plan with `merge plan` in its title (`Merge plan: <topic>`, or an imported note's). */
+const isMergePlan = (n: Note) => {
+  const fm = frontMatterOf(n.text)
+  return /-merge-plan\.md$/.test(n.path) || (fm.kind === 'plan' && /merge plan/i.test(fm.title ?? '') && !/^Brief\b/.test(fm.title ?? ''))
+}
 
 /** What the topic's notes say: its latest open merge plan, its open questions, its `proposed` decisions. */
 export const fromNotes = (notes: Note[]) => {
-  const plans = notes.filter(n => /-merge-plan\.md$/.test(n.path)).sort(byPath)
+  const plans = notes.filter(isMergePlan).sort(byAge)
   const planNote = plans.filter(isOpen).at(-1) ?? plans.at(-1) ?? null
   const plan = planNote && mergePlanOf(planNote.text)
   const registers = notes.filter(n => frontMatterOf(n.text).kind === 'decision-register' || n.path.includes('/decisions-register/')).sort(byPath)

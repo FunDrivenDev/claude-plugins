@@ -14,7 +14,7 @@ The bar's one option, `cacheTtl`, is described in [Bar](bar.md#configuration). T
 
 ### Situation
 
-`situation` (boolean, default `false`) shows the [Situation](main-tab.md#situation) section on Main. It rests on conventions of its own: notes in `~/Notes/claude` sharing a `topic:` slug, and a terminal whose sessions are labelled by that topic. Off, Main shows Handover alone, and nothing is read for it: no notes, no terminal sessions, no `gh` call.
+`situation` (boolean, default `false`) shows the [Situation](main-tab.md#situation) section on Main. It rests on conventions of its own: notes in `~/Notes/claude` and factory's documents sharing a `topic:` slug, and a terminal whose sessions are labelled by that topic. Off, Main shows Handover alone, and nothing is read for it: no notes, no terminal sessions, no `gh` call.
 
 To turn it on, set it in Claude Code's user settings (`~/.claude/settings.json`, yours alone), or through `/config`:
 
@@ -49,4 +49,4 @@ It applies from the next session.
 - Steps and sub-agents are recorded from the moment the plugin loads; the first prompt is read back from the transcript.
 - The handover thresholds are those this session runs with, as the handover plugin recorded them at session start (handover 0.20.0 and later), the point where its line turns yellow included. The pane gets them, with the rest of the Handover row, from the installed handover plugin's `handover.py state --session <session_id> --json` (handover 0.29.0 and later; with an older one the row says the state is unknown). The pane has no default of its own: when the thresholds are unknown, the Handover row and the Config tab say why. A `suggest_tokens` or `trigger_tokens` resolving differently now shows beneath it in the Config tab, as applying from the next session.
 - `handover_dir` comes from the handover plugin's options in `settings.json`, `pluginConfigs["handover@fundrivendev"].options`.
-- Situation, when on, reads the notes in `~/Notes/claude` (`plans/` and `decisions-register/`, by their `topic:` front matter), a fixed folder with no option. Its workers need a terminal whose sessions the pane can read; its pull requests' states need `gh` signed in. Each missing source shows on its block, the others still render.
+- Situation, when on, reads the notes in `~/Notes/claude` (`plans/` and `decisions-register/`, by their `topic:` front matter), a fixed folder with no option, and factory's log (`$FACTORY_LOG`, else `factory log path`): its registers by `topic:`, its plan titled `Merge plan: <topic>`, or a plan of the topic imported from the notes with `merge plan` in its title. Its workers need a terminal whose sessions the pane can read; its pull requests' states need `gh` signed in. Each missing source shows on its block, the others still render.
