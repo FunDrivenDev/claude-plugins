@@ -195,7 +195,7 @@ test('without factory installed, the context counter falls back to the engine tr
   await ui.unmount()
 })
 
-test('a factory that answers no relay thresholds (exit 127, no trigger) leaves the engine trigger', async ($, on) => {
+test('a factory that fails leaves the engine trigger, whatever it printed', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   const breakdown = { autoCompactThreshold: 217_000, rawMaxTokens: 250_000, isAutoCompactEnabled: true }
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 120_000, window: 1_000_000, breakdown } as never, rateLimits: [] } }))
@@ -203,7 +203,7 @@ test('a factory that answers no relay thresholds (exit 127, no trigger) leaves t
   on('session.model', () => ({ value: 'opus' }))
   on('env.get', () => ({ value: undefined }))
   on('settings.read', () => ({ value: {} }))
-  on('process.run', (_, e) => (e.argv[0] === 'factory' ? ok('', 'factory: command not found', 127) : ok('Dark')))
+  on('process.run', (_, e) => (e.argv[0] === 'factory' ? ok(JSON.stringify({ suggest: 300_000, trigger: 400_000 }), 'factory: no context', 1) : ok('Dark')))
 
   engineHint(on)
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })

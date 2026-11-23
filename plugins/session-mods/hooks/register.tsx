@@ -1973,7 +1973,7 @@ export const register: Register = (on, options) => {
           {section('session-mods plugin')}
           {whereSet('Its options: pluginConfigs["session-mods@fundrivendev"].options in settings.json, or /config.')}
           {configRow('panel', 'panel', null, 'on', 'Opens this pane and records the session for it. Off, only the bar beneath the prompt runs.')}
-          {configRow('situation', 'situation', situationOn ? 'on' : null, 'off', "Shows the Situation section on Main, read from the topic's notes, its terminal session's tabs and GitHub.")}
+          {configRow('situation', 'situation', situationOn ? 'on' : null, 'off', "Shows the Situation section on Main, read from the topic's notes, factory's log, its terminal session's tabs and GitHub.")}
           {configRow('rename', 'rename', renameOn ? null : 'off', 'on', "Names the session (/resume, the terminal tab) with the pane's title, and gives the agent the session_title tool and its first-prompt reminder. Off, the title only heads the pane.")}
         </Box>
       )

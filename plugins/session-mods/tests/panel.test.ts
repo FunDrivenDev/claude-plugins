@@ -866,6 +866,23 @@ test('with the panel option off, the pane never opens and the bar stands alone',
   await bar.unmount()
 })
 
+test('with the panel option off, a turn passes through untouched', { options: { panel: false } }, async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.usage', () => ({ value: { startedAt: 0, context: {} as never, rateLimits: [] } }))
+  on('turn.step', async function* ($, e) {
+    yield { kind: 'text' as const, index: 0, text: 'Hello.' }
+    return { turnId: e.turnId, index: e.index, answer: 'Hello.', toolUses: [], stopReason: 'end_turn' as const, usage: null }
+  })
+  const chunks: unknown[] = []
+  const stream = $.turn.step({ turnId: 't1', index: 0, model: 'claude-opus-5-5', effort: 'high', messageCount: 1 })
+  let item = await stream.next()
+  while (!item.done) {
+    chunks.push(item.value)
+    item = await stream.next()
+  }
+  expect(chunks).toEqual([{ kind: 'text', index: 0, text: 'Hello.' }])
+})
+
 test('with the rename option off, a session without a title gets no reminder', { options: { rename: false } }, async ($, on) => {
   mock.clock(on, { now: 1_000 })
   on('session.id', () => ({ value: 's1' }) as never)
