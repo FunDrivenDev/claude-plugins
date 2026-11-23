@@ -19,6 +19,12 @@
   ],
   "types": "./types/index.d.ts",
   "userConfig": {
+    "panel": {
+      "type": "boolean",
+      "title": "Session pane",
+      "description": "Open the session pane (/session-panel) and record what it shows. Off, only the bar beneath the prompt runs: no pane, no /session-panel, no session_title tool. On by default.",
+      "default": true
+    },
     "cacheTtl": {
       "type": "string",
       "title": "Prompt-cache TTL",
@@ -32,7 +38,7 @@
     "situation": {
       "type": "boolean",
       "title": "Situation section",
-      "description": "Show the Situation section on Main: the live state of the session's topic, read from notes in ~/Notes/claude, the terminal session's tabs and GitHub. Off by default.",
+      "description": "Show the Situation section on Main: the live state of the session's topic, read from notes in ~/Notes/claude, factory's log, the terminal session's tabs and GitHub. Off by default.",
       "default": false
     },
     "rename": {

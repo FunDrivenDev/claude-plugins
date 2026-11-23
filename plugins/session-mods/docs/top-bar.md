@@ -19,7 +19,7 @@ Beneath the title, the tabs on the left, and a close mark on the right.
 
 - **Main** shows the topic at a glance: Handover, then Situation when the `situation` option is on. See [Main tab](main-tab.md).
 - **Misc** shows the issue, the repositories and pull requests, the documents and the last prompt, then the steps, the sub-agents and the git diff. See [Misc tab](misc-tab.md).
-- **Config** lists each value the pane reads (Claude Code's `plansDirectory`, the handover plugin's `handover_dir` and token thresholds, and its own `situation` option), as in effect, with what it does and its default.
+- **Config** lists each value the pane reads (Claude Code's `plansDirectory`, the handover plugin's `handover_dir` and token thresholds, and its own `panel`, `situation` and `rename` options), as in effect, with what it does and its default.
 - **Help** explains each item of the pane, its colours and states, one per line: an example as the pane draws it, then greyed what it shows or does (the title and the tabs, self-evident, are left out).
 
 `✕`, framed so it is easy to hit, closes the pane; `/session-panel` reopens it on Main.

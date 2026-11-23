@@ -6,11 +6,25 @@ Opening the pane, the settings it reads, and what it cannot know. [Back to the R
 
 The pane opens at session start when the terminal is at least 144 columns wide; `/session-panel` opens it at any width. Docked beside a fullscreen transcript it opens as wide as Claude Code allows, 45% of the terminal, unless a width was dragged or keyed since.
 
-It is a mod: a plugin of function hooks, drawn by the engine (no shell script, no status line).
+It is a mod: a plugin of function hooks, drawn by the engine (no shell script, no status line). With the [`panel`](#pane) option off, it never opens.
 
 ## Settings
 
-The bar's one option, `cacheTtl`, is described in [Bar](bar.md#configuration). The pane's options are `situation` and `rename`, below. The pane writes no state file. It reads Claude Code's `plansDirectory` and the handover plugin's `handover_dir` and token thresholds. The **Config** tab lists each one as in effect, `situation` included, with what it does, and its default where it has one.
+The bar's one option, `cacheTtl`, is described in [Bar](bar.md#configuration). The pane's options are `panel`, `situation` and `rename`, below. The pane writes no state file. It reads Claude Code's `plansDirectory` and the handover plugin's `handover_dir` and token thresholds. The **Config** tab lists each one as in effect, `situation` included, with what it does, and its default where it has one.
+
+### Pane
+
+`panel` (boolean, default `true`) runs the pane. Turn it off to keep the bar alone: the pane never opens, `/session-panel` is not registered, the `session_title` tool and its reminder are gone (whatever `rename` says), and nothing is read or recorded for the pane: no handover state, no notes, no `git` or `gh` call. The bar draws as before.
+
+```json
+{
+  "pluginConfigs": {
+    "session-mods@fundrivendev": { "options": { "panel": false } }
+  }
+}
+```
+
+It applies from the next session.
 
 ### Situation
 

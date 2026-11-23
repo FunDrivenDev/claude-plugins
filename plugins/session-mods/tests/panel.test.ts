@@ -821,6 +821,51 @@ test('a session without a title of its own reminds the agent once, and no more o
   expect(reminded()).toEqual([true, false, false])
 })
 
+test('with the panel option off, the pane never opens and the bar stands alone', { options: { panel: false } }, async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 50_000 } as never, rateLimits: [] } }))
+  on('session.id', () => ({ value: 's1' }) as never)
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.model', () => ({ value: 'opus' }))
+  on('session.messages', () => ({ value: [] }))
+  on('env.get', () => ({ value: undefined }))
+  on('settings.read', () => ({ value: {} }))
+  const ran: string[] = []
+  on('process.run', ($, e) => {
+    ran.push(e.argv.join(' '))
+    return { value: { exitCode: 1, stdout: '', stderr: '' } } as never
+  })
+  const opened: string[] = []
+  on('ui.open', ($, e) => {
+    opened.push(String((e as unknown as { id: string }).id))
+    return { value: undefined } as never
+  })
+  const registered: string[] = []
+  on('command.register', ($, e) => {
+    registered.push(String((e as unknown as { name: string }).name))
+    return { value: undefined } as never
+  })
+  on('tool.register', ($, e) => {
+    registered.push(String((e as unknown as { name: string }).name))
+    return { value: undefined } as never
+  })
+  const contexts: (readonly string[] | undefined)[] = []
+  on('prompt.submit', ($, e) => {
+    contexts.push(e.context)
+    return { text: e.text }
+  })
+
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.prompt.submit(typed('Fix the panel'))
+  expect(opened).toEqual([])
+  expect(registered).toEqual([])
+  expect(contexts.map(c => (c ?? []).some(line => line.includes('session_title')))).toEqual([false])
+  expect(ran.filter(r => !r.startsWith('factory ') && !r.startsWith('defaults '))).toEqual([])
+  const bar = await $.ui.mount({ plugin: 'session-mods', component: 'PromptHint', surface: 'terminal', props: { isDraft: false, isWorking: false, hint: '? for shortcuts' } })
+  expect(await bar.find({ text: /running/ })).toBeDefined()
+  await bar.unmount()
+})
+
 test('with the rename option off, a session without a title gets no reminder', { options: { rename: false } }, async ($, on) => {
   mock.clock(on, { now: 1_000 })
   on('session.id', () => ({ value: 's1' }) as never)
