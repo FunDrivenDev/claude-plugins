@@ -169,8 +169,8 @@ test('the context counter shows the relay thresholds factory gives for the sessi
   await ui.unmount()
 })
 
-test('without factory installed, the context counter falls back to the engine trigger', async ($, on) => {
-  mock.clock(on, { now: 1_000 })
+test('without factory on the PATH, the bar never runs it and counts against the engine trigger', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000 })
   const breakdown = { autoCompactThreshold: 217_000, rawMaxTokens: 250_000, isAutoCompactEnabled: true }
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 120_000, window: 1_000_000, breakdown } as never, rateLimits: [] } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -179,10 +179,8 @@ test('without factory installed, the context counter falls back to the engine tr
   on('settings.read', () => ({ value: {} }))
   const asked: string[] = []
   on('process.run', (_, e) => {
-    if (e.argv[0] === 'factory') {
-      asked.push(e.argv.join(' '))
-      throw new Error('spawn factory ENOENT')
-    }
+    if (e.argv.join(' ') === 'sh -c command -v factory') return ok('', '', 1)
+    if (e.argv[0] === 'factory') asked.push(e.argv.join(' '))
     return ok('Dark')
   })
 
@@ -190,7 +188,8 @@ test('without factory installed, the context counter falls back to the engine tr
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ ...BAR, surface: 'terminal' })
   const bar = JSON.stringify(await ui.find({ text: /context/ }))
-  expect(asked).toEqual(['factory relay show --json'])
+  await clock.advance(61_000)
+  expect(asked).toEqual([])
   expect(bar).toContain('"children":["120.0k/217k 55%"]')
   await ui.unmount()
 })
@@ -203,12 +202,18 @@ test('a factory that fails leaves the engine trigger, whatever it printed', asyn
   on('session.model', () => ({ value: 'opus' }))
   on('env.get', () => ({ value: undefined }))
   on('settings.read', () => ({ value: {} }))
-  on('process.run', (_, e) => (e.argv[0] === 'factory' ? ok(JSON.stringify({ suggest: 300_000, trigger: 400_000 }), 'factory: no context', 1) : ok('Dark')))
+  const asked: string[] = []
+  on('process.run', (_, e) => {
+    if (e.argv[0] !== 'factory') return ok('Dark')
+    asked.push(e.argv.join(' '))
+    return ok(JSON.stringify({ suggest: 300_000, trigger: 400_000 }), 'factory: no context', 1)
+  })
 
   engineHint(on)
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ ...BAR, surface: 'terminal' })
   expect(JSON.stringify(await ui.find({ text: /context/ }))).toContain('"children":["120.0k/217k 55%"]')
+  expect(asked).toEqual(['factory relay show --json'])
   await ui.unmount()
 })
 
