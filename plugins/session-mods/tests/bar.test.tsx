@@ -169,6 +169,49 @@ test('the context counter shows the relay thresholds factory gives for the sessi
   await ui.unmount()
 })
 
+test('without factory installed, the context counter falls back to the engine trigger', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  const breakdown = { autoCompactThreshold: 217_000, rawMaxTokens: 250_000, isAutoCompactEnabled: true }
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 120_000, window: 1_000_000, breakdown } as never, rateLimits: [] } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.model', () => ({ value: 'opus' }))
+  on('env.get', () => ({ value: undefined }))
+  on('settings.read', () => ({ value: {} }))
+  const asked: string[] = []
+  on('process.run', (_, e) => {
+    if (e.argv[0] === 'factory') {
+      asked.push(e.argv.join(' '))
+      throw new Error('spawn factory ENOENT')
+    }
+    return ok('Dark')
+  })
+
+  engineHint(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...BAR, surface: 'terminal' })
+  const bar = JSON.stringify(await ui.find({ text: /context/ }))
+  expect(asked).toEqual(['factory relay show --json'])
+  expect(bar).toContain('"children":["120.0k/217k 55%"]')
+  await ui.unmount()
+})
+
+test('a factory that fails leaves the engine trigger, whatever it printed', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  const breakdown = { autoCompactThreshold: 217_000, rawMaxTokens: 250_000, isAutoCompactEnabled: true }
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 120_000, window: 1_000_000, breakdown } as never, rateLimits: [] } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.model', () => ({ value: 'opus' }))
+  on('env.get', () => ({ value: undefined }))
+  on('settings.read', () => ({ value: {} }))
+  on('process.run', (_, e) => (e.argv[0] === 'factory' ? ok(JSON.stringify({ suggest: 300_000, trigger: 400_000 }), 'factory: no context', 1) : ok('Dark')))
+
+  engineHint(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...BAR, surface: 'terminal' })
+  expect(JSON.stringify(await ui.find({ text: /context/ }))).toContain('"children":["120.0k/217k 55%"]')
+  await ui.unmount()
+})
+
 test('the context counter shows the engine trigger, in light colours on a light macOS', async ($, on) => {
   mock.clock(on, { now: 1_000 })
   const breakdown = { autoCompactThreshold: 217_000, rawMaxTokens: 250_000, isAutoCompactEnabled: true }

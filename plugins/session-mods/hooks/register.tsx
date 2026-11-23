@@ -458,6 +458,8 @@ let situationRun = 0
 
 /** The `situation` option: off (its default), the section is neither drawn nor read. Set by `register`. */
 let situationOn = false
+/** The `panel` option: on (its default), the pane opens and records the session; off, none of its hooks run and the bar stands alone. Set by `register`. */
+let panelOn = true
 /** The `rename` option: on (its default), the session's title also names the session (`/rename`), and the agent gets the session_title tool and its reminder. Off, the title only heads the pane, so another tool can own the session's name. Set by `register`. */
 let renameOn = true
 
@@ -745,9 +747,10 @@ export async function* stepPanel($: StepArgs[0], e: StepArgs[1], next: StepArgs[
 }
 
 export const register: Register = (on, options) => {
+  panelOn = options.panel !== false
   situationOn = options.situation === true
   renameOn = options.rename !== false
-  {
+  if (panelOn) {
 
     on('command.run', { command: 'session-panel' }, async $ => {
       await update($, expanded, () => null)
@@ -1969,7 +1972,8 @@ export const register: Register = (on, options) => {
 
           {section('session-mods plugin')}
           {whereSet('Its options: pluginConfigs["session-mods@fundrivendev"].options in settings.json, or /config.')}
-          {configRow('situation', 'situation', situationOn ? 'on' : null, 'off', "Shows the Situation section on Main, read from the topic's notes, its terminal session's tabs and GitHub.")}
+          {configRow('panel', 'panel', null, 'on', 'Opens this pane and records the session for it. Off, only the bar beneath the prompt runs.')}
+          {configRow('situation', 'situation', situationOn ? 'on' : null, 'off', "Shows the Situation section on Main, read from the topic's notes, factory's log, its terminal session's tabs and GitHub.")}
           {configRow('rename', 'rename', renameOn ? null : 'off', 'on', "Names the session (/resume, the terminal tab) with the pane's title, and gives the agent the session_title tool and its first-prompt reminder. Off, the title only heads the pane.")}
         </Box>
       )
@@ -2122,11 +2126,11 @@ export const register: Register = (on, options) => {
     })
   }
 
-  /** Each mod starts even when the other fails; the first failure is then rethrown, so the engine reports the hook as skipped. */
+  /** Each mod starts even when the other fails (the pane only with the `panel` option on); the first failure is then rethrown, so the engine reports the hook as skipped. */
   on('session.start', async ($, e, next) => {
     const failures: unknown[] = []
     await startScheme($).catch((error: unknown) => failures.push(error))
-    await startPanel($, e).catch((error: unknown) => failures.push(error))
+    if (panelOn) await startPanel($, e).catch((error: unknown) => failures.push(error))
     await startBar($, e).catch((error: unknown) => failures.push(error))
     if (failures.length) throw failures[0]
     return next(e)
@@ -2134,7 +2138,7 @@ export const register: Register = (on, options) => {
 
   on('turn.step', async function* ($, e, next) {
     await beforeStepBar($, e)
-    const result = yield* stepPanel($, e, next)
+    const result = panelOn ? yield* stepPanel($, e, next) : yield* next(e)
     await afterStepBar($, e)
     return result
   })
