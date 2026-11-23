@@ -202,12 +202,18 @@ test('a factory that fails leaves the engine trigger, whatever it printed', asyn
   on('session.model', () => ({ value: 'opus' }))
   on('env.get', () => ({ value: undefined }))
   on('settings.read', () => ({ value: {} }))
-  on('process.run', (_, e) => (e.argv[0] === 'factory' ? ok(JSON.stringify({ suggest: 300_000, trigger: 400_000 }), 'factory: no context', 1) : ok('Dark')))
+  const asked: string[] = []
+  on('process.run', (_, e) => {
+    if (e.argv[0] !== 'factory') return ok('Dark')
+    asked.push(e.argv.join(' '))
+    return ok(JSON.stringify({ suggest: 300_000, trigger: 400_000 }), 'factory: no context', 1)
+  })
 
   engineHint(on)
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ ...BAR, surface: 'terminal' })
   expect(JSON.stringify(await ui.find({ text: /context/ }))).toContain('"children":["120.0k/217k 55%"]')
+  expect(asked).toEqual(['factory relay show --json'])
   await ui.unmount()
 })
 
