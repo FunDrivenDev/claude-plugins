@@ -860,7 +860,7 @@ test('with the panel option off, the pane never opens and the bar stands alone',
   expect(opened).toEqual([])
   expect(registered).toEqual([])
   expect(contexts.map(c => (c ?? []).some(line => line.includes('session_title')))).toEqual([false])
-  expect(ran.filter(r => !r.startsWith('factory ') && !r.startsWith('defaults '))).toEqual([])
+  expect(ran.filter(r => !r.startsWith('factory ') && !r.startsWith('defaults ') && r !== 'sh -c command -v factory')).toEqual([])
   const bar = await $.ui.mount({ plugin: 'session-mods', component: 'PromptHint', surface: 'terminal', props: { isDraft: false, isWorking: false, hint: '? for shortcuts' } })
   expect(await bar.find({ text: /running/ })).toBeDefined()
   await bar.unmount()

@@ -66,16 +66,23 @@ const picking = atom({ plugin: 'session-mods', key: 'picking' } as const, null a
 const quotasOpen = atom({ plugin: 'session-mods', key: 'quotasOpen' } as const, false)
 /** How long the bar waits for `factory relay show`, so a stalled factory costs it one fallback read. */
 const RELAY_TIMEOUT_MS = 3000
+/** Looks factory up on the PATH without running it. */
+const FACTORY_LOOKUP = ['sh', '-c', 'command -v factory']
+/** Whether factory is installed, looked up once per session at its start: without it, the bar never queries it. */
+let hasFactory: Promise<boolean> = Promise.resolve(false)
 
 /**
  * The relay's trigger and suggested point, as factory gives them for the
- * session's folder (`factory relay show`); without factory, the auto-compact
+ * session's folder (`factory relay show`); without factory (not on the PATH at
+ * session start: never queried then), or when it fails, the auto-compact
  * trigger as the engine sets it (/context's figures), else as the status line
  * reckons it: CC_TOKEN_LIMIT, else `autoCompactWindow`, else 200k; less
  * CC_TOKEN_RESERVE.
  */
 async function readLimit($: EngineInterface, cwd: string): Promise<Limit> {
-  const shown = await $.process.run(['factory', 'relay', 'show', '--json'], { cwd, timeoutMs: RELAY_TIMEOUT_MS }).catch(() => null)
+  const shown = (await hasFactory)
+    ? await $.process.run(['factory', 'relay', 'show', '--json'], { cwd, timeoutMs: RELAY_TIMEOUT_MS }).catch(() => null)
+    : null
   const relay = shown && shown.exitCode === 0 ? relayLimitOf(shown.stdout) : null
   if (relay) return relay
   const compact = (n: number): Limit => ({ limit: n, suggest: null, source: 'compact' })
@@ -126,6 +133,10 @@ export async function startBar($: StartArgs[0], e: StartArgs[1]): Promise<void> 
     if (ticks % 30 === 0) void refreshLimit($, e.cwd)
     $.ui.invalidate('ui.render')
   })
+  hasFactory = $.process
+    .run(FACTORY_LOOKUP, { timeoutMs: RELAY_TIMEOUT_MS })
+    .then(r => r.exitCode === 0)
+    .catch(() => false)
   // Not awaited: the session's start never waits on factory.
   void refreshLimit($, e.cwd)
   await seedModel($)
